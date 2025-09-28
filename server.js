@@ -388,7 +388,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .btn-primary{ background:#0f172a; color:#fff; }
         .btn-muted{ background:#e2e8f0; }
         .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
-        body.app-body{margin:0;background:#f4f4f7;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
+        body.app-body{margin:0;background:#4F4B11;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
         .topbar{background:#f7f6f9;border-bottom:1px solid #e2e1e8;box-shadow:0 1px 0 rgba(15,23,42,.04);}
         .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
@@ -2186,3 +2186,4 @@ if (!global.__SERVER_STARTED__) {
   }
   global.__SERVER_STARTED__ = true;
 }
+
