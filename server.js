@@ -603,7 +603,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           <div class="topbar-inner">
             <a href="/" class="brand" aria-label="Booking Engine">
               <span class="brand-logo">BE</span>
-              <span class="brand-name">Booking App</span>
+              <span class="brand-name">Booking Engine</span>
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
