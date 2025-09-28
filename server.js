@@ -672,7 +672,7 @@ app.get('/', (req, res) => {
     activeNav: 'search',
     body: html`
       <section class="search-hero">
-        <h1 class="search-title">Reservar Alojamento</h1>
+        <h1 class="search-title">Reservar a Casa</h1>
         <form action="/search" method="get" class="search-form">
           <div class="search-field">
             <label for="checkin">Datas</label>
