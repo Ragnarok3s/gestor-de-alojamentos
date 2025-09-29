@@ -124,6 +124,7 @@ try {
   ensureColumn('bookings', 'agency', 'TEXT');
   ensureColumn('bookings', 'adults', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn('bookings', 'children', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('bookings', 'internal_notes', 'TEXT');
   ensureColumn('units', 'features', 'TEXT');
   ensureColumn('bookings', 'external_ref', 'TEXT');
 } catch (_) {}
@@ -1984,6 +1985,12 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
             <li>Ocupação: ${b.adults}A+${b.children}C (cap. ${b.capacity})</li>
             <li>Total atual: € ${eur(b.total_cents)}</li>
           </ul>
+          ${b.internal_notes ? `
+            <div class="mt-4">
+              <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Anotacoes internas</div>
+              <div class="text-sm text-slate-700 whitespace-pre-line">${esc(b.internal_notes)}</div>
+            </div>
+          ` : ''}
         </div>
 
         <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3">
@@ -2017,6 +2024,11 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
             <label class="text-sm">Agência</label>
             <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
           </div>
+          <div class="grid gap-1">
+            <label class="text-sm">Anotacoes internas</label>
+            <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
+            <p class="text-xs text-slate-500">Nao aparece para o hospede.</p>
+          </div>
 
           <div>
             <label class="text-sm">Estado</label>
@@ -2049,6 +2061,8 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
 
   const checkin = req.body.checkin;
   const checkout = req.body.checkout;
+  const internalNotesRaw = req.body.internal_notes;
+  const internal_notes = typeof internalNotesRaw === 'string' ? internalNotesRaw.trim() || null : null;
   const adults = Math.max(1, Number(req.body.adults || 1));
   const children = Math.max(0, Number(req.body.children || 0));
   let status = (req.body.status || 'CONFIRMED').toUpperCase();
@@ -2077,9 +2091,9 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
 
   db.prepare(`
     UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, status = ?, total_cents = ?
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
      WHERE id = ?
-  `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, status, q.total_cents, id);
+  `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, internal_notes, status, q.total_cents, id);
 
   res.redirect(`/admin/bookings/${id}`);
 });
