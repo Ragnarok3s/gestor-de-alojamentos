@@ -2,3 +2,7 @@ echo "node_modules/
 dist/
 .env
 *.log" > .gitignore
+
+booking_engine.db
+booking_engine.db-shm
+booking_engine.db-wal
