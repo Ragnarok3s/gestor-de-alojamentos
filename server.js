@@ -1,7 +1,7 @@
 ﻿/**
  * Booking Engine - Front + Backoffice + Auth + Mapa (mensal)
  * Node.js (Express) + better-sqlite3 + bcryptjs + dayjs + Tailwind (CDN)
- * Uploads (multer) + galeria + exportação Excel do calendário + Booking Management + Audit Log
+ * Uploads (multer) + galeria + exportação Excel do calendário + Booking Management
  */
 
 const express = require('express');
@@ -69,8 +69,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   total_cents INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'CONFIRMED',
   external_ref TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  internal_notes TEXT
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS blocks (
@@ -113,26 +112,6 @@ CREATE TABLE IF NOT EXISTS unit_images (
 );
 `;
 db.exec(schema);
-
-// === AUDIT TABLE ===
-db.exec(`
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    action TEXT NOT NULL,              -- CREATE|UPDATE|DELETE|CANCEL|LOGIN|LOGOUT|UPLOAD
-    entity TEXT NOT NULL,              -- booking|unit|rate|block|property|user|image|session
-    entity_id INTEGER,
-    before_json TEXT,
-    after_json  TEXT,
-    meta_json   TEXT,
-    ip TEXT,
-    user_agent TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
-  CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id);
-  CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
-`);
 
 // Migrações leves
 function ensureColumn(table, name, def) {
@@ -219,39 +198,6 @@ const esc = (str = '') => String(str)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
-
-// === Audit helpers ===
-function toJsonSafe(obj) {
-  try { return obj ? JSON.stringify(obj) : null; } catch { return null; }
-}
-function sanitizeEntitySnapshot(entity, row) {
-  if (!row) return row;
-  if (entity === 'user') {
-    const { password_hash, ...safe } = row;
-    return safe;
-  }
-  return row;
-}
-function auditLog({ req, action, entity, entity_id = null, before = null, after = null, meta = null }) {
-  const user = req?.user || null;
-  const ip = (req?.headers?.['x-forwarded-for'] || req?.socket?.remoteAddress || '').toString().slice(0,255);
-  const ua = (req?.headers?.['user-agent'] || '').toString().slice(0,255);
-  const before_s = toJsonSafe(sanitizeEntitySnapshot(entity, before));
-  const after_s  = toJsonSafe(sanitizeEntitySnapshot(entity, after));
-  const meta_s   = toJsonSafe(meta || { route: req?.originalUrl });
-
-  db.prepare(`
-    INSERT INTO audit_logs(user_id, action, entity, entity_id, before_json, after_json, meta_json, ip, user_agent)
-    VALUES (?,?,?,?,?,?,?,?,?)
-  `).run(user ? user.id : null, action, entity, entity_id, before_s, after_s, meta_s, ip, ua);
-}
-function withAudit({ req, entity, id, action, selectSql, mutate }) {
-  const before = selectSql ? db.prepare(selectSql).get(id) : null;
-  const result = mutate();
-  const after  = selectSql ? db.prepare(selectSql).get(id) : null;
-  auditLog({ req, action, entity, entity_id:id, before, after });
-  return result;
-}
 
 const FEATURE_ICONS = {
   bed: 'Camas',
@@ -441,8 +387,220 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest"></script>
-      <style>/* ... estilos (iguais ao teu) ... */</style>
-      <script>/* ... scripts galeria + helpers (iguais ao teu) ... */</script>
+      <style>
+        .input { box-sizing:border-box; width:100%; min-width:0; display:block; padding:.5rem .75rem; border-radius:.5rem; border:1px solid #cbd5e1; background:#fff; line-height:1.25rem; }
+        .btn  { display:inline-block; padding:.5rem .75rem; border-radius:.5rem; }
+        .btn-primary{ background:#0f172a; color:#fff; }
+        .btn-muted{ background:#e2e8f0; }
+        .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
+        body.app-body{margin:0;background:#fafafa;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
+        .app-shell{min-height:100vh;display:flex;flex-direction:column;}
+        .topbar{background:#f7f6f9;border-bottom:1px solid #e2e1e8;box-shadow:0 1px 0 rgba(15,23,42,.04);}
+        .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
+        .brand{display:flex;align-items:center;gap:12px;color:#5f616d;font-weight:600;text-decoration:none;font-size:1.125rem;}
+        .brand-logo{width:40px;height:40px;border-radius:14px;background:linear-gradient(130deg,#ffb347,#ff5a91);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;box-shadow:0 10px 20px rgba(255,90,145,.25);}
+        .brand-name{letter-spacing:.02em;}
+        .nav-links{display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
+        .nav-link{position:relative;color:#7a7b88;font-weight:500;text-decoration:none;padding-bottom:6px;transition:color .2s ease;}
+        .nav-link:hover{color:#424556;}
+        .nav-link.active{color:#2f3140;}
+        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,#ff5a91,#ffb347);}
+        .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
+        .logout-form{margin:0;}
+        .logout-form button,.login-link{background:none;border:none;color:#7a7b88;font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
+        .logout-form button:hover,.login-link:hover{color:#2f3140;}
+        .nav-accent-bar{height:3px;background:linear-gradient(90deg,#ff5a91,#ffb347);opacity:.55;}
+        .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
+        .footer{background:#f7f6f9;border-top:1px solid #e2e1e8;color:#8c8d97;font-size:.875rem;}
+        .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
+        .search-hero{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:32px;text-align:center;}
+        .search-title{font-size:2.25rem;font-weight:600;color:#5a5c68;margin:0;}
+        .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:#f7f6f9;border-radius:28px;padding:32px;border:1px solid rgba(255,166,67,.4);box-shadow:0 24px 42px rgba(15,23,42,.08);}
+        .search-field{display:flex;flex-direction:column;gap:10px;text-align:left;}
+        .search-field label{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:#9b9ca6;}
+        .search-dates{display:flex;gap:14px;flex-wrap:wrap;}
+        .search-input{width:100%;border-radius:16px;border:2px solid rgba(255,166,67,.6);padding:14px 16px;background:#fff;font-size:1rem;color:#44454f;transition:border-color .2s ease,box-shadow .2s ease;}
+        .search-input:focus{border-color:#ff8c00;outline:none;box-shadow:0 0 0 4px rgba(255,166,67,.2);}
+        .search-submit{display:flex;justify-content:flex-end;}
+        .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
+        .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(255,107,0,.25);}
+        @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}}
+        .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
+        .gallery-overlay.show{opacity:1;pointer-events:auto;}
+        .gallery-overlay .gallery-inner{position:relative;width:100%;max-width:min(960px,90vw);}
+        .gallery-overlay .gallery-image{width:100%;max-height:calc(100vh - 8rem);border-radius:1rem;object-fit:contain;background:#0f172a;}
+        .gallery-overlay .gallery-close{position:absolute;top:-2.5rem;right:0;background:none;border:none;color:#fff;font-size:2.25rem;cursor:pointer;line-height:1;}
+        .gallery-overlay .gallery-caption{margin-top:1rem;color:#e2e8f0;display:flex;align-items:center;justify-content:space-between;gap:.75rem;font-size:.875rem;}
+        .gallery-overlay .gallery-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(15,23,42,.6);border:none;color:#fff;width:2.75rem;height:2.75rem;border-radius:9999px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.75rem;transition:background .2s ease;}
+        .gallery-overlay .gallery-nav:hover{background:rgba(15,23,42,.85);}
+        .gallery-overlay .gallery-prev{left:-1.5rem;}
+        .gallery-overlay .gallery-next{right:-1.5rem;}
+        .gallery-overlay .gallery-counter{font-weight:600;}
+        @media (max-width:640px){
+          .gallery-overlay{padding:1rem;}
+          .gallery-overlay .gallery-close{top:.5rem;right:.5rem;}
+          .gallery-overlay .gallery-nav{bottom:1rem;top:auto;transform:none;}
+          .gallery-overlay .gallery-prev{left:1rem;}
+          .gallery-overlay .gallery-next{right:1rem;}
+          .gallery-overlay .gallery-caption{flex-direction:column;align-items:flex-start;}
+        }
+      </style>
+      <script>
+        const HAS_USER = ${hasUser ? 'true' : 'false'};
+        function refreshIcons(){
+          if (window.lucide && typeof window.lucide.createIcons === 'function') {
+            window.lucide.createIcons();
+          }
+        }
+        if (document.readyState !== 'loading') {
+          refreshIcons();
+        } else {
+          document.addEventListener('DOMContentLoaded', refreshIcons);
+        }
+        window.addEventListener('load', refreshIcons);
+        document.addEventListener('htmx:afterSwap', refreshIcons);
+        function syncCheckout(e){
+          const ci = e.target.value; const co = document.getElementById('checkout');
+          if (co && co.value && co.value <= ci) { co.value = ci; }
+          if (co) co.min = ci;
+        }
+        if (HAS_USER) {
+          window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'm' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+              window.location.href = '/calendar';
+            }
+          });
+        }
+
+        // Lightbox / Galeria
+        (function(){
+          let overlay;
+          let imgEl;
+          let captionEl;
+          let counterEl;
+          let prevBtn;
+          let nextBtn;
+          const state = { images: [], index: 0 };
+
+          function ensureOverlay() {
+            if (overlay) return;
+            overlay = document.createElement('div');
+            overlay.className = 'gallery-overlay';
+            overlay.innerHTML = [
+              '<div class="gallery-inner">',
+              '  <button type="button" class="gallery-close" data-gallery-close>&times;</button>',
+              '  <img class="gallery-image" src="" alt="" />',
+              '  <button type="button" class="gallery-nav gallery-prev" data-gallery-prev>&lsaquo;</button>',
+              '  <button type="button" class="gallery-nav gallery-next" data-gallery-next>&rsaquo;</button>',
+              '  <div class="gallery-caption">',
+              '    <span class="gallery-counter"></span>',
+              '    <span class="gallery-text"></span>',
+              '  </div>',
+              '</div>'
+            ].join('');
+            document.body.appendChild(overlay);
+            imgEl = overlay.querySelector('.gallery-image');
+            captionEl = overlay.querySelector('.gallery-text');
+            counterEl = overlay.querySelector('.gallery-counter');
+            prevBtn = overlay.querySelector('[data-gallery-prev]');
+            nextBtn = overlay.querySelector('[data-gallery-next]');
+
+            overlay.addEventListener('click', (e) => {
+              if (e.target === overlay) {
+                closeOverlay();
+              }
+            });
+            overlay.querySelector('[data-gallery-close]').addEventListener('click', (e) => {
+              e.stopPropagation();
+              closeOverlay();
+            });
+            prevBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showPrev();
+            });
+            nextBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showNext();
+            });
+          }
+
+          function openOverlay(images, index) {
+            if (!Array.isArray(images) || !images.length) return;
+            ensureOverlay();
+            state.images = images;
+            state.index = Math.min(Math.max(index, 0), images.length - 1);
+            renderImage();
+            overlay.classList.add('show');
+            document.body.classList.add('gallery-open');
+          }
+
+          function closeOverlay() {
+            if (!overlay) return;
+            overlay.classList.remove('show');
+            document.body.classList.remove('gallery-open');
+          }
+
+          function renderImage() {
+            if (!overlay || !state.images.length) return;
+            const current = state.images[state.index];
+            if (!current) return;
+            imgEl.src = current.url;
+            imgEl.alt = current.alt || '';
+            captionEl.textContent = current.alt || '';
+            if (state.images.length > 1) {
+              counterEl.textContent = (state.index + 1) + ' / ' + state.images.length;
+              prevBtn.style.display = 'flex';
+              nextBtn.style.display = 'flex';
+            } else {
+              counterEl.textContent = '';
+              prevBtn.style.display = 'none';
+              nextBtn.style.display = 'none';
+            }
+          }
+
+          function showNext() {
+            if (!state.images.length) return;
+            state.index = (state.index + 1) % state.images.length;
+            renderImage();
+          }
+
+          function showPrev() {
+            if (!state.images.length) return;
+            state.index = (state.index - 1 + state.images.length) % state.images.length;
+            renderImage();
+          }
+
+          document.addEventListener('click', (e) => {
+            const trigger = e.target.closest('[data-gallery-trigger]');
+            if (!trigger) return;
+            e.preventDefault();
+            const payload = trigger.getAttribute('data-gallery-images');
+            if (!payload) return;
+            let images;
+            try {
+              images = JSON.parse(payload);
+            } catch (_) {
+              images = [];
+            }
+            const index = Number(trigger.getAttribute('data-gallery-index') || 0) || 0;
+            openOverlay(images, index);
+          });
+
+          document.addEventListener('keydown', (e) => {
+            if (!overlay || !overlay.classList.contains('show')) return;
+            if (e.key === 'Escape') {
+              closeOverlay();
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              showNext();
+            } else if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              showPrev();
+            }
+          });
+        })();
+      </script>
     </head>
     <body class="app-body">
       <div class="app-shell">
@@ -458,7 +616,6 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               <a class="${navClass('backoffice')}" href="/admin">Backoffice</a>
               ${hasUser ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
               ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
-              ${user && user.role === 'admin' ? `<a class="${navClass('audit')}" href="/admin/audit">Audit Log</a>` : ''}
               ${hasUser ? `<a class="${navClass('export')}" href="/admin/export">Exportar Excel</a>` : ``}
             </nav>
             <div class="nav-actions">
@@ -505,20 +662,238 @@ app.post('/login', (req,res)=>{
   const token = createSession(u.id);
   const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
   res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
-  // AUDIT: login
-  auditLog({ req, action:'LOGIN', entity:'session', entity_id:null, before:null, after:null, meta:{ username } });
   res.redirect(nxt || '/admin');
 });
-app.post('/logout', (req,res)=>{
-  // AUDIT: logout (antes de destruir sessão)
-  auditLog({ req, action:'LOGOUT', entity:'session', entity_id:null, before:null, after:null });
-  destroySession(req.cookies.adm);
-  res.clearCookie('adm');
-  res.redirect('/');
-});
+app.post('/logout', (req,res)=>{ destroySession(req.cookies.adm); res.clearCookie('adm'); res.redirect('/'); });
 
 // ===================== Front Office =====================
-// (página /, /search — tal como o teu, sem alterações de auditoria)
+app.get('/', (req, res) => {
+  const sess = getSession(req.cookies.adm);
+  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+  const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
+  res.send(layout({
+    title: 'Reservas',
+    user,
+    activeNav: 'search',
+    body: html`
+      <section class="search-hero">
+        <h1 class="search-title">Reservar a Casa</h1>
+        <form action="/search" method="get" class="search-form">
+          <div class="search-field">
+            <label for="checkin">Datas</label>
+            <div class="search-dates">
+              <input required type="date" id="checkin" name="checkin" class="search-input" onchange="syncCheckout(event)"/>
+              <input required type="date" id="checkout" name="checkout" class="search-input"/>
+            </div>
+          </div>
+          <div class="search-field">
+            <label for="adults">Adultos</label>
+            <input type="number" min="1" id="adults" name="adults" value="2" class="search-input"/>
+          </div>
+          <div class="search-field">
+            <label for="children">Crianças</label>
+            <input type="number" min="0" id="children" name="children" value="0" class="search-input"/>
+          </div>
+          <div class="search-field">
+            <label for="property_id">Propriedade</label>
+            <select id="property_id" name="property_id" class="search-input">
+              <option value="">Todas</option>
+              ${properties.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="search-submit">
+            <button class="search-button" type="submit">Procurar</button>
+          </div>
+        </form>
+      </section>
+    `
+  }));
+});
+
+app.get('/search', (req, res) => {
+  const sess = getSession(req.cookies.adm);
+  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+
+  const { checkin, checkout, property_id } = req.query;
+  const adults = Math.max(1, Number(req.query.adults ?? 1));
+  const children = Math.max(0, Number(req.query.children ?? 0));
+  const totalGuests = adults + children;
+  if (!checkin || !checkout) return res.redirect('/');
+
+  const units = db.prepare(
+    `SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id
+     WHERE (? IS NULL OR u.property_id = ?)
+       AND u.capacity >= ?
+     ORDER BY p.name, u.name`
+  ).all(property_id || null, property_id || null, Number(totalGuests));
+
+  const imageStmt = db.prepare('SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY position, id LIMIT 4');
+
+  const available = units
+    .filter(u => unitAvailable(u.id, checkin, checkout))
+    .map(u => {
+      const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
+      const images = imageStmt.all(u.id).map(img => {
+        const rawAlt = img.alt || `${u.property_name} - ${u.name}`;
+        return {
+          url: `/uploads/units/${u.id}/${img.file}`,
+          alt: rawAlt,
+          safeAlt: esc(rawAlt)
+        };
+      });
+      const features = parseFeaturesStored(u.features);
+      return { ...u, quote, images, features };
+    })
+    .filter(u => u.quote.nights >= u.quote.minStayReq)
+    .sort((a,b)=> a.quote.total_cents - b.quote.total_cents);
+
+  res.send(layout({
+    title: 'Resultados',
+    user,
+    activeNav: 'search',
+    body: html`
+      <h1 class="text-2xl font-semibold mb-4">Alojamentos disponíveis</h1>
+      <p class="mb-4 text-slate-600">
+        ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
+        · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
+      </p>
+      <div class="grid md:grid-cols-2 gap-4">
+        ${available.map(u => {
+          const galleryData = esc(JSON.stringify(u.images.map(img => ({ url: img.url, alt: img.alt }))));
+          const thumbCount = Math.min(Math.max(u.images.length - 1, 0), 3);
+          const gridClass = ['grid-cols-1', 'grid-cols-2', 'grid-cols-3'][thumbCount - 1] || '';
+          const thumbMarkup = thumbCount > 0
+            ? `<div class="grid ${gridClass} gap-2 mb-3">
+                ${u.images.slice(1, 1 + thumbCount).map((img, idx) => `
+                  <button type="button" class="block overflow-hidden rounded" data-gallery-trigger data-gallery-images="${galleryData}" data-gallery-index="${idx + 1}">
+                    <img src="${img.url}" alt="${img.safeAlt}" class="w-full h-20 object-cover" loading="lazy" />
+                  </button>
+                `).join('')}
+              </div>`
+            : '';
+          const mainImage = u.images.length
+            ? `<div class="relative mb-3">
+                <button type="button" class="block w-full overflow-hidden rounded-md" data-gallery-trigger data-gallery-images="${galleryData}" data-gallery-index="0">
+                  <img src="${u.images[0].url}" alt="${u.images[0].safeAlt}" class="w-full h-48 object-cover" loading="lazy" />
+                </button>
+                ${u.images.length > 1 ? `<div class="absolute bottom-2 right-2 bg-slate-900/75 text-white text-xs px-2 py-1 rounded">${u.images.length} foto${u.images.length > 1 ? 's' : ''}</div>` : ''}
+              </div>
+              ${thumbMarkup}`
+            : '<div class="h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 mb-3">Sem fotos disponíveis</div>';
+          const featuresHtml = featureChipsHtml(u.features, {
+            className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
+            badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full',
+            iconWrapClass: 'inline-flex items-center justify-center text-emerald-700'
+          });
+          return html`
+            <div class="card p-4">
+              ${mainImage}
+              ${featuresHtml}
+              <div class="flex items-center justify-between mb-2">
+                <div>
+                  <div class="text-sm text-slate-500">${u.property_name}</div>
+                  <h3 class="text-lg font-semibold">${u.name}</h3>
+                </div>
+                <div class="text-right">
+                  <div class="text-xs text-slate-500">desde/noite</div>
+                  <div class="text-xl font-semibold flex items-center justify-end gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(u.base_price_cents)}</div>
+                </div>
+              </div>
+              <p class="text-sm text-slate-600 mb-1">Capacidade: ${u.capacity} - Estadia min.: ${u.quote.minStayReq} noites</p>
+              <p class="text-sm text-slate-700 mb-3">Total estadia: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(u.quote.total_cents)}</strong></p>
+              <a class="btn btn-primary" href="/book/${u.id}?checkin=${checkin}&checkout=${checkout}&adults=${adults}&children=${children}">Reservar</a>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      ${available.length === 0 ? `<div class="p-6 bg-amber-50 border border-amber-200 rounded-xl">Sem disponibilidade para os critérios selecionados.</div>`: ''}
+    `
+  }));
+});
+
+app.get('/book/:unitId', (req, res) => {
+  const sess = getSession(req.cookies.adm);
+  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+
+  const { unitId } = req.params;
+  const { checkin, checkout } = req.query;
+  const adults = Math.max(1, Number(req.query.adults ?? 2));
+  const children = Math.max(0, Number(req.query.children ?? 0));
+  const totalGuests = adults + children;
+
+  const u = db
+    .prepare('SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id WHERE u.id = ?')
+    .get(unitId);
+  if (!u) return res.status(404).send('Unidade não encontrada');
+  if (!checkin || !checkout) return res.redirect('/');
+  if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
+  if (!unitAvailable(u.id, checkin, checkout)) return res.status(409).send('Este alojamento já não tem disponibilidade.');
+
+  const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
+  if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia mínima: ' + quote.minStayReq + ' noites');
+  const total = quote.total_cents;
+  const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), { className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3', badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full', iconWrapClass: 'inline-flex items-center justify-center text-emerald-700' });
+
+  res.send(layout({
+    title: 'Confirmar Reserva',
+    user,
+    activeNav: 'search',
+    body: html`
+      <h1 class="text-2xl font-semibold mb-4">${u.property_name} – ${u.name}</h1>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card p-4">
+          <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
+          <ul class="text-sm text-slate-700 space-y-1">
+            <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
+            <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
+            <li>Noites: <strong>${quote.nights}</strong></li>
+            <li>Hóspedes: <strong>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
+            <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
+            <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
+          </ul>
+          ${unitFeaturesBooking}
+        </div>
+        <form class="card p-4" method="post" action="/book">
+          <h2 class="font-semibold mb-3">Dados do hóspede</h2>
+          <input type="hidden" name="unit_id" value="${u.id}" />
+          <input type="hidden" name="checkin" value="${checkin}" />
+          <input type="hidden" name="checkout" value="${checkout}" />
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-sm">Adultos</label>
+              <input required type="number" min="1" name="adults" value="${adults}" class="input"/>
+            </div>
+            <div>
+              <label class="text-sm">Crianças</label>
+              <input required type="number" min="0" name="children" value="${children}" class="input"/>
+            </div>
+          </div>
+          <div class="grid gap-3 mt-2">
+            <input required name="guest_name" class="input" placeholder="Nome completo" />
+            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" />
+            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" />
+            <input required type="email" name="guest_email" class="input" placeholder="Email" />
+            ${user ? `
+              <div>
+                <label class="text-sm">Agencia</label>
+                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required />
+              </div>
+            ` : ''}
+            <button class="btn btn-primary">Confirmar Reserva</button>
+          </div>
+          ${user ? `
+            <datalist id="agency-options">
+              <option value="BOOKING"></option>
+              <option value="EXPEDIA"></option>
+              <option value="AIRBNB"></option>
+              <option value="DIRECT"></option>
+            </datalist>
+          ` : ''}
+        </form>
+      </div>
+    `
+  }));
+});
 
 app.post('/book', (req, res) => {
   const sess = getSession(req.cookies.adm);
@@ -560,9 +935,6 @@ app.post('/book', (req, res) => {
 
   try {
     const id = trx();
-    // AUDIT: create booking (snapshot after)
-    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
-    auditLog({ req, action:'CREATE', entity:'booking', entity_id:id, before:null, after:booking, meta:{ route:'/book' } });
     res.redirect(`/booking/${id}`);
   } catch (e) {
     if (e.message === 'conflict') return res.status(409).send('Datas indisponíveis. Tente novamente.');
@@ -589,7 +961,7 @@ app.get('/booking/:id', (req, res) => {
     title: 'Reserva Confirmada',
     user,
     activeNav: 'search',
-    body: `
+    body: html`
       <div class="card p-6">
         <h1 class="text-2xl font-semibold mb-2">Reserva confirmada</h1>
         <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Enviámos um email de confirmação para ${b.guest_email} (mock).</p>
@@ -634,7 +1006,7 @@ app.get('/calendar', requireLogin, (req, res) => {
     title: 'Mapa de Reservas',
     user: req.user,
     activeNav: 'calendar',
-    body: `
+    body: html`
       <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
       <div class="flex items-center justify-between mb-4">
         <a class="btn btn-muted" href="/calendar?ym=${prev}">Mês anterior: ${formatMonthYear(prev + '-01')}</a>
@@ -720,7 +1092,7 @@ app.get('/admin/export', requireLogin, (req,res)=>{
     title: 'Exportar Mapa (Excel)',
     user: req.user,
     activeNav: 'export',
-    body: `
+    body: html`
       <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
       <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
       <form method="get" action="/admin/export/download" class="card p-4 grid gap-3 max-w-md">
@@ -739,16 +1111,13 @@ app.get('/admin/export', requireLogin, (req,res)=>{
   }));
 });
 
-// Excel estilo Gantt + tabela de detalhes (com auditoria do download)
+// Excel estilo Gantt + tabela de detalhes
 app.get('/admin/export/download', requireLogin, async (req, res) => {
   const ym = String(req.query.ym || '').trim();
   const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
   if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');
   const start = dayjs(ym + '-01');
   if (!start.isValid()) return res.status(400).send('Data inválida.');
-
-  // AUDIT: export
-  auditLog({ req, action:'EXPORT', entity:'excel', entity_id:null, meta:{ ym, months } });
 
   const wb = new ExcelJS.Workbook();
 
@@ -957,9 +1326,26 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     ws.addRow([]);
 
     const detailHeaders = [
-      'Ref','Nome','Agência','País','Nr Hóspedes','Nr Noites','Data entrada','Data saída','Tlm','Email',
-      'Nr Quartos','Hora Check-in','Outras Informações','Valor total a pagar','Pré-pagamento 30%','A pagar no check-out',
-      'Fatura','Data Pré-Pagamento','Dados pagamento','Dados faturação'
+      'Ref',
+      'Nome',
+      'Agência',
+      'País',
+      'Nr Hóspedes',
+      'Nr Noites',
+      'Data entrada',
+      'Data saída',
+      'Tlm',
+      'Email',
+      'Nr Quartos',
+      'Hora Check-in',
+      'Outras Informações',
+      'Valor total a pagar',
+      'Pré-pagamento 30%',
+      'A pagar no check-out',
+      'Fatura',
+      'Data Pré-Pagamento',
+      'Dados pagamento',
+      'Dados faturação'
     ];
 
     const detailMonthRow = ws.addRow([monthLabel, ...Array(detailHeaders.length - 1).fill('')]);
@@ -976,7 +1362,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     headerRow.height = 24;
 
     const currencyColumns = new Set([14, 15, 16]);
-    const defaultDetailWidths = [6,24,14,8,12,10,12,12,14,30,10,12,24,16,16,16,10,16,22,22];
+    const defaultDetailWidths = [6, 24, 14, 8, 12, 10, 12, 12, 14, 30, 10, 12, 24, 16, 16, 16, 10, 16, 22, 22];
     defaultDetailWidths.forEach((w, idx) => {
       const colIndex = idx + 1;
       const currentWidth = ws.getColumn(colIndex).width || 10;
@@ -1020,7 +1406,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
           cell.font = { color: { argb: 'FF1F2937' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
-        } else if ([5,6,11].includes(colNumber)) {
+        } else if ([5, 6, 11].includes(colNumber)) {
           cell.alignment = { vertical: 'middle', horizontal: 'center' };
         } else {
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
@@ -1073,7 +1459,7 @@ app.get('/admin', requireLogin, (req, res) => {
     title: 'Backoffice',
     user: req.user,
     activeNav: 'backoffice',
-    body: `
+    body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1168,17 +1554,15 @@ kitchen|Kitchenette"></textarea>
 
 app.post('/admin/properties/create', requireLogin, (req, res) => {
   const { name, location, description } = req.body;
-  const r = db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
-  auditLog({ req, action:'CREATE', entity:'property', entity_id:r.lastInsertRowid, before:null, after:{ id:r.lastInsertRowid, name, location, description } });
+  db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
   res.redirect('/admin');
 });
 
 app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
   const id = req.params.id;
-  const before = db.prepare('SELECT * FROM properties WHERE id = ?').get(id);
-  if (!before) return res.status(404).send('Propriedade não encontrada');
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
+  if (!property) return res.status(404).send('Propriedade não encontrada');
   db.prepare('DELETE FROM properties WHERE id = ?').run(id);
-  auditLog({ req, action:'DELETE', entity:'property', entity_id:id, before, after:null });
   res.redirect('/admin');
 });
 
@@ -1199,7 +1583,7 @@ app.get('/admin/properties/:id', requireLogin, (req, res) => {
     title: p.name,
     user: req.user,
     activeNav: 'backoffice',
-    body: `
+    body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
         <div>
@@ -1229,9 +1613,8 @@ app.post('/admin/units/create', requireLogin, (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
-  const r = db.prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, features) VALUES (?, ?, ?, ?, ?)')
+  db.prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, features) VALUES (?, ?, ?, ?, ?)')
     .run(property_id, name, Number(capacity), cents, JSON.stringify(features));
-  auditLog({ req, action:'CREATE', entity:'unit', entity_id:r.lastInsertRowid, before:null, after:{ id:r.lastInsertRowid, property_id, name, capacity:Number(capacity), base_price_cents:cents, features } });
   res.redirect('/admin');
 });
 
@@ -1260,7 +1643,7 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
     user: req.user,
     activeNav: 'backoffice',
-    body: `
+    body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
       ${unitFeaturesPreview}
@@ -1411,25 +1794,16 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
 });
 
 app.post('/admin/units/:id/update', requireLogin, (req, res) => {
-  const id = req.params.id;
-  const before = db.prepare('SELECT * FROM units WHERE id = ?').get(id);
-  if (!before) return res.status(404).send('Unidade não encontrada');
   const { name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
   db.prepare('UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ? WHERE id = ?')
-    .run(name, Number(capacity), cents, JSON.stringify(features), id);
-  const after = db.prepare('SELECT * FROM units WHERE id = ?').get(id);
-  auditLog({ req, action:'UPDATE', entity:'unit', entity_id:id, before, after });
-  res.redirect(`/admin/units/${id}`);
+    .run(name, Number(capacity), cents, JSON.stringify(features), req.params.id);
+  res.redirect(`/admin/units/${req.params.id}`);
 });
 
 app.post('/admin/units/:id/delete', requireLogin, (req, res) => {
-  const id = req.params.id;
-  const before = db.prepare('SELECT * FROM units WHERE id = ?').get(id);
-  if (!before) return res.status(404).send('Unidade não encontrada');
-  db.prepare('DELETE FROM units WHERE id = ?').run(id);
-  auditLog({ req, action:'DELETE', entity:'unit', entity_id:id, before, after:null });
+  db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
   res.redirect('/admin');
 });
 
@@ -1445,16 +1819,14 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   if (conflicts.length)
     return res.status(409).send('As datas incluem reservas existentes');
 
-  const r = db.prepare('INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)').run(req.params.id, start_date, end_date);
-  auditLog({ req, action:'CREATE', entity:'block', entity_id:r.lastInsertRowid, before:null, after:{ id:r.lastInsertRowid, unit_id:Number(req.params.id), start_date, end_date } });
+  db.prepare('INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)').run(req.params.id, start_date, end_date);
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
 app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
-  const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(req.params.blockId);
+  const block = db.prepare('SELECT unit_id FROM blocks WHERE id = ?').get(req.params.blockId);
   if (!block) return res.status(404).send('Bloqueio não encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
-  auditLog({ req, action:'DELETE', entity:'block', entity_id:block.id, before:block, after:null });
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
@@ -1464,18 +1836,16 @@ app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
     return res.status(400).send('end_date deve ser > start_date');
   const price_cents = Math.round(parseFloat(String(price_eur || '0').replace(',', '.')) * 100);
   if (!(price_cents >= 0)) return res.status(400).send('Preço inválido');
-  const r = db.prepare(
+  db.prepare(
     'INSERT INTO rates(unit_id,start_date,end_date,weekday_price_cents,weekend_price_cents,min_stay) VALUES (?,?,?,?,?,?)'
   ).run(req.params.id, start_date, end_date, price_cents, price_cents, min_stay ? Number(min_stay) : 1);
-  auditLog({ req, action:'CREATE', entity:'rate', entity_id:r.lastInsertRowid, before:null, after:{ id:r.lastInsertRowid, unit_id:Number(req.params.id), start_date, end_date, price_cents, min_stay:min_stay?Number(min_stay):1 } });
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
 app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
-  const r = db.prepare('SELECT * FROM rates WHERE id = ?').get(req.params.rateId);
+  const r = db.prepare('SELECT unit_id FROM rates WHERE id = ?').get(req.params.rateId);
   if (!r) return res.status(404).send('Rate não encontrada');
   db.prepare('DELETE FROM rates WHERE id = ?').run(req.params.rateId);
-  auditLog({ req, action:'DELETE', entity:'rate', entity_id:r.id, before:r, after:null });
   res.redirect(`/admin/units/${r.unit_id}`);
 });
 
@@ -1485,22 +1855,15 @@ app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), (r
   const files = req.files || [];
   const insert = db.prepare('INSERT INTO unit_images(unit_id,file,alt,position) VALUES (?,?,?,?)');
   let pos = db.prepare('SELECT COALESCE(MAX(position),0) as p FROM unit_images WHERE unit_id = ?').get(unitId).p;
-  const created = [];
-  files.forEach(f => {
-    const r = insert.run(unitId, f.filename, null, ++pos);
-    created.push({ id:r.lastInsertRowid, unit_id:Number(unitId), file:f.filename, position:pos });
-  });
-  auditLog({ req, action:'UPLOAD', entity:'image', entity_id:null, before:null, after:created, meta:{ count:files.length, unit_id:Number(unitId) } });
+  files.forEach(f => { insert.run(unitId, f.filename, null, ++pos); });
   res.redirect(`/admin/units/${unitId}`);
 });
-
 app.post('/admin/images/:imageId/delete', requireLogin, (req,res)=>{
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
   if (!img) return res.status(404).send('Imagem não encontrada');
   const filePath = path.join(UPLOAD_UNITS, String(img.unit_id), img.file);
   db.prepare('DELETE FROM unit_images WHERE id = ?').run(img.id);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  auditLog({ req, action:'DELETE', entity:'image', entity_id:img.id, before:img, after:null });
   res.redirect(`/admin/units/${img.unit_id}`);
 });
 
@@ -1543,7 +1906,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
     title: 'Reservas',
     user: req.user,
     activeNav: 'bookings',
-    body: `
+    body: html`
       <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
       <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
@@ -1609,7 +1972,7 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
     title: `Editar reserva #${b.id}`,
     user: req.user,
     activeNav: 'bookings',
-    body: `
+    body: html`
       <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
       <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
 
@@ -1696,8 +2059,6 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   `).get(id);
   if (!b) return res.status(404).send('Reserva não encontrada');
 
-  const before = { ...b };
-
   const checkin = req.body.checkin;
   const checkout = req.body.checkout;
   const internalNotesRaw = req.body.internal_notes;
@@ -1734,23 +2095,132 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
      WHERE id = ?
   `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, internal_notes, status, q.total_cents, id);
 
-  const after = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
-  auditLog({ req, action:'UPDATE', entity:'booking', entity_id:id, before, after });
   res.redirect(`/admin/bookings/${id}`);
 });
 
 app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
   const id = req.params.id;
-  const before = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
-  if (!before) return res.status(404).send('Reserva não encontrada');
+  const exists = db.prepare('SELECT 1 FROM bookings WHERE id = ?').get(id);
+  if (!exists) return res.status(404).send('Reserva não encontrada');
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
-  auditLog({ req, action:'CANCEL', entity:'booking', entity_id:id, before, after:null });
   const back = req.get('referer') || '/admin/bookings';
   res.redirect(back);
 });
 
-// (Opcional) Apagar definitivamente por ADMIN
+// (Opcional) Apagar definitivamente
 app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
-  const id = req.params.id;
-  const before = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+  res.redirect('/admin/bookings');
 });
+
+// ===================== Utilizadores (admin) =====================
+app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
+  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all();
+  res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', body: html`
+    <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+    <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Criar novo utilizador</h2>
+        <form method="post" action="/admin/users/create" class="grid gap-2">
+          <input required name="username" class="input" placeholder="Utilizador" />
+          <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
+          <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
+          <select name="role" class="input">
+            <option value="admin">admin</option>
+            <option value="gestor">gestor</option>
+            <option value="limpezas">limpezas</option>
+          </select>
+          <button class="btn btn-primary">Criar</button>
+        </form>
+      </section>
+
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Alterar password</h2>
+        <form method="post" action="/admin/users/password" class="grid gap-2">
+          <label class="text-sm">Selecionar utilizador</label>
+          <select required name="user_id" class="input">
+            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${u.role})</option>`).join('')}
+          </select>
+          <input required type="password" name="new_password" class="input" placeholder="Nova password (min 8)" />
+          <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
+          <button class="btn btn-primary">Alterar</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">Ao alterar, as sessões desse utilizador são terminadas.</p>
+      </section>
+    </div>
+  `}));
+});
+
+app.post('/admin/users/create', requireAdmin, (req,res)=>{
+  const { username, password, confirm, role } = req.body;
+  if (!username || !password || password.length < 8) return res.status(400).send('Password inválida (min 8).');
+  if (password !== confirm) return res.status(400).send('Passwords não coincidem.');
+  const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
+  if (exists) return res.status(400).send('Utilizador já existe.');
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, role || 'gestor');
+  res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/password', requireAdmin, (req,res)=>{
+  const { user_id, new_password, confirm } = req.body;
+  if (!new_password || new_password.length < 8) return res.status(400).send('Password inválida (min 8).');
+  if (new_password !== confirm) return res.status(400).send('Passwords não coincidem.');
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
+  if (!user) return res.status(404).send('Utilizador não encontrado');
+  const hash = bcrypt.hashSync(new_password, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
+  res.redirect('/admin/utilizadores');
+});
+
+// ===================== Debug Rotas + 404 =====================
+app.get('/_routes', (req, res) => {
+  const router = app._router;
+  if (!router || !router.stack) return res.type('text/plain').send('(router não inicializado)');
+  const lines = [];
+  router.stack.forEach(mw => {
+    if (mw.route && mw.route.path) {
+      const methods = Object.keys(mw.route.methods).map(m => m.toUpperCase()).join(',');
+      lines.push(`${methods} ${mw.route.path}`);
+    } else if (mw.name === 'router' && mw.handle && mw.handle.stack) {
+      mw.handle.stack.forEach(r => {
+        const rt = r.route;
+        if (rt && rt.path) {
+          const methods = Object.keys(rt.methods).map(m => m.toUpperCase()).join(',');
+          lines.push(`${methods} ${rt.path}`);
+        }
+      });
+    }
+  });
+  res.type('text/plain').send(lines.sort().join('\n') || '(sem rotas)');
+});
+
+app.use((req, res) => {
+  res.status(404).send(layout({ body: '<h1 class="text-xl font-semibold">404</h1><p>Página não encontrada.</p>' }));
+});
+
+// ===================== START SERVER =====================
+if (!global.__SERVER_STARTED__) {
+  const PORT = process.env.PORT || 3000;
+  const SSL_KEY_PATH = process.env.SSL_KEY_PATH;
+  const SSL_CERT_PATH = process.env.SSL_CERT_PATH;
+
+  if (SSL_KEY_PATH && SSL_CERT_PATH && fs.existsSync(SSL_KEY_PATH) && fs.existsSync(SSL_CERT_PATH)) {
+    const options = { key: fs.readFileSync(SSL_KEY_PATH), cert: fs.readFileSync(SSL_CERT_PATH) };
+    https.createServer(options, app).listen(PORT, () => {
+      console.log(`Booking Engine (HTTPS) https://localhost:${PORT}`);
+    });
+  } else {
+    app.listen(PORT, () => console.log(`Booking Engine (HTTP) http://localhost:${PORT}`));
+  }
+  global.__SERVER_STARTED__ = true;
+}
+
+
+
+
+
+
