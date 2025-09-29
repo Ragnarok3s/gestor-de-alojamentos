@@ -1,7 +1,7 @@
-/**
+Ôªø/**
  * Booking Engine - Front + Backoffice + Auth + Mapa (mensal)
  * Node.js (Express) + better-sqlite3 + bcryptjs + dayjs + Tailwind (CDN)
- * Uploads (multer) + galeria + exportaÁ„o Excel do calend·rio + Booking Management
+ * Uploads (multer) + galeria + exporta√ß√£o Excel do calend√°rio + Booking Management
  */
 
 const express = require('express');
@@ -24,6 +24,10 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
+app.use((req, res, next) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  next();
+});
 
 // ===================== DB =====================
 const db = new Database('booking_engine.db');
@@ -49,7 +53,7 @@ CREATE TABLE IF NOT EXISTS units (
   UNIQUE(property_id, name)
 );
 
-/* Bookings: checkin incluÌdo, checkout exclusivo (YYYY-MM-DD) */
+/* Bookings: checkin inclu√≠do, checkout exclusivo (YYYY-MM-DD) */
 CREATE TABLE IF NOT EXISTS bookings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
@@ -109,7 +113,7 @@ CREATE TABLE IF NOT EXISTS unit_images (
 `;
 db.exec(schema);
 
-// MigraÁıes leves
+// Migra√ß√µes leves
 function ensureColumn(table, name, def) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
   if (!cols.includes(name)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
@@ -129,10 +133,10 @@ const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
   const ip = db.prepare('INSERT INTO properties(name, location, description) VALUES (?,?,?)');
   const iu = db.prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, description) VALUES (?,?,?,?,?)');
-  const pr1 = ip.run('Casas de Pousadouro', 'Rio Douro', 'Arquitetura tradicional, interiores contempor‚neos').lastInsertRowid;
-  const pr2 = ip.run('Prazer da Natureza', '¬ncora, Portugal', 'Hotel & SPA perto da praia').lastInsertRowid;
+  const pr1 = ip.run('Casas de Pousadouro', 'Rio Douro', 'Arquitetura tradicional, interiores contempor√¢neos').lastInsertRowid;
+  const pr2 = ip.run('Prazer da Natureza', '√Çncora, Portugal', 'Hotel & SPA perto da praia').lastInsertRowid;
   iu.run(pr1, 'Quarto Duplo', 2, 8500, 'Acolhedor e funcional');
-  iu.run(pr1, 'Quarto Familiar', 4, 15500, 'Ideal para famÌlias');
+  iu.run(pr1, 'Quarto Familiar', 4, 15500, 'Ideal para fam√≠lias');
   iu.run(pr2, 'Suite Vista Jardim', 2, 12000, 'Vista jardim e varanda');
 }
 try {
@@ -179,7 +183,7 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype || '');
-    cb(ok ? null : new Error('Tipo de imagem inv·lido'), ok);
+    cb(ok ? null : new Error('Tipo de imagem inv√°lido'), ok);
   }
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
@@ -202,8 +206,8 @@ const FEATURE_ICONS = {
   wifi: 'Wi-Fi',
   pool: 'Piscina',
   car: 'Estacionamento',
-  coffee: 'CafÈ',
-  sun: 'TerraÁo'
+  coffee: 'Caf√©',
+  sun: 'Terra√ßo'
 }
 const FEATURE_ICON_KEYS = Object.keys(FEATURE_ICONS);
 
@@ -329,7 +333,7 @@ function requireLogin(req,res,next){
 function requireAdmin(req,res,next){
   const sess = getSession(req.cookies.adm);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
-  if (sess.role !== 'admin') return res.status(403).send('Sem permiss„o');
+  if (sess.role !== 'admin') return res.status(403).send('Sem permiss√£o');
   req.user = { id: sess.user_id, username: sess.username, role: sess.role };
   next();
 }
@@ -388,7 +392,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .btn-primary{ background:#0f172a; color:#fff; }
         .btn-muted{ background:#e2e8f0; }
         .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
-        body.app-body{margin:0;background:#4F4B11;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
+        body.app-body{margin:0;background:#fafafa;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
         .topbar{background:#f7f6f9;border-bottom:1px solid #e2e1e8;box-shadow:0 1px 0 rgba(15,23,42,.04);}
         .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
@@ -618,7 +622,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
                 ? `<form method="post" action="/logout" class="logout-form">
                      <button type="submit">Log-out</button>
                    </form>`
-                : `<a class="login-link" href="/login">Iniciar sess„o</a>`}
+                : `<a class="login-link" href="/login">Iniciar sess√£o</a>`}
             </div>
           </div>
           <div class="nav-accent-bar"></div>
@@ -653,7 +657,7 @@ app.get('/login', (req,res)=>{
 app.post('/login', (req,res)=>{
   const { username, password, next: nxt } = req.body;
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!u || !bcrypt.compareSync(String(password), u.password_hash)) return res.redirect('/login?error=Credenciais inv·lidas');
+  if (!u || !bcrypt.compareSync(String(password), u.password_hash)) return res.redirect('/login?error=Credenciais inv√°lidas');
   const token = createSession(u.id);
   const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
   res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
@@ -686,7 +690,7 @@ app.get('/', (req, res) => {
             <input type="number" min="1" id="adults" name="adults" value="2" class="search-input"/>
           </div>
           <div class="search-field">
-            <label for="children">CrianÁas</label>
+            <label for="children">Crian√ßas</label>
             <input type="number" min="0" id="children" name="children" value="0" class="search-input"/>
           </div>
           <div class="search-field">
@@ -747,10 +751,10 @@ app.get('/search', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Alojamentos disponÌveis</h1>
+      <h1 class="text-2xl font-semibold mb-4">Alojamentos dispon√≠veis</h1>
       <p class="mb-4 text-slate-600">
         ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
-        ∑ ${adults} adulto(s)${children?` + ${children} crianÁa(s)`:''}
+        ¬∑ ${adults} adulto(s)${children?` + ${children} crian√ßa(s)`:''}
       </p>
       <div class="grid md:grid-cols-2 gap-4">
         ${available.map(u => {
@@ -774,7 +778,7 @@ app.get('/search', (req, res) => {
                 ${u.images.length > 1 ? `<div class="absolute bottom-2 right-2 bg-slate-900/75 text-white text-xs px-2 py-1 rounded">${u.images.length} foto${u.images.length > 1 ? 's' : ''}</div>` : ''}
               </div>
               ${thumbMarkup}`
-            : '<div class="h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 mb-3">Sem fotos disponÌveis</div>';
+            : '<div class="h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 mb-3">Sem fotos dispon√≠veis</div>';
           const featuresHtml = featureChipsHtml(u.features, {
             className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
             badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full',
@@ -801,7 +805,7 @@ app.get('/search', (req, res) => {
           `;
         }).join('')}
       </div>
-      ${available.length === 0 ? `<div class="p-6 bg-amber-50 border border-amber-200 rounded-xl">Sem disponibilidade para os critÈrios selecionados.</div>`: ''}
+      ${available.length === 0 ? `<div class="p-6 bg-amber-50 border border-amber-200 rounded-xl">Sem disponibilidade para os crit√©rios selecionados.</div>`: ''}
     `
   }));
 });
@@ -819,13 +823,13 @@ app.get('/book/:unitId', (req, res) => {
   const u = db
     .prepare('SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id WHERE u.id = ?')
     .get(unitId);
-  if (!u) return res.status(404).send('Unidade n„o encontrada');
+  if (!u) return res.status(404).send('Unidade n√£o encontrada');
   if (!checkin || !checkout) return res.redirect('/');
-  if (u.capacity < totalGuests) return res.status(400).send(`Capacidade m·x. da unidade: ${u.capacity}.`);
-  if (!unitAvailable(u.id, checkin, checkout)) return res.status(409).send('Este alojamento j· n„o tem disponibilidade.');
+  if (u.capacity < totalGuests) return res.status(400).send(`Capacidade m√°x. da unidade: ${u.capacity}.`);
+  if (!unitAvailable(u.id, checkin, checkout)) return res.status(409).send('Este alojamento j√° n√£o tem disponibilidade.');
 
   const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
-  if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia mÌnima: ' + quote.minStayReq + ' noites');
+  if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia m√≠nima: ' + quote.minStayReq + ' noites');
   const total = quote.total_cents;
   const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), { className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3', badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full', iconWrapClass: 'inline-flex items-center justify-center text-emerald-700' });
 
@@ -834,7 +838,7 @@ app.get('/book/:unitId', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">${u.property_name} ñ ${u.name}</h1>
+      <h1 class="text-2xl font-semibold mb-4">${u.property_name} ‚Äì ${u.name}</h1>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="card p-4">
           <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
@@ -842,14 +846,14 @@ app.get('/book/:unitId', (req, res) => {
             <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
             <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
             <li>Noites: <strong>${quote.nights}</strong></li>
-            <li>HÛspedes: <strong>${adults} adulto(s)${children?` + ${children} crianÁa(s)`:''}</strong></li>
-            <li>Estadia mÌnima aplicada: <strong>${quote.minStayReq} noites</strong></li>
+            <li>H√≥spedes: <strong>${adults} adulto(s)${children?` + ${children} crian√ßa(s)`:''}</strong></li>
+            <li>Estadia m√≠nima aplicada: <strong>${quote.minStayReq} noites</strong></li>
             <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
           </ul>
           ${unitFeaturesBooking}
         </div>
         <form class="card p-4" method="post" action="/book">
-          <h2 class="font-semibold mb-3">Dados do hÛspede</h2>
+          <h2 class="font-semibold mb-3">Dados do h√≥spede</h2>
           <input type="hidden" name="unit_id" value="${u.id}" />
           <input type="hidden" name="checkin" value="${checkin}" />
           <input type="hidden" name="checkout" value="${checkout}" />
@@ -859,14 +863,14 @@ app.get('/book/:unitId', (req, res) => {
               <input required type="number" min="1" name="adults" value="${adults}" class="input"/>
             </div>
             <div>
-              <label class="text-sm">CrianÁas</label>
+              <label class="text-sm">Crian√ßas</label>
               <input required type="number" min="0" name="children" value="${children}" class="input"/>
             </div>
           </div>
           <div class="grid gap-3 mt-2">
             <input required name="guest_name" class="input" placeholder="Nome completo" />
             <input required name="guest_nationality" class="input" placeholder="Nacionalidade" />
-            <input required name="guest_phone" class="input" placeholder="Telefone/TelemÛvel" />
+            <input required name="guest_phone" class="input" placeholder="Telefone/Telem√≥vel" />
             <input required type="email" name="guest_email" class="input" placeholder="Email" />
             ${user ? `
               <div>
@@ -900,12 +904,12 @@ app.post('/book', (req, res) => {
   const totalGuests = adults + children;
   const agencyRaw = req.body.agency;
   const agency = agencyRaw ? String(agencyRaw).trim().toUpperCase() : null;
-  if (user && !agency) return res.status(400).send('Agencia obrigatÛria para reservas internas.');
+  if (user && !agency) return res.status(400).send('Agencia obrigat√≥ria para reservas internas.');
   const agencyValue = agency || 'DIRECT';
 
   const u = db.prepare('SELECT * FROM units WHERE id = ?').get(unit_id);
-  if (!u) return res.status(404).send('Unidade n„o encontrada');
-  if (u.capacity < totalGuests) return res.status(400).send(`Capacidade m·x. da unidade: ${u.capacity}.`);
+  if (!u) return res.status(404).send('Unidade n√£o encontrada');
+  if (u.capacity < totalGuests) return res.status(400).send(`Capacidade m√°x. da unidade: ${u.capacity}.`);
 
   const trx = db.transaction(() => {
     const conflicts = db.prepare(
@@ -932,8 +936,8 @@ app.post('/book', (req, res) => {
     const id = trx();
     res.redirect(`/booking/${id}`);
   } catch (e) {
-    if (e.message === 'conflict') return res.status(409).send('Datas indisponÌveis. Tente novamente.');
-    if (e.message && e.message.startsWith('minstay:')) return res.status(400).send('Estadia mÌnima: ' + e.message.split(':')[1] + ' noites');
+    if (e.message === 'conflict') return res.status(409).send('Datas indispon√≠veis. Tente novamente.');
+    if (e.message && e.message.startsWith('minstay:')) return res.status(400).send('Estadia m√≠nima: ' + e.message.split(':')[1] + ' noites');
     console.error(e);
     res.status(500).send('Erro ao criar reserva');
   }
@@ -950,7 +954,7 @@ app.get('/booking/:id', (req, res) => {
      JOIN properties p ON p.id = u.property_id
      WHERE b.id = ?`
   ).get(req.params.id);
-  if (!b) return res.status(404).send('Reserva n„o encontrada');
+  if (!b) return res.status(404).send('Reserva n√£o encontrada');
 
   res.send(layout({
     title: 'Reserva Confirmada',
@@ -959,13 +963,13 @@ app.get('/booking/:id', (req, res) => {
     body: html`
       <div class="card p-6">
         <h1 class="text-2xl font-semibold mb-2">Reserva confirmada</h1>
-        <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Envi·mos um email de confirmaÁ„o para ${b.guest_email} (mock).</p>
+        <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Envi√°mos um email de confirma√ß√£o para ${b.guest_email} (mock).</p>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
-            <div class="font-semibold">${b.property_name} ñ ${b.unit_name}</div>
-            <div>HÛspede: <strong>${b.guest_name}</strong> ${b.guest_nationality?`<span class="text-slate-500">(${b.guest_nationality})</span>`:''}</div>
+            <div class="font-semibold">${b.property_name} ‚Äì ${b.unit_name}</div>
+            <div>H√≥spede: <strong>${b.guest_name}</strong> ${b.guest_nationality?`<span class="text-slate-500">(${b.guest_nationality})</span>`:''}</div>
             <div>Contacto: <strong>${b.guest_phone || '-'}</strong> &middot; <strong>${b.guest_email}</strong></div>
-            <div>OcupaÁ„o: <strong>${b.adults} adulto(s)${b.children?` + ${b.children} crianÁa(s)`:''}</strong></div>
+            <div>Ocupa√ß√£o: <strong>${b.adults} adulto(s)${b.children?` + ${b.children} crian√ßa(s)`:''}</strong></div>
             ${b.agency ? `<div>Agencia: <strong>${b.agency}</strong></div>` : ''}
             <div>Check-in: <strong>${dayjs(b.checkin).format('DD/MM/YYYY')}</strong></div>
             <div>Check-out: <strong>${dayjs(b.checkout).format('DD/MM/YYYY')}</strong></div>
@@ -973,7 +977,7 @@ app.get('/booking/:id', (req, res) => {
           </div>
           <div class="text-right">
             <div class="text-xs text-slate-500">Total</div>
-            <div class="text-3xl font-semibold">Ä ${eur(b.total_cents)}</div>
+            <div class="text-3xl font-semibold">‚Ç¨ ${eur(b.total_cents)}</div>
             <div class="text-xs text-slate-500">Status: ${b.status}</div>
           </div>
         </div>
@@ -983,7 +987,7 @@ app.get('/booking/:id', (req, res) => {
   }));
 });
 
-// ===================== Calend·rio (privado) =====================
+// ===================== Calend√°rio (privado) =====================
 app.get('/calendar', requireLogin, (req, res) => {
   const ym = req.query.ym; // YYYY-MM
   const base = ym ? dayjs(ym + '-01') : dayjs().startOf('month');
@@ -1004,16 +1008,16 @@ app.get('/calendar', requireLogin, (req, res) => {
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
       <div class="flex items-center justify-between mb-4">
-        <a class="btn btn-muted" href="/calendar?ym=${prev}">MÍs anterior: ${formatMonthYear(prev + '-01')}</a>
-        <div class="text-slate-600">MÍs de ${formatMonthYear(month)}</div>
-        <a class="btn btn-muted" href="/calendar?ym=${next}">MÍs seguinte: ${formatMonthYear(next + '-01')}</a>
+        <a class="btn btn-muted" href="/calendar?ym=${prev}">M√™s anterior: ${formatMonthYear(prev + '-01')}</a>
+        <div class="text-slate-600">M√™s de ${formatMonthYear(month)}</div>
+        <a class="btn btn-muted" href="/calendar?ym=${next}">M√™s seguinte: ${formatMonthYear(next + '-01')}</a>
       </div>
       <div class="text-sm mb-3 flex gap-3 items-center">
         <span class="inline-block w-3 h-3 rounded bg-emerald-500"></span> Livre
         <span class="inline-block w-3 h-3 rounded bg-rose-500"></span> Ocupado
         <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
         <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
-        <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mÍs
+        <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do m√™s
         <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
       </div>
       <div class="space-y-6">
@@ -1062,7 +1066,7 @@ function unitCalendarCard(u, month) {
     cells.push(`<div class="h-12 sm:h-14 flex items-center justify-center rounded ${cls} text-xs sm:text-sm"${title}>${d.date()}</div>`);
   }
 
-  const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','S·b','Dom']
+  const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','S√°b','Dom']
     .map(w => `<div class="text-center text-xs text-slate-500 py-1">${w}</div>`)
     .join('');
   return `
@@ -1092,16 +1096,16 @@ app.get('/admin/export', requireLogin, (req,res)=>{
       <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
       <form method="get" action="/admin/export/download" class="card p-4 grid gap-3 max-w-md">
         <div>
-          <label class="text-sm">MÍs inicial</label>
+          <label class="text-sm">M√™s inicial</label>
           <input type="month" name="ym" value="${ymDefault}" class="input" required />
         </div>
         <div>
-          <label class="text-sm">Quantos meses (1ñ12)</label>
+          <label class="text-sm">Quantos meses (1‚Äì12)</label>
           <input type="number" min="1" max="12" name="months" value="1" class="input" required />
         </div>
         <button class="btn btn-primary">Descarregar Excel</button>
       </form>
-      <p class="text-sm text-slate-500 mt-3">Uma folha por mÍs. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
+      <p class="text-sm text-slate-500 mt-3">Uma folha por m√™s. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
     `
   }));
 });
@@ -1110,9 +1114,9 @@ app.get('/admin/export', requireLogin, (req,res)=>{
 app.get('/admin/export/download', requireLogin, async (req, res) => {
   const ym = String(req.query.ym || '').trim();
   const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
-  if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Par‚metro ym inv·lido (YYYY-MM)');
+  if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Par√¢metro ym inv√°lido (YYYY-MM)');
   const start = dayjs(ym + '-01');
-  if (!start.isValid()) return res.status(400).send('Data inv·lida.');
+  if (!start.isValid()) return res.status(400).send('Data inv√°lida.');
 
   const wb = new ExcelJS.Workbook();
 
@@ -1323,24 +1327,24 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     const detailHeaders = [
       'Ref',
       'Nome',
-      'AgÍncia',
-      'PaÌs',
-      'Nr HÛspedes',
+      'Ag√™ncia',
+      'Pa√≠s',
+      'Nr H√≥spedes',
       'Nr Noites',
       'Data entrada',
-      'Data saÌda',
+      'Data sa√≠da',
       'Tlm',
       'Email',
       'Nr Quartos',
       'Hora Check-in',
-      'Outras InformaÁıes',
+      'Outras Informa√ß√µes',
       'Valor total a pagar',
-      'PrÈ-pagamento 30%',
+      'Pr√©-pagamento 30%',
       'A pagar no check-out',
       'Fatura',
-      'Data PrÈ-Pagamento',
+      'Data Pr√©-Pagamento',
       'Dados pagamento',
-      'Dados faturaÁ„o'
+      'Dados fatura√ß√£o'
     ];
 
     const detailMonthRow = ws.addRow([monthLabel, ...Array(detailHeaders.length - 1).fill('')]);
@@ -1469,8 +1473,8 @@ app.get('/admin', requireLogin, (req, res) => {
           </ul>
           <form method="post" action="/admin/properties/create" class="grid gap-2">
             <input required name="name" class="input" placeholder="Nome"/>
-            <input name="location" class="input" placeholder="LocalizaÁ„o"/>
-            <textarea name="description" class="input" placeholder="DescriÁ„o"></textarea>
+            <input name="location" class="input" placeholder="Localiza√ß√£o"/>
+            <textarea name="description" class="input" placeholder="Descri√ß√£o"></textarea>
             <button class="btn btn-primary">Adicionar Propriedade</button>
           </form>
         </section>
@@ -1481,7 +1485,7 @@ app.get('/admin', requireLogin, (req, res) => {
             <table class="w-full min-w-[820px] text-sm">
               <thead>
                 <tr class="text-left text-slate-500">
-                  <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base Ä/noite</th><th></th>
+                  <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base ‚Ç¨/noite</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -1504,13 +1508,13 @@ app.get('/admin', requireLogin, (req, res) => {
             </select>
             <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade"/>
             <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade"/>
-            <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="PreÁo base Ä/noite"/>
-            <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="CaracterÌsticas (uma por linha). Ex: 
+            <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Pre√ßo base ‚Ç¨/noite"/>
+            <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="Caracter√≠sticas (uma por linha). Ex: 
 bed|3 camas
 wifi
 kitchen|Kitchenette"></textarea>
             <div class="text-xs text-slate-500 md:col-span-6">
-              Õcones Lucide disponÌveis: ${FEATURE_ICON_KEYS.join(', ')}. Usa <code>icon|texto</code> ou sÛ o Ìcone.
+              √çcones Lucide dispon√≠veis: ${FEATURE_ICON_KEYS.join(', ')}. Usa <code>icon|texto</code> ou s√≥ o √≠cone.
             </div>
             <div class="md:col-span-6">
               <button class="btn btn-primary">Adicionar Unidade</button>
@@ -1525,19 +1529,19 @@ kitchen|Kitchenette"></textarea>
           <table class="w-full min-w-[980px] text-sm">
             <thead>
               <tr class="text-left text-slate-500">
-                <th>Quando</th><th>Propriedade / Unidade</th><th>HÛspede</th><th>Contacto</th><th>OcupaÁ„o</th><th>Datas</th><th>Total</th>
+                <th>Quando</th><th>Propriedade / Unidade</th><th>H√≥spede</th><th>Contacto</th><th>Ocupa√ß√£o</th><th>Datas</th><th>Total</th>
               </tr>
             </thead>
             <tbody>
               ${recentBookings.map(b => `
                 <tr class="border-t" title="${esc(b.guest_name||'')}">
                   <td>${dayjs(b.created_at).format('DD/MM HH:mm')}</td>
-                  <td>${esc(b.property_name)} ∑ ${esc(b.unit_name)}</td>
+                  <td>${esc(b.property_name)} ¬∑ ${esc(b.unit_name)}</td>
                   <td>${esc(b.guest_name)}</td>
-                  <td>${esc(b.guest_phone||'-')} ∑ ${esc(b.guest_email)}</td>
+                  <td>${esc(b.guest_phone||'-')} ¬∑ ${esc(b.guest_email)}</td>
                   <td>${b.adults}A+${b.children}C</td>
                   <td>${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')}</td>
-                  <td>Ä ${eur(b.total_cents)}</td>
+                  <td>‚Ç¨ ${eur(b.total_cents)}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -1556,14 +1560,14 @@ app.post('/admin/properties/create', requireLogin, (req, res) => {
 app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
   const id = req.params.id;
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
-  if (!property) return res.status(404).send('Propriedade n„o encontrada');
+  if (!property) return res.status(404).send('Propriedade n√£o encontrada');
   db.prepare('DELETE FROM properties WHERE id = ?').run(id);
   res.redirect('/admin');
 });
 
 app.get('/admin/properties/:id', requireLogin, (req, res) => {
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
-  if (!p) return res.status(404).send('Propriedade n„o encontrada');
+  if (!p) return res.status(404).send('Propriedade n√£o encontrada');
 
   const units = db.prepare('SELECT * FROM units WHERE property_id = ? ORDER BY name').all(p.id);
   const bookings = db.prepare(
@@ -1597,7 +1601,7 @@ app.get('/admin/properties/:id', requireLogin, (req, res) => {
       <h2 class="font-semibold mb-2">Reservas</h2>
       <ul class="space-y-1">
         ${bookings.length ? bookings.map(b => `
-          <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} ∑ ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
+          <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} ¬∑ ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
         `).join('') : '<em>Sem reservas</em>'}
       </ul>
     `
@@ -1620,7 +1624,7 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
        JOIN properties p ON p.id = u.property_id
       WHERE u.id = ?`
   ).get(req.params.id);
-  if (!u) return res.status(404).send('Unidade n„o encontrada');
+  if (!u) return res.status(404).send('Unidade n√£o encontrada');
 
   const unitFeatures = parseFeaturesStored(u.features);
   const unitFeaturesTextarea = esc(featuresToTextarea(unitFeatures));
@@ -1635,7 +1639,7 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
   const images = db.prepare('SELECT * FROM unit_images WHERE unit_id = ? ORDER BY position, id').all(u.id);
 
   res.send(layout({
-    title: `${esc(u.property_name)} ñ ${esc(u.name)}`,
+    title: `${esc(u.property_name)} ‚Äì ${esc(u.name)}`,
     user: req.user,
     activeNav: 'backoffice',
     body: html`
@@ -1685,18 +1689,18 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
                   <input required type="date" name="start_date" class="input"/>
                 </div>
                 <div>
-                  <label class="text-sm">AtÈ</label>
+                  <label class="text-sm">At√©</label>
                   <input required type="date" name="end_date" class="input"/>
                 </div>
               </div>
               <div class="grid grid-cols-2 gap-2">
                 <div>
-                  <label class="text-sm">Ä/noite</label>
-                  <input required type="number" step="0.01" min="0" name="price_eur" class="input" placeholder="PreÁo Ä/noite"/>
+                  <label class="text-sm">‚Ç¨/noite</label>
+                  <input required type="number" step="0.01" min="0" name="price_eur" class="input" placeholder="Pre√ßo ‚Ç¨/noite"/>
                 </div>
                 <div>
-                  <label class="text-sm">MÌn. noites</label>
-                  <input type="number" min="1" name="min_stay" class="input" placeholder="MÌnimo de noites"/>
+                  <label class="text-sm">M√≠n. noites</label>
+                  <input type="number" min="1" name="min_stay" class="input" placeholder="M√≠nimo de noites"/>
                 </div>
               </div>
               <button class="btn btn-primary">Guardar rate</button>
@@ -1729,12 +1733,12 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
             <label class="text-sm">Capacidade</label>
             <input type="number" min="1" name="capacity" class="input" value="${u.capacity}"/>
 
-            <label class="text-sm">PreÁo base Ä/noite</label>
+            <label class="text-sm">Pre√ßo base ‚Ç¨/noite</label>
             <input type="number" step="0.01" name="base_price_eur" class="input" value="${eur(u.base_price_cents)}"/>
 
-            <label class="text-sm">CaracterÌsticas</label>
+            <label class="text-sm">Caracter√≠sticas</label>
             <textarea name="features_raw" rows="6" class="input">${unitFeaturesTextarea}</textarea>
-            <div class="text-xs text-slate-500">Uma por linha no formato <code>icon|texto</code> ou apenas o Ìcone. Õcones: ${FEATURE_ICON_KEYS.join(', ')}.</div>
+            <div class="text-xs text-slate-500">Uma por linha no formato <code>icon|texto</code> ou apenas o √≠cone. √çcones: ${FEATURE_ICON_KEYS.join(', ')}.</div>
 
             <button class="btn btn-primary">Guardar</button>
           </form>
@@ -1744,7 +1748,7 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
             <table class="w-full min-w-[720px] text-sm">
               <thead>
                 <tr class="text-left text-slate-500">
-                  <th>De</th><th>AtÈ</th><th>Ä/noite (weekday)</th><th>Ä/noite (weekend)</th><th>MÌn</th><th></th>
+                  <th>De</th><th>At√©</th><th>‚Ç¨/noite (weekday)</th><th>‚Ç¨/noite (weekend)</th><th>M√≠n</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -1752,8 +1756,8 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
                   <tr class="border-t">
                     <td>${dayjs(r.start_date).format('DD/MM/YYYY')}</td>
                     <td>${dayjs(r.end_date).format('DD/MM/YYYY')}</td>
-                    <td>Ä ${eur(r.weekday_price_cents)}</td>
-                    <td>Ä ${eur(r.weekend_price_cents)}</td>
+                    <td>‚Ç¨ ${eur(r.weekday_price_cents)}</td>
+                    <td>‚Ç¨ ${eur(r.weekend_price_cents)}</td>
                     <td>${r.min_stay || 1}</td>
                     <td>
                       <form method="post" action="/admin/rates/${r.id}/delete" onsubmit="return confirm('Apagar rate?');">
@@ -1820,7 +1824,7 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
 
 app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
   const block = db.prepare('SELECT unit_id FROM blocks WHERE id = ?').get(req.params.blockId);
-  if (!block) return res.status(404).send('Bloqueio n„o encontrado');
+  if (!block) return res.status(404).send('Bloqueio n√£o encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
   res.redirect(`/admin/units/${block.unit_id}`);
 });
@@ -1830,7 +1834,7 @@ app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
   if (!dayjs(end_date).isAfter(dayjs(start_date)))
     return res.status(400).send('end_date deve ser > start_date');
   const price_cents = Math.round(parseFloat(String(price_eur || '0').replace(',', '.')) * 100);
-  if (!(price_cents >= 0)) return res.status(400).send('PreÁo inv·lido');
+  if (!(price_cents >= 0)) return res.status(400).send('Pre√ßo inv√°lido');
   db.prepare(
     'INSERT INTO rates(unit_id,start_date,end_date,weekday_price_cents,weekend_price_cents,min_stay) VALUES (?,?,?,?,?,?)'
   ).run(req.params.id, start_date, end_date, price_cents, price_cents, min_stay ? Number(min_stay) : 1);
@@ -1839,7 +1843,7 @@ app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
 
 app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
   const r = db.prepare('SELECT unit_id FROM rates WHERE id = ?').get(req.params.rateId);
-  if (!r) return res.status(404).send('Rate n„o encontrada');
+  if (!r) return res.status(404).send('Rate n√£o encontrada');
   db.prepare('DELETE FROM rates WHERE id = ?').run(req.params.rateId);
   res.redirect(`/admin/units/${r.unit_id}`);
 });
@@ -1855,7 +1859,7 @@ app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), (r
 });
 app.post('/admin/images/:imageId/delete', requireLogin, (req,res)=>{
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
-  if (!img) return res.status(404).send('Imagem n„o encontrada');
+  if (!img) return res.status(404).send('Imagem n√£o encontrada');
   const filePath = path.join(UPLOAD_UNITS, String(img.unit_id), img.file);
   db.prepare('DELETE FROM unit_images WHERE id = ?').run(img.id);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -1905,7 +1909,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
       <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
       <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-        <input class="input md:col-span-2" name="q" placeholder="Procurar por hÛspede, email, unidade, propriedade" value="${esc(q)}"/>
+        <input class="input md:col-span-2" name="q" placeholder="Procurar por h√≥spede, email, unidade, propriedade" value="${esc(q)}"/>
         <select class="input" name="status">
           <option value="">Todos os estados</option>
           <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
@@ -1919,7 +1923,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
         <table class="w-full min-w-[980px] text-sm">
           <thead>
             <tr class="text-left text-slate-500">
-              <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>AgÍncia</th><th>HÛspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
+              <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Ag√™ncia</th><th>H√≥spede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -1931,7 +1935,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
                 <td>${esc(b.agency || '')}</td>
                 <td>${esc(b.guest_name)} <span class="text-slate-500">(${esc(b.guest_email)})</span></td>
                 <td>${b.adults}A+${b.children}C</td>
-                <td>Ä ${eur(b.total_cents)}</td>
+                <td>‚Ç¨ ${eur(b.total_cents)}</td>
                 <td>
                   <span class="text-xs rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
                     ${b.status}
@@ -1961,7 +1965,7 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
       JOIN properties p ON p.id = u.property_id
      WHERE b.id = ?
   `).get(req.params.id);
-  if (!b) return res.status(404).send('Reserva n„o encontrada');
+  if (!b) return res.status(404).send('Reserva n√£o encontrada');
 
   res.send(layout({
     title: `Editar reserva #${b.id}`,
@@ -1977,8 +1981,8 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
           <div class="font-semibold mb-3">${esc(b.unit_name)}</div>
           <ul class="text-sm text-slate-700 space-y-1">
             <li>Atual: ${dayjs(b.checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(b.checkout).format('DD/MM/YYYY')}</li>
-            <li>OcupaÁ„o: ${b.adults}A+${b.children}C (cap. ${b.capacity})</li>
-            <li>Total atual: Ä ${eur(b.total_cents)}</li>
+            <li>Ocupa√ß√£o: ${b.adults}A+${b.children}C (cap. ${b.capacity})</li>
+            <li>Total atual: ‚Ç¨ ${eur(b.total_cents)}</li>
           </ul>
         </div>
 
@@ -2000,17 +2004,17 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
               <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
             </div>
             <div>
-              <label class="text-sm">CrianÁas</label>
+              <label class="text-sm">Crian√ßas</label>
               <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
             </div>
           </div>
 
-          <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hÛspede" required />
+          <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do h√≥spede" required />
           <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
           <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
           <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
           <div>
-            <label class="text-sm">AgÍncia</label>
+            <label class="text-sm">Ag√™ncia</label>
             <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
           </div>
 
@@ -2023,7 +2027,7 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
           </div>
 
           <div class="flex items-center gap-3">
-            <button class="btn btn-primary">Guardar alteraÁıes</button>
+            <button class="btn btn-primary">Guardar altera√ß√µes</button>
             <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
               <button class="btn" style="background:#e11d48;color:#fff;">Cancelar</button>
             </form>
@@ -2041,7 +2045,7 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
       FROM bookings b JOIN units u ON u.id = b.unit_id
      WHERE b.id = ?
   `).get(id);
-  if (!b) return res.status(404).send('Reserva n„o encontrada');
+  if (!b) return res.status(404).send('Reserva n√£o encontrada');
 
   const checkin = req.body.checkin;
   const checkout = req.body.checkout;
@@ -2056,7 +2060,7 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   const agency = req.body.agency ? String(req.body.agency).trim().toUpperCase() : null;
 
   if (!dayjs(checkout).isAfter(dayjs(checkin))) return res.status(400).send('checkout deve ser > checkin');
-  if (adults + children > b.capacity) return res.status(400).send(`Capacidade excedida (m·x ${b.capacity}).`);
+  if (adults + children > b.capacity) return res.status(400).send(`Capacidade excedida (m√°x ${b.capacity}).`);
 
   const conflict = db.prepare(`
     SELECT 1 FROM bookings 
@@ -2069,7 +2073,7 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   if (conflict) return res.status(409).send('Conflito com outra reserva.');
 
   const q = rateQuote(b.unit_id, checkin, checkout, b.base_price_cents);
-  if (q.nights < q.minStayReq) return res.status(400).send(`Estadia mÌnima: ${q.minStayReq} noites`);
+  if (q.nights < q.minStayReq) return res.status(400).send(`Estadia m√≠nima: ${q.minStayReq} noites`);
 
   db.prepare(`
     UPDATE bookings
@@ -2083,7 +2087,7 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
 app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
   const id = req.params.id;
   const exists = db.prepare('SELECT 1 FROM bookings WHERE id = ?').get(id);
-  if (!exists) return res.status(404).send('Reserva n„o encontrada');
+  if (!exists) return res.status(404).send('Reserva n√£o encontrada');
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
   const back = req.get('referer') || '/admin/bookings';
   res.redirect(back);
@@ -2129,7 +2133,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
           <button class="btn btn-primary">Alterar</button>
         </form>
-        <p class="text-sm text-slate-500 mt-2">Ao alterar, as sessıes desse utilizador s„o terminadas.</p>
+        <p class="text-sm text-slate-500 mt-2">Ao alterar, as sess√µes desse utilizador s√£o terminadas.</p>
       </section>
     </div>
   `}));
@@ -2137,10 +2141,10 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
 
 app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const { username, password, confirm, role } = req.body;
-  if (!username || !password || password.length < 8) return res.status(400).send('Password inv·lida (min 8).');
-  if (password !== confirm) return res.status(400).send('Passwords n„o coincidem.');
+  if (!username || !password || password.length < 8) return res.status(400).send('Password inv√°lida (min 8).');
+  if (password !== confirm) return res.status(400).send('Passwords n√£o coincidem.');
   const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
-  if (exists) return res.status(400).send('Utilizador j· existe.');
+  if (exists) return res.status(400).send('Utilizador j√° existe.');
   const hash = bcrypt.hashSync(password, 10);
   db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, role || 'gestor');
   res.redirect('/admin/utilizadores');
@@ -2148,10 +2152,10 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
 
 app.post('/admin/users/password', requireAdmin, (req,res)=>{
   const { user_id, new_password, confirm } = req.body;
-  if (!new_password || new_password.length < 8) return res.status(400).send('Password inv·lida (min 8).');
-  if (new_password !== confirm) return res.status(400).send('Passwords n„o coincidem.');
+  if (!new_password || new_password.length < 8) return res.status(400).send('Password inv√°lida (min 8).');
+  if (new_password !== confirm) return res.status(400).send('Passwords n√£o coincidem.');
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
-  if (!user) return res.status(404).send('Utilizador n„o encontrado');
+  if (!user) return res.status(404).send('Utilizador n√£o encontrado');
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
@@ -2161,7 +2165,7 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
 // ===================== Debug Rotas + 404 =====================
 app.get('/_routes', (req, res) => {
   const router = app._router;
-  if (!router || !router.stack) return res.type('text/plain').send('(router n„o inicializado)');
+  if (!router || !router.stack) return res.type('text/plain').send('(router n√£o inicializado)');
   const lines = [];
   router.stack.forEach(mw => {
     if (mw.route && mw.route.path) {
@@ -2181,7 +2185,7 @@ app.get('/_routes', (req, res) => {
 });
 
 app.use((req, res) => {
-  res.status(404).send(layout({ body: '<h1 class="text-xl font-semibold">404</h1><p>P·gina n„o encontrada.</p>' }));
+  res.status(404).send(layout({ body: '<h1 class="text-xl font-semibold">404</h1><p>P√°gina n√£o encontrada.</p>' }));
 });
 
 // ===================== START SERVER =====================
@@ -2200,6 +2204,7 @@ if (!global.__SERVER_STARTED__) {
   }
   global.__SERVER_STARTED__ = true;
 }
+
 
 
 
