@@ -1,7 +1,8 @@
 ﻿/**
  * Booking Engine - Front + Backoffice + Auth + Mapa (mensal)
  * Node.js (Express) + better-sqlite3 + bcryptjs + dayjs + Tailwind (CDN)
- * Uploads (multer) + galeria + exportação Excel do calendário + Booking Management
+ * Uploads (multer + sharp) + galeria + exportação Excel do calendário + Booking Management
+ * Segurança: Helmet, Compression, CSRF global, Rate-limit no login, Open-redirect fix
  */
 
 const express = require('express');
@@ -17,17 +18,70 @@ const https = require('https');
 const multer = require('multer');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const sharp = require('sharp'); // NEW
+const helmet = require('helmet'); // NEW
+const compression = require('compression'); // NEW
+const rateLimit = require('express-rate-limit'); // NEW
+
 dayjs.extend(minMax);
 dayjs.locale('pt');
 
 const app = express();
+const isProd = process.env.NODE_ENV === 'production';
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use((req, res, next) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+// ---- Segurança base ----
+app.use(helmet({
+  contentSecurityPolicy: false,         // inline scripts presentes
+  crossOriginEmbedderPolicy: false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
+}));
+app.use(compression());
+
+// ---- NUNCA definir Content-Type global para text/html ----
+// (Removido o middleware antigo)
+
+// ===================== CSRF (global) =====================
+function newCsrfToken(){ return crypto.randomBytes(16).toString('hex'); }
+
+function ensureCsrfCookie(req, res, next){
+  let token = req.cookies.csrf;
+  const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
+  if (!token) {
+    token = newCsrfToken();
+    res.cookie('csrf', token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure
+    });
+  }
+  req.csrfToken = () => token;
   next();
+}
+app.use(ensureCsrfCookie);
+
+function verifyCsrf(req, res, next){
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  const token = req.body?._csrf || req.headers['x-csrf-token'];
+  const cookieToken = req.cookies.csrf;
+  if (!token || !cookieToken || token !== cookieToken) {
+    return res.status(403).send('CSRF inválido');
+  }
+  next();
+}
+app.use(verifyCsrf);
+
+// ===================== Rate-limit no login =====================
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false
 });
+app.use('/login', loginLimiter);
 
 // ===================== DB =====================
 const db = new Database('booking_engine.db');
@@ -69,6 +123,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   total_cents INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'CONFIRMED',
   external_ref TEXT,
+  internal_notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -113,7 +168,16 @@ CREATE TABLE IF NOT EXISTS unit_images (
 `;
 db.exec(schema);
 
-// Migrações leves
+// Índices de performance
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_bookings_unit_dates ON bookings(unit_id, checkin, checkout, status);
+  CREATE INDEX IF NOT EXISTS idx_blocks_unit_dates   ON blocks(unit_id, start_date, end_date);
+  CREATE INDEX IF NOT EXISTS idx_rates_unit_dates    ON rates(unit_id, start_date, end_date);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expires_at);
+  CREATE INDEX IF NOT EXISTS idx_unit_images_unit_pos ON unit_images(unit_id, position, id);
+`);
+
+// Migrações leves (idempotentes)
 function ensureColumn(table, name, def) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
   if (!cols.includes(name)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
@@ -183,7 +247,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = /image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype || '');
+    const ok = /image\/(png|jpe?g|webp)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
   }
 });
@@ -247,7 +311,6 @@ function parseFeaturesInput(raw) {
     })
     .filter(Boolean);
 }
-
 function normalizeFeature(entry) {
   if (!entry) return null;
   if (typeof entry === 'string') {
@@ -448,6 +511,32 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       </style>
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
+
+        // Auto-injeção CSRF em todos os forms POST
+        (function autoCsrf(){
+          function getCookie(name){
+            return document.cookie.split('; ').map(v=>v.split('=')).find(x=>x[0]===name)?.[1] || '';
+          }
+          function injectCsrf(root){
+            const token = getCookie('csrf');
+            if (!token) return;
+            const forms = (root || document).querySelectorAll('form[method="post"]:not([data-csrf-bound])');
+            forms.forEach(f=>{
+              f.dataset.csrfBound = '1';
+              let hidden = f.querySelector('input[name="_csrf"]');
+              if (!hidden){
+                hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = '_csrf';
+                f.appendChild(hidden);
+              }
+              hidden.value = token;
+            });
+          }
+          document.addEventListener('DOMContentLoaded', ()=>injectCsrf(document));
+          document.addEventListener('htmx:afterSwap', (e)=>injectCsrf(e.target || document));
+        })();
+
         function refreshIcons(){
           if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
@@ -460,6 +549,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         }
         window.addEventListener('load', refreshIcons);
         document.addEventListener('htmx:afterSwap', refreshIcons);
+
         function syncCheckout(e){
           const ci = e.target.value; const co = document.getElementById('checkout');
           if (co && co.value && co.value <= ci) { co.value = ci; }
@@ -473,7 +563,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           });
         }
 
-        // Lightbox / Galeria
+        // Lightbox / Galeria (sem alterações críticas)
         (function(){
           let overlay;
           let imgEl;
@@ -638,8 +728,14 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
     </body>
   </html>`;
 }
-
 // ===================== Auth =====================
+function safeNext(nxt){
+  if (!nxt || typeof nxt !== 'string') return null;
+  if (!nxt.startsWith('/')) return null;
+  if (nxt.startsWith('//')) return null;
+  return nxt;
+}
+
 app.get('/login', (req,res)=>{
   const { error, next: nxt } = req.query;
   res.send(layout({ title: 'Login', body: html`
@@ -647,7 +743,7 @@ app.get('/login', (req,res)=>{
       <h1 class="text-xl font-semibold mb-4">Login Backoffice</h1>
       ${error ? `<div class="mb-3 text-sm text-rose-600">${error}</div>`: ''}
       <form method="post" action="/login" class="grid gap-3">
-        ${nxt ? `<input type="hidden" name="next" value="${nxt}"/>` : ''}
+        ${nxt ? `<input type="hidden" name="next" value="${esc(nxt)}"/>` : ''}
         <input name="username" class="input" placeholder="Utilizador" required />
         <input name="password" type="password" class="input" placeholder="Palavra-passe" required />
         <button class="btn btn-primary">Entrar</button>
@@ -655,15 +751,26 @@ app.get('/login', (req,res)=>{
     </div>
   `}));
 });
+
 app.post('/login', (req,res)=>{
   const { username, password, next: nxt } = req.body;
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!u || !bcrypt.compareSync(String(password), u.password_hash)) return res.redirect('/login?error=Credenciais inválidas');
+  if (!u || !bcrypt.compareSync(String(password), u.password_hash))
+    return res.redirect('/login?error=Credenciais inválidas');
+
   const token = createSession(u.id);
   const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
-  res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
-  res.redirect(nxt || '/admin');
+  res.cookie('adm', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dias
+  });
+
+  const dest = safeNext(nxt) || '/admin';
+  res.redirect(dest);
 });
+
 app.post('/logout', (req,res)=>{ destroySession(req.cookies.adm); res.clearCookie('adm'); res.redirect('/'); });
 
 // ===================== Front Office =====================
@@ -698,7 +805,7 @@ app.get('/', (req, res) => {
             <label for="property_id">Propriedade</label>
             <select id="property_id" name="property_id" class="search-input">
               <option value="">Todas</option>
-              ${properties.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+              ${properties.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
             </select>
           </div>
           <div class="search-submit">
@@ -856,8 +963,8 @@ app.get('/book/:unitId', (req, res) => {
         <form class="card p-4" method="post" action="/book">
           <h2 class="font-semibold mb-3">Dados do hóspede</h2>
           <input type="hidden" name="unit_id" value="${u.id}" />
-          <input type="hidden" name="checkin" value="${checkin}" />
-          <input type="hidden" name="checkout" value="${checkout}" />
+          <input type="hidden" name="checkin" value="${esc(checkin)}" />
+          <input type="hidden" name="checkout" value="${esc(checkout)}" />
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="text-sm">Adultos</label>
@@ -964,14 +1071,14 @@ app.get('/booking/:id', (req, res) => {
     body: html`
       <div class="card p-6">
         <h1 class="text-2xl font-semibold mb-2">Reserva confirmada</h1>
-        <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Enviámos um email de confirmação para ${b.guest_email} (mock).</p>
+        <p class="text-slate-600 mb-6">Obrigado, ${esc(b.guest_name)}. Enviámos um email de confirmação para ${esc(b.guest_email)} (mock).</p>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
-            <div class="font-semibold">${b.property_name} – ${b.unit_name}</div>
-            <div>Hóspede: <strong>${b.guest_name}</strong> ${b.guest_nationality?`<span class="text-slate-500">(${b.guest_nationality})</span>`:''}</div>
-            <div>Contacto: <strong>${b.guest_phone || '-'}</strong> &middot; <strong>${b.guest_email}</strong></div>
+            <div class="font-semibold">${esc(b.property_name)} – ${esc(b.unit_name)}</div>
+            <div>Hóspede: <strong>${esc(b.guest_name)}</strong> ${b.guest_nationality?`<span class="text-slate-500">(${esc(b.guest_nationality)})</span>`:''}</div>
+            <div>Contacto: <strong>${esc(b.guest_phone || '-')}</strong> &middot; <strong>${esc(b.guest_email)}</strong></div>
             <div>Ocupação: <strong>${b.adults} adulto(s)${b.children?` + ${b.children} criança(s)`:''}</strong></div>
-            ${b.agency ? `<div>Agencia: <strong>${b.agency}</strong></div>` : ''}
+            ${b.agency ? `<div>Agencia: <strong>${esc(b.agency)}</strong></div>` : ''}
             <div>Check-in: <strong>${dayjs(b.checkin).format('DD/MM/YYYY')}</strong></div>
             <div>Check-out: <strong>${dayjs(b.checkout).format('DD/MM/YYYY')}</strong></div>
             <div>Noites: ${dateRangeNights(b.checkin, b.checkout).length}</div>
@@ -1074,8 +1181,8 @@ function unitCalendarCard(u, month) {
     <div class="card p-4">
       <div class="flex items-center justify-between mb-2">
         <div>
-          <div class="text-sm text-slate-500">${u.property_name}</div>
-          <h3 class="text-lg font-semibold">${u.name}</h3>
+          <div class="text-sm text-slate-500">${esc(u.property_name)}</div>
+          <h3 class="text-lg font-semibold">${esc(u.name)}</h3>
         </div>
         <a class="text-slate-600 hover:text-slate-900" href="/admin/units/${u.id}">Gerir</a>
       </div>
@@ -1084,7 +1191,6 @@ function unitCalendarCard(u, month) {
     </div>
   `;
 }
-
 // ===================== Export Excel (privado) =====================
 app.get('/admin/export', requireLogin, (req,res)=>{
   const ymDefault = dayjs().format('YYYY-MM');
@@ -1130,12 +1236,12 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
 
   const entriesStmt = db.prepare(`
     SELECT * FROM (
-      SELECT 'BOOKING' AS kind, b.id, b.checkin, b.checkout, b.guest_name, b.adults, b.children, b.status
+      SELECT 'BOOKING' AS kind, b.id, b.checkin, b.checkout, b.guest_name, b.adults, b.children, b.status, b.total_cents
         FROM bookings b
        WHERE b.unit_id = ? AND NOT (b.checkout <= ? OR b.checkin >= ?)
       UNION ALL
       SELECT 'BLOCK' AS kind, bl.id, bl.start_date AS checkin, bl.end_date AS checkout,
-             'BLOQUEADO' AS guest_name, NULL AS adults, NULL AS children, 'BLOCK' AS status
+             'BLOQUEADO' AS guest_name, NULL AS adults, NULL AS children, 'BLOCK' AS status, NULL AS total_cents
         FROM blocks bl
        WHERE bl.unit_id = ? AND NOT (bl.end_date <= ? OR bl.start_date >= ?)
     )
@@ -1153,12 +1259,8 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
 
   const numberToLetters = idx => {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let n = idx;
-    let label = '';
-    do {
-      label = alphabet[n % 26] + label;
-      n = Math.floor(n / 26) - 1;
-    } while (n >= 0);
+    let n = idx; let label = '';
+    do { label = alphabet[n % 26] + label; n = Math.floor(n / 26) - 1; } while (n >= 0);
     return label;
   };
 
@@ -1176,13 +1278,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     return parts.join('+');
   };
 
-  const allCaps = str => {
-    if (!str) return '';
-    return str
-      .split(' ')
-      .map(word => (word ? word[0].toUpperCase() + word.slice(1) : ''))
-      .join(' ');
-  };
+  const allCaps = str => (str || '').split(' ').map(w => w ? (w[0].toUpperCase() + w.slice(1)) : '').join(' ');
 
   for (let i = 0; i < months; i++) {
     const month = start.add(i, 'month');
@@ -1311,9 +1407,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
         [nameRow, occRow].forEach(row => {
           const cell = row.getCell(col);
           const empty = cell.value === undefined || cell.value === null || String(cell.value).trim() === '';
-          if (empty && !cell.isMerged) {
-            cell.fill = weekendFill;
-          }
+          if (empty && !cell.isMerged) cell.fill = weekendFill;
         });
       }
     }
@@ -1326,28 +1420,10 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     ws.addRow([]);
 
     const detailHeaders = [
-      'Ref',
-      'Nome',
-      'Agência',
-      'País',
-      'Nr Hóspedes',
-      'Nr Noites',
-      'Data entrada',
-      'Data saída',
-      'Tlm',
-      'Email',
-      'Nr Quartos',
-      'Hora Check-in',
-      'Outras Informações',
-      'Valor total a pagar',
-      'Pré-pagamento 30%',
-      'A pagar no check-out',
-      'Fatura',
-      'Data Pré-Pagamento',
-      'Dados pagamento',
-      'Dados faturação'
+      'Ref','Nome','Agência','País','Nr Hóspedes','Nr Noites','Data entrada','Data saída','Tlm','Email',
+      'Nr Quartos','Hora Check-in','Outras Informações','Valor total a pagar','Pré-pagamento 30%','A pagar no check-out',
+      'Fatura','Data Pré-Pagamento','Dados pagamento','Dados faturação'
     ];
-
     const detailMonthRow = ws.addRow([monthLabel, ...Array(detailHeaders.length - 1).fill('')]);
     ws.mergeCells(detailMonthRow.number, 1, detailMonthRow.number, detailHeaders.length);
     const detailMonthCell = ws.getCell(detailMonthRow.number, 1);
@@ -1362,7 +1438,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
     headerRow.height = 24;
 
     const currencyColumns = new Set([14, 15, 16]);
-    const defaultDetailWidths = [6, 24, 14, 8, 12, 10, 12, 12, 14, 30, 10, 12, 24, 16, 16, 16, 10, 16, 22, 22];
+    const defaultDetailWidths = [6,24,14,8,12,10,12,12,14,30,10,12,24,16,16,16,10,16,22,22];
     defaultDetailWidths.forEach((w, idx) => {
       const colIndex = idx + 1;
       const currentWidth = ws.getColumn(colIndex).width || 10;
@@ -1378,26 +1454,14 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
       const guestCount = (booking.adults || 0) + (booking.children || 0);
 
       const detailRow = ws.addRow([
-        ref,
-        booking.guest_name,
-        booking.agency || '',
-        booking.guest_nationality || '',
-        guestCount,
-        nights,
+        ref, booking.guest_name, booking.agency || '', booking.guest_nationality || '',
+        guestCount, nights,
         dayjs(booking.checkin).format('DD/MMM'),
         dayjs(booking.checkout).format('DD/MMM'),
-        booking.guest_phone || '',
-        booking.guest_email || '',
-        1,
-        '',
-        booking.status === 'PENDING' ? 'PENDENTE' : '',
-        totalCents / 100,
-        prepaymentCents / 100,
-        checkoutCents / 100,
-        '',
-        '',
-        '',
-        ''
+        booking.guest_phone || '', booking.guest_email || '',
+        1, '', booking.status === 'PENDING' ? 'PENDENTE' : '',
+        totalCents / 100, prepaymentCents / 100, checkoutCents / 100,
+        '', '', '', ''
       ]);
 
       detailRow.eachCell((cell, colNumber) => {
@@ -1849,21 +1913,45 @@ app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${r.unit_id}`);
 });
 
-// Imagens
-app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), (req,res)=>{
+// Imagens — PROCESSAMENTO COM SHARP (normalização para WEBP)  ✅
+app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), async (req,res)=>{
   const unitId = req.params.id;
   const files = req.files || [];
   const insert = db.prepare('INSERT INTO unit_images(unit_id,file,alt,position) VALUES (?,?,?,?)');
   let pos = db.prepare('SELECT COALESCE(MAX(position),0) as p FROM unit_images WHERE unit_id = ?').get(unitId).p;
-  files.forEach(f => { insert.run(unitId, f.filename, null, ++pos); });
-  res.redirect(`/admin/units/${unitId}`);
+
+  try {
+    for (const f of files) {
+      // Valida que é imagem de verdade
+      await sharp(f.path).metadata();
+
+      // Normaliza e converte para WEBP (1920x1280 máx)
+      const outName = crypto.randomBytes(8).toString('hex') + '.webp';
+      const outPath = path.join(UPLOAD_UNITS, String(unitId), outName);
+
+      await sharp(f.path)
+        .rotate()
+        .resize(1920, 1280, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toFile(outPath);
+
+      try { fs.unlinkSync(f.path); } catch (_) {}
+      insert.run(unitId, outName, null, ++pos);
+    }
+    res.redirect(`/admin/units/${unitId}`);
+  } catch (e) {
+    console.error('Upload error:', e);
+    for (const f of files) { try { fs.unlinkSync(f.path); } catch (_) {} }
+    res.status(400).send('Falha no processamento das imagens.');
+  }
 });
+
 app.post('/admin/images/:imageId/delete', requireLogin, (req,res)=>{
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
   if (!img) return res.status(404).send('Imagem não encontrada');
   const filePath = path.join(UPLOAD_UNITS, String(img.unit_id), img.file);
   db.prepare('DELETE FROM unit_images WHERE id = ?').run(img.id);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  if (fs.existsSync(filePath)) try { fs.unlinkSync(filePath); } catch(_) {}
   res.redirect(`/admin/units/${img.unit_id}`);
 });
 
@@ -1987,7 +2075,7 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
           </ul>
           ${b.internal_notes ? `
             <div class="mt-4">
-              <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Anotacoes internas</div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Anotações internas</div>
               <div class="text-sm text-slate-700 whitespace-pre-line">${esc(b.internal_notes)}</div>
             </div>
           ` : ''}
@@ -2025,9 +2113,9 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
             <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
           </div>
           <div class="grid gap-1">
-            <label class="text-sm">Anotacoes internas</label>
+            <label class="text-sm">Anotações internas</label>
             <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
-            <p class="text-xs text-slate-500">Nao aparece para o hospede.</p>
+            <p class="text-xs text-slate-500">Não aparece para o hóspede.</p>
           </div>
 
           <div>
@@ -2107,7 +2195,7 @@ app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
   res.redirect(back);
 });
 
-// (Opcional) Apagar definitivamente
+// (Opcional) Apagar definitivamente (admin)
 app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
   db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
   res.redirect('/admin/bookings');
@@ -2177,7 +2265,9 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
 });
 
 // ===================== Debug Rotas + 404 =====================
-app.get('/_routes', (req, res) => {
+// Em produção, esta rota fica ocultada; caso contrário, apenas admins
+app.get('/_routes', requireAdmin, (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).send('Not found');
   const router = app._router;
   if (!router || !router.stack) return res.type('text/plain').send('(router não inicializado)');
   const lines = [];
@@ -2218,9 +2308,3 @@ if (!global.__SERVER_STARTED__) {
   }
   global.__SERVER_STARTED__ = true;
 }
-
-
-
-
-
-
