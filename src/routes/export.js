@@ -14,6 +14,7 @@ function registerExportRoutes(app, { db, requireLogin }) {
       title: 'Exportar Mapa (Excel)',
       user: req.user,
       activeNav: 'export',
+      activeBackofficeNav: 'calendar',
       body: html`
         <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
         <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>

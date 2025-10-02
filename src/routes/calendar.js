@@ -25,6 +25,7 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
       title: 'Mapa de Reservas',
       user: req.user,
       activeNav: 'calendar',
+      activeBackofficeNav: 'calendar',
       body: html`
         <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
         <div class="flex items-center justify-between mb-4">

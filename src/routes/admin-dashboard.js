@@ -40,11 +40,12 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
       title: 'Backoffice',
       user: req.user,
       activeNav: 'backoffice',
+      activeBackofficeNav: 'properties',
       body: html`
         <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
-  
+
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <section class="card p-4">
+          <section class="card p-4" id="properties">
             <h2 class="font-semibold mb-3">Propriedades</h2>
             <ul class="space-y-2 mb-3">
               ${props.map(p => `
@@ -61,7 +62,7 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
             </form>
           </section>
   
-          <section class="card p-4 md:col-span-2">
+          <section class="card p-4 md:col-span-2" id="units">
             <h2 class="font-semibold mb-3">Unidades</h2>
             <div class="overflow-x-auto">
               <table class="w-full min-w-[820px] text-sm">
@@ -164,6 +165,7 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
       title: p.name,
       user: req.user,
       activeNav: 'backoffice',
+      activeBackofficeNav: 'properties',
       body: html`
         <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
@@ -224,6 +226,7 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
       title: `${esc(u.property_name)} – ${esc(u.name)}`,
       user: req.user,
       activeNav: 'backoffice',
+      activeBackofficeNav: 'units',
       body: html`
         <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
         <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
@@ -306,7 +309,7 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
             ` : ''}
           </section>
   
-          <section class="card p-4">
+          <section class="card p-4" id="rates">
             <h2 class="font-semibold mb-3">Editar Unidade</h2>
             <form method="post" action="/admin/units/${u.id}/update" class="grid gap-2">
               <label class="text-sm">Nome</label>
@@ -371,6 +374,61 @@ function registerAdminDashboardRoutes(app, { db, requireLogin, uploadMiddleware 
           </section>
         </div>
       `
+    }));
+  });
+
+  app.get('/admin/rates', requireLogin, (req, res) => {
+    const rates = db.prepare(
+      `SELECT r.*, u.name AS unit_name, p.name AS property_name, u.base_price_cents AS unit_base_price_cents
+         FROM rates r
+         JOIN units u ON u.id = r.unit_id
+         JOIN properties p ON p.id = u.property_id
+        ORDER BY p.name, u.name, r.start_date`
+    ).all();
+
+    res.send(layout({
+      title: 'Rates',
+      user: req.user,
+      activeNav: 'backoffice',
+      activeBackofficeNav: 'rates',
+      body: html`
+        <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+        <h1 class="text-2xl font-semibold mb-4">Rates por unidade</h1>
+        <div class="card p-0 overflow-x-auto">
+          <table class="w-full min-w-[860px] text-sm">
+            <thead>
+              <tr class="text-left text-slate-500">
+                <th>Propriedade</th>
+                <th>Unidade</th>
+                <th>Base €/noite</th>
+                <th>De</th>
+                <th>Até</th>
+                <th>€/noite (weekday)</th>
+                <th>€/noite (weekend)</th>
+                <th>Mín. noites</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rates.length
+                ? rates
+                    .map(r => `
+                      <tr class="border-t">
+                        <td>${esc(r.property_name)}</td>
+                        <td><a class="underline" href="/admin/units/${r.unit_id}">${esc(r.unit_name)}</a></td>
+                        <td>€ ${eur(r.unit_base_price_cents)}</td>
+                        <td>${dayjs(r.start_date).format('DD/MM/YYYY')}</td>
+                        <td>${dayjs(r.end_date).format('DD/MM/YYYY')}</td>
+                        <td>€ ${eur(r.weekday_price_cents)}</td>
+                        <td>€ ${eur(r.weekend_price_cents)}</td>
+                        <td>${r.min_stay || 1}</td>
+                      </tr>
+                    `)
+                    .join('')
+                : '<tr><td colspan="8" class="p-4 text-slate-500">Sem rates configuradas.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `,
     }));
   });
   

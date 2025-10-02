@@ -1,8 +1,11 @@
 const html = require('../utils/html');
 
-function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
+function layout({ title = 'Booking Engine', body, user, activeNav = '', activeBackofficeNav = '' }) {
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
+  const backofficeNavClass = (key) =>
+    `subnav-link${activeBackofficeNav === key ? ' active' : ''}`;
+  const shouldShowBackofficeNav = hasUser && Boolean(activeBackofficeNav);
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -36,6 +39,12 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .logout-form button,.login-link{background:none;border:none;color:#7a7b88;font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
         .logout-form button:hover,.login-link:hover{color:#2f3140;}
         .nav-accent-bar{height:3px;background:linear-gradient(90deg,#ff5a91,#ffb347);opacity:.55;}
+        .subnav{background:#f1f5f9;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;}
+        .subnav-inner{max-width:1120px;margin:0 auto;padding:10px 32px;display:flex;gap:28px;}
+        .subnav-link{color:#64748b;text-decoration:none;font-weight:500;letter-spacing:.01em;}
+        .subnav-link:hover{color:#1e293b;}
+        .subnav-link.active{color:#0f172a;position:relative;}
+        .subnav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-10px;height:2px;background:#0f172a;border-radius:999px;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
         .footer{background:#f7f6f9;border-top:1px solid #e2e1e8;color:#8c8d97;font-size:.875rem;}
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
@@ -205,13 +214,12 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               <span class="brand-name">Booking Engine</span>
             </a>
             <nav class="nav-links">
-              <a class="${navClass('home')}" href="/">Início</a>
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
-              <a class="${navClass('calendar')}" href="/calendar">Calendário</a>
-              <a class="${navClass('bookings')}" href="/bookings">Reservas</a>
-              <a class="${navClass('properties')}" href="/properties">Propriedades</a>
-              <a class="${navClass('units')}" href="/units">Unidades</a>
-              <a class="${navClass('rates')}" href="/rates">Rates</a>
+              ${hasUser ? html`<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ''}
+              <a class="${navClass('backoffice')}" href="/admin">Backoffice</a>
+              ${hasUser ? html`<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ''}
+              ${user && user.role === 'admin' ? html`<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${hasUser ? html`<a class="${navClass('export')}" href="/admin/export">Exportar Excel</a>` : ''}
             </nav>
             <div class="nav-actions">
               ${hasUser
@@ -220,6 +228,17 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
             </div>
           </div>
           <div class="nav-accent-bar"></div>
+          ${shouldShowBackofficeNav
+            ? html`<div class="subnav">
+                <div class="subnav-inner">
+                  <a class="${backofficeNavClass('calendar')}" href="/calendar">Calendário</a>
+                  <a class="${backofficeNavClass('bookings')}" href="/admin/bookings">Reservas</a>
+                  <a class="${backofficeNavClass('properties')}" href="/admin#properties">Propriedades</a>
+                  <a class="${backofficeNavClass('units')}" href="/admin#units">Unidades</a>
+                  <a class="${backofficeNavClass('rates')}" href="/admin/rates">Rates</a>
+                </div>
+              </div>`
+            : ''}
         </header>
         <main class="main-content">
           ${body}

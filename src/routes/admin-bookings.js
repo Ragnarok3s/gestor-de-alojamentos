@@ -47,6 +47,7 @@ function registerAdminBookingsRoutes(app, { db, requireLogin, requireAdmin }) {
       title: 'Reservas',
       user: req.user,
       activeNav: 'bookings',
+      activeBackofficeNav: 'bookings',
       body: html`
         <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
   
@@ -113,6 +114,7 @@ function registerAdminBookingsRoutes(app, { db, requireLogin, requireAdmin }) {
       title: `Editar reserva #${b.id}`,
       user: req.user,
       activeNav: 'bookings',
+      activeBackofficeNav: 'bookings',
       body: html`
         <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
         <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
