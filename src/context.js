@@ -664,7 +664,9 @@ CREATE TABLE IF NOT EXISTS unit_images (
     layout,
     upload,
     paths: { UPLOAD_ROOT, UPLOAD_UNITS },
-    ExcelJS
+    ExcelJS,
+    FEATURE_ICONS,
+    FEATURE_ICON_KEYS
   };
 }
 

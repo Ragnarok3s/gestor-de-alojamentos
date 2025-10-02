@@ -26,7 +26,8 @@ module.exports = function registerBackoffice(app, ctx) {
     ExcelJS,
     eur,
     dateRangeNights,
-    paths
+    paths,
+    FEATURE_ICON_KEYS
   } = ctx;
 
 // ===================== Auth =====================
