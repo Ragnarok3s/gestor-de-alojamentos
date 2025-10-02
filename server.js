@@ -376,6 +376,7 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 // ===================== Layout =====================
 function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
   const hasUser = !!user;
+  const isManager = !!(user && (user.role === 'admin' || user.role === 'gestor'));
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
   return html`<!doctype html>
   <html lang="pt">
@@ -612,18 +613,17 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
-              ${hasUser ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
-              <a class="${navClass('backoffice')}" href="/admin">Backoffice</a>
-              ${hasUser ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${isManager ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
+              ${isManager ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
+              ${isManager ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
               ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
-              ${hasUser ? `<a class="${navClass('export')}" href="/admin/export">Exportar Excel</a>` : ``}
             </nav>
             <div class="nav-actions">
               ${user
                 ? `<form method="post" action="/logout" class="logout-form">
                      <button type="submit">Log-out</button>
                    </form>`
-                : `<a class="login-link" href="/login">Iniciar sessão</a>`}
+                : `<a class="login-link" href="/login">Login</a>`}
             </div>
           </div>
           <div class="nav-accent-bar"></div>
@@ -1046,11 +1046,7 @@ function unitCalendarCard(u, month) {
   for (let i = 0; i < totalCells; i++) {
     const dayIndexInMonth = i - weekdayOfFirst + 1;
     const inMonth = dayIndexInMonth >= 1 && dayIndexInMonth <= daysInMonth;
-    const d = inMonth
-      ? monthStart.date(dayIndexInMonth)
-      : (i < weekdayOfFirst
-          ? monthStart.subtract(weekdayOfFirst - i, 'day')
-          : monthStart.add(dayIndexInMonth - daysInMonth, 'day'));
+    const d = monthStart.add(i - weekdayOfFirst, 'day');
 
     const date = d.format('YYYY-MM-DD');
     const nextDate = d.add(1, 'day').format('YYYY-MM-DD');
