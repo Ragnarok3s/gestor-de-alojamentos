@@ -1046,11 +1046,7 @@ function unitCalendarCard(u, month) {
   for (let i = 0; i < totalCells; i++) {
     const dayIndexInMonth = i - weekdayOfFirst + 1;
     const inMonth = dayIndexInMonth >= 1 && dayIndexInMonth <= daysInMonth;
-    const d = inMonth
-      ? monthStart.date(dayIndexInMonth)
-      : (i < weekdayOfFirst
-          ? monthStart.subtract(weekdayOfFirst - i, 'day')
-          : monthStart.add(dayIndexInMonth - daysInMonth, 'day'));
+    const d = monthStart.add(i - weekdayOfFirst, 'day');
 
     const date = d.format('YYYY-MM-DD');
     const nextDate = d.add(1, 'day').format('YYYY-MM-DD');
