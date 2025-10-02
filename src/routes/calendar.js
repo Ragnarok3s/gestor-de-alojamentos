@@ -1,7 +1,6 @@
 const dayjs = require('../config/dayjs');
 const html = require('../utils/html');
-const { formatMonthYear } = require('../utils/format');
-const { overlaps } = require('../services/booking');
+const { formatMonthYear, esc } = require('../utils/format');
 const layout = require('../views/layout');
 
 function registerCalendarRoutes(app, { db, requireLogin }) {
@@ -14,13 +13,50 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
     const month = base.startOf('month');
     const prev = month.subtract(1, 'month').format('YYYY-MM');
     const next = month.add(1, 'month').format('YYYY-MM');
-  
+
+    const monthStart = month.startOf('month');
+    const daysInMonth = month.daysInMonth();
+    const monthEndExclusive = month.endOf('month').add(1, 'day');
+
+    const days = Array.from({ length: daysInMonth }, (_, idx) => {
+      const date = monthStart.add(idx, 'day');
+      const weekday = date.locale('pt').format('ddd').replace('.', '');
+      return {
+        label: date.format('DD'),
+        weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1),
+        isWeekend: [0, 6].includes(date.day()),
+      };
+    });
+
     const units = db.prepare(
       'SELECT u.*, p.name as property_name ' +
       'FROM units u JOIN properties p ON p.id = u.property_id ' +
       'ORDER BY p.name, u.name'
     ).all();
-  
+
+    const entriesStmt = db.prepare(`
+      SELECT 'BOOKING' AS kind, checkin, checkout, guest_name, adults, children, status
+        FROM bookings
+       WHERE unit_id = ?
+         AND status IN ('CONFIRMED','PENDING')
+         AND NOT (checkout <= ? OR checkin >= ?)
+      UNION ALL
+      SELECT 'BLOCK' AS kind, start_date AS checkin, end_date AS checkout, 'Bloqueado' AS guest_name,
+             NULL AS adults, NULL AS children, 'BLOCK' AS status
+        FROM blocks
+       WHERE unit_id = ?
+         AND NOT (end_date <= ? OR start_date >= ?)
+      ORDER BY checkin
+    `);
+
+    const calendarRows = buildCalendarRows({
+      units,
+      days,
+      monthStart,
+      monthEndExclusive,
+      entriesStmt,
+    });
+
     res.send(layout({
       title: 'Mapa de Reservas',
       user: req.user,
@@ -33,78 +69,190 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
           <div class="text-slate-600">Mês de ${formatMonthYear(month)}</div>
           <a class="btn btn-muted" href="/calendar?ym=${next}">Mês seguinte: ${formatMonthYear(next + '-01')}</a>
         </div>
-        <div class="text-sm mb-3 flex gap-3 items-center">
-          <span class="inline-block w-3 h-3 rounded bg-emerald-500"></span> Livre
-          <span class="inline-block w-3 h-3 rounded bg-rose-500"></span> Ocupado
-          <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
-          <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
-          <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
+        <style>
+          .calendar-legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:.8125rem;color:#475569;}
+          .calendar-legend span{display:flex;align-items:center;gap:6px;}
+          .calendar-swatch{width:12px;height:12px;border-radius:9999px;box-shadow:0 0 0 1px rgba(15,23,42,.08);}
+          .calendar-swatch.free{background:#22c55e;}
+          .calendar-swatch.confirmed{background:#047857;}
+          .calendar-swatch.pending{background:#fbbf24;}
+          .calendar-swatch.block{background:#dc2626;}
+          .calendar-wrapper{overflow-x:auto;border-radius:.75rem;border:1px solid #e2e8f0;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.08);}
+          table.calendar-table{width:100%;min-width:960px;border-collapse:separate;border-spacing:0;font-size:.75rem;}
+          .calendar-table thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding:10px 8px;border-bottom:1px solid #cbd5e1;z-index:2;}
+          .calendar-table thead th.day-header{text-transform:none;letter-spacing:0;font-size:.7rem;}
+          .calendar-table thead th.day-header span{display:block;line-height:1.1;}
+          .calendar-table thead th.day-header span:first-child{font-size:.6rem;text-transform:uppercase;color:#94a3b8;letter-spacing:.1em;}
+          .calendar-table thead th.day-header span:last-child{font-size:.85rem;font-weight:700;color:#1f2937;}
+          .calendar-table thead th.day-header.weekend{background:#e2e8f0;color:#1f2937;}
+          .calendar-table tbody td{border:1px solid #e2e8f0;padding:8px 6px;text-align:center;vertical-align:middle;}
+          .calendar-table tbody td.unit-cell{position:sticky;left:0;z-index:1;text-align:left;font-weight:600;color:#1f2937;background:#f8fafc;min-width:220px;font-size:.8125rem;}
+          .unit-cell-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+          .unit-cell-inner span{display:block;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+          .unit-cell-inner a{font-size:.7rem;color:#475569;text-decoration:none;font-weight:600;}
+          .unit-cell-inner a:hover{color:#111827;}
+          .calendar-table tbody tr:nth-of-type(odd) td.unit-cell{background:#f1f5f9;}
+          .calendar-table tbody tr.property-row td{background:#e2e8f0;color:#1e293b;font-weight:600;text-transform:uppercase;letter-spacing:.08em;}
+          .calendar-table tbody td.segment{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:.72rem;}
+          .calendar-table tbody td.segment span{display:block;overflow:hidden;text-overflow:ellipsis;}
+          .calendar-table tbody td.segment.free{background:#ecfdf5;color:#16a34a;font-weight:500;}
+          .calendar-table tbody td.segment.confirmed{background:#047857;color:#fff;}
+          .calendar-table tbody td.segment.pending{background:#fbbf24;color:#1f2937;}
+          .calendar-table tbody td.segment.block{background:#dc2626;color:#fff;}
+          .calendar-table tbody td.segment:not(.free){box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);}
+          @media (max-width:640px){.calendar-wrapper{border-radius:.5rem;} .calendar-table tbody td.unit-cell{position:static;}}
+        </style>
+        <div class="calendar-legend mb-3">
+          <span><span class="calendar-swatch free"></span> Livre</span>
+          <span><span class="calendar-swatch confirmed"></span> Confirmado</span>
+          <span><span class="calendar-swatch pending"></span> Pendente</span>
+          <span><span class="calendar-swatch block"></span> Bloqueado</span>
           <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
         </div>
-        <div class="space-y-6">
-          ${units.map(u => unitCalendarCard(u, month)).join('')}
+        <div class="calendar-wrapper">
+          <table class="calendar-table">
+            <thead>
+              <tr>
+                <th class="unit-heading">Unidade</th>
+                ${days
+                  .map(
+                    (day) => `
+                      <th class="day-header${day.isWeekend ? ' weekend' : ''}">
+                        <span>${day.weekday}</span>
+                        <span>${day.label}</span>
+                      </th>
+                    `
+                  )
+                  .join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${calendarRows}
+            </tbody>
+          </table>
         </div>
       `
     }));
   });
-  
-  function unitCalendarCard(u, month) {
-    const monthStart = month.startOf('month');
-    const daysInMonth = month.daysInMonth();
-    const weekdayOfFirst = (monthStart.day() + 6) % 7;
-    const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
-  
-    const entries = db.prepare(
-      `SELECT 'B' as t, checkin as s, checkout as e, (guest_name || ' (' || adults || 'A+' || children || 'C)') as label, status
-         FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
-       UNION ALL
-       SELECT 'X' as t, start_date as s, end_date as e, 'BLOQUEADO' as label, 'BLOCK' as status
-         FROM blocks WHERE unit_id = ?`
-    ).all(u.id, u.id);
-  
-    const cells = [];
-    for (let i = 0; i < totalCells; i++) {
-      const dayIndexInMonth = i - weekdayOfFirst + 1;
-      const inMonth = dayIndexInMonth >= 1 && dayIndexInMonth <= daysInMonth;
-      const d = inMonth
-        ? monthStart.date(dayIndexInMonth)
-        : (i < weekdayOfFirst
-            ? monthStart.subtract(weekdayOfFirst - i, 'day')
-            : monthStart.add(dayIndexInMonth - daysInMonth, 'day'));
-  
-      const date = d.format('YYYY-MM-DD');
-      const nextDate = d.add(1, 'day').format('YYYY-MM-DD');
-  
-      const hit = entries.find(en => overlaps(en.s, en.e, date, nextDate));
-      let cls = !inMonth ? 'bg-slate-100 text-slate-400' : 'bg-emerald-500 text-white'; // livre
-      if (hit) {
-        if (hit.status === 'BLOCK') cls = 'bg-red-600 text-white';
-        else if (hit.status === 'PENDING') cls = 'bg-amber-400 text-black';
-        else cls = 'bg-rose-500 text-white'; // CONFIRMED
+
+  function buildCalendarRows({ units, days, monthStart, monthEndExclusive, entriesStmt }) {
+    const columnCount = days.length + 1;
+    const classByStatus = {
+      FREE: 'segment free',
+      CONFIRMED: 'segment confirmed',
+      PENDING: 'segment pending',
+      BLOCK: 'segment block',
+    };
+
+    const monthStartIso = monthStart.format('YYYY-MM-DD');
+    const monthEndIso = monthEndExclusive.format('YYYY-MM-DD');
+
+    let lastProperty = null;
+    const rows = [];
+
+    for (const unit of units) {
+      if (lastProperty !== unit.property_name) {
+        lastProperty = unit.property_name;
+        rows.push(`
+          <tr class="property-row">
+            <td colspan="${columnCount}">${esc(lastProperty.toUpperCase())}</td>
+          </tr>
+        `);
       }
-  
-      const title = hit ? ` title="${(hit.label || '').replace(/"/g, "'")}"` : '';
-      cells.push(`<div class="h-12 sm:h-14 flex items-center justify-center rounded ${cls} text-xs sm:text-sm"${title}>${d.date()}</div>`);
+
+      const entries = entriesStmt.all(unit.id, monthStartIso, monthEndIso, unit.id, monthStartIso, monthEndIso);
+
+      const occupancy = new Array(days.length).fill(null);
+      const keyForEntry = (entry) => `${entry.kind}:${entry.checkin}:${entry.checkout}:${entry.guest_name || ''}`;
+
+      for (const entry of entries) {
+        const start = dayjs(entry.checkin).isBefore(monthStart) ? monthStart : dayjs(entry.checkin);
+        const endExclusive = dayjs(entry.checkout).isAfter(monthEndExclusive)
+          ? monthEndExclusive
+          : dayjs(entry.checkout);
+        const startIndex = Math.max(0, start.diff(monthStart, 'day'));
+        const endIndex = Math.min(days.length, endExclusive.diff(monthStart, 'day'));
+
+        for (let idx = startIndex; idx < endIndex; idx++) {
+          occupancy[idx] = { entry, key: keyForEntry(entry) };
+        }
+      }
+
+      const segments = [];
+      for (let idx = 0; idx < occupancy.length; ) {
+        const slot = occupancy[idx];
+        if (!slot) {
+          let span = 1;
+          while (idx + span < occupancy.length && !occupancy[idx + span]) span++;
+          segments.push({ status: 'FREE', span, label: '', title: '' });
+          idx += span;
+          continue;
+        }
+
+        let span = 1;
+        while (
+          idx + span < occupancy.length &&
+          occupancy[idx + span] &&
+          occupancy[idx + span].key === slot.key
+        ) {
+          span++;
+        }
+
+        const entry = slot.entry;
+        const status = entry.status;
+        const label = entry.status === 'BLOCK' ? 'Bloqueado' : formatBookingLabel(entry);
+        const title = buildEntryTitle(entry, label);
+
+        segments.push({ status, span, label, title });
+        idx += span;
+      }
+
+      const segmentCells = segments
+        .map((segment) => {
+          const cls = classByStatus[segment.status] || classByStatus.CONFIRMED;
+          const titleAttr = segment.title ? ` title="${esc(segment.title)}"` : '';
+          const content = segment.label ? `<span>${esc(segment.label)}</span>` : '<span>&nbsp;</span>';
+          return `<td class="${cls}" colspan="${segment.span}"${titleAttr}>${content}</td>`;
+        })
+        .join('');
+
+      const unitLabel = unit.property_name === unit.name
+        ? esc(unit.name)
+        : `${esc(unit.property_name)} · ${esc(unit.name)}`;
+
+      rows.push(`
+        <tr>
+          <td class="unit-cell"><div class="unit-cell-inner"><span>${unitLabel}</span><a href="/admin/units/${unit.id}">Gerir</a></div></td>
+          ${segmentCells}
+        </tr>
+      `);
     }
-  
-    const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
-      .map(w => `<div class="text-center text-xs text-slate-500 py-1">${w}</div>`)
-      .join('');
-    return `
-      <div class="card p-4">
-        <div class="flex items-center justify-between mb-2">
-          <div>
-            <div class="text-sm text-slate-500">${u.property_name}</div>
-            <h3 class="text-lg font-semibold">${u.name}</h3>
-          </div>
-          <a class="text-slate-600 hover:text-slate-900" href="/admin/units/${u.id}">Gerir</a>
-        </div>
-        <div class="grid grid-cols-7 gap-1 mb-1">${weekdayHeader}</div>
-        <div class="grid grid-cols-7 gap-1">${cells.join('')}</div>
-      </div>
-    `;
+
+    return rows.join('');
   }
-  
+
+  function formatBookingLabel(entry) {
+    const parts = [];
+    if (entry.guest_name && entry.guest_name !== 'Bloqueado') {
+      parts.push(entry.guest_name);
+    }
+    const counts = [];
+    if (typeof entry.adults === 'number' && entry.adults > 0) counts.push(`${entry.adults}A`);
+    if (typeof entry.children === 'number' && entry.children > 0) counts.push(`${entry.children}C`);
+    if (counts.length) parts.push(`(${counts.join('+')})`);
+    return parts.join(' ');
+  }
+
+  function buildEntryTitle(entry, label) {
+    const start = dayjs(entry.checkin).format('DD/MM/YYYY');
+    const end = dayjs(entry.checkout).format('DD/MM/YYYY');
+    if (entry.status === 'BLOCK') {
+      return `Bloqueado · ${start} → ${end}`;
+    }
+    const descriptor = label || 'Reserva';
+    return `${descriptor} · ${start} → ${end}`;
+  }
+
 }
 
 module.exports = registerCalendarRoutes;
