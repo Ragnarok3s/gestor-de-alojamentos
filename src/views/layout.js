@@ -9,13 +9,10 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '', activeBa
   const navItems = hasUser
     ? [
         { key: 'search', label: 'Pesquisar', href: '/search' },
-        { key: 'calendar', label: 'Mapa de reservas', href: '/calendar' },
         { key: 'backoffice', label: 'Backoffice', href: '/admin' },
-        { key: 'bookings', label: 'Reservas', href: '/admin/bookings' },
         ...(user && user.role === 'admin'
           ? [{ key: 'users', label: 'Utilizadores', href: '/admin/utilizadores' }]
           : []),
-        { key: 'export', label: 'Exportar Excel', href: '/admin/export' },
       ]
     : [{ key: 'search', label: 'Pesquisar', href: '/search' }];
   return html`<!doctype html>
