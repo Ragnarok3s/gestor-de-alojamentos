@@ -93,13 +93,15 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
           .unit-cell-inner a:hover{color:#111827;}
           .calendar-table tbody tr:nth-of-type(odd) td.unit-cell{background:#f1f5f9;}
           .calendar-table tbody tr.property-row td{background:#e2e8f0;color:#1e293b;font-weight:600;text-transform:uppercase;letter-spacing:.08em;}
-          .calendar-table tbody td.segment{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:.72rem;}
-          .calendar-table tbody td.segment span{display:block;overflow:hidden;text-overflow:ellipsis;}
-          .calendar-table tbody td.segment.free{background:#ecfdf5;color:#16a34a;font-weight:500;}
-          .calendar-table tbody td.segment.confirmed{background:#047857;color:#fff;}
-          .calendar-table tbody td.segment.pending{background:#fbbf24;color:#1f2937;}
-          .calendar-table tbody td.segment.block{background:#dc2626;color:#fff;}
-          .calendar-table tbody td.segment:not(.free){box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);}
+          .calendar-table tbody td.segment{position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:.72rem;text-align:left;padding:6px 6px;background:#fff;}
+          .calendar-table tbody td.segment span{display:block;position:relative;z-index:1;overflow:hidden;text-overflow:ellipsis;padding:0 4px;line-height:1.2;}
+          .calendar-table tbody td.segment.start span{padding-left:calc(var(--start-offset, 0%) + 4px);}
+          .calendar-table tbody td.segment.end span{padding-right:calc(var(--end-offset, 0%) + 4px);}
+          .calendar-table tbody td.segment.free{background:#f8fafc;color:#16a34a;font-weight:500;}
+          .calendar-table tbody td.segment.booking{color:#fff;--segment-color:#047857;--start-offset:0%;--end-offset:0%;--span:1;background-image:linear-gradient(to right,transparent 0,transparent var(--start-offset),var(--segment-color) var(--start-offset),var(--segment-color) calc(100% - var(--end-offset)),transparent calc(100% - var(--end-offset)),transparent 100%),repeating-linear-gradient(90deg,rgba(15,23,42,.16) 0,rgba(15,23,42,.16) 1px,transparent 1px,transparent calc(100% / var(--span)));background-repeat:no-repeat,repeat;background-color:transparent;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);}
+          .calendar-table tbody td.segment.booking span{color:inherit;}
+          .calendar-table tbody td.segment.booking.pending{color:#1f2937;--segment-color:#fbbf24;}
+          .calendar-table tbody td.segment.booking.block{--segment-color:#dc2626;}
           @media (max-width:640px){.calendar-wrapper{border-radius:.5rem;} .calendar-table tbody td.unit-cell{position:static;}}
         </style>
         <div class="calendar-legend mb-3">
@@ -139,11 +141,12 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
     const columnCount = days.length + 1;
     const classByStatus = {
       FREE: 'segment free',
-      CONFIRMED: 'segment confirmed',
-      PENDING: 'segment pending',
-      BLOCK: 'segment block',
+      CONFIRMED: 'segment booking confirmed',
+      PENDING: 'segment booking pending',
+      BLOCK: 'segment booking block',
     };
 
+    const monthEnd = monthEndExclusive.subtract(1, 'day');
     const monthStartIso = monthStart.format('YYYY-MM-DD');
     const monthEndIso = monthEndExclusive.format('YYYY-MM-DD');
 
@@ -166,15 +169,28 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
       const keyForEntry = (entry) => `${entry.kind}:${entry.checkin}:${entry.checkout}:${entry.guest_name || ''}`;
 
       for (const entry of entries) {
-        const start = dayjs(entry.checkin).isBefore(monthStart) ? monthStart : dayjs(entry.checkin);
-        const endExclusive = dayjs(entry.checkout).isAfter(monthEndExclusive)
-          ? monthEndExclusive
-          : dayjs(entry.checkout);
-        const startIndex = Math.max(0, start.diff(monthStart, 'day'));
-        const endIndex = Math.min(days.length, endExclusive.diff(monthStart, 'day'));
+        const entryCheckin = dayjs(entry.checkin);
+        const entryCheckout = dayjs(entry.checkout);
+
+        if (!entryCheckout.isAfter(monthStart)) continue;
+        if (!entryCheckin.isBefore(monthEndExclusive)) continue;
+
+        const startIndex = Math.max(0, entryCheckin.diff(monthStart, 'day'));
+        const endIndex = Math.min(days.length, entryCheckout.diff(monthStart, 'day'));
+
+        if (startIndex >= endIndex) continue;
+
+        const meta = {
+          entry,
+          key: keyForEntry(entry),
+          startIndex,
+          endIndex,
+          startsInMonth: !entryCheckin.isBefore(monthStart),
+          endsInMonth: !entryCheckout.isAfter(monthEnd),
+        };
 
         for (let idx = startIndex; idx < endIndex; idx++) {
-          occupancy[idx] = { entry, key: keyForEntry(entry) };
+          occupancy[idx] = meta;
         }
       }
 
@@ -200,19 +216,42 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
 
         const entry = slot.entry;
         const status = entry.status;
-        const label = entry.status === 'BLOCK' ? 'Bloqueado' : formatBookingLabel(entry);
+        const label = status === 'BLOCK' ? 'Bloqueado' : formatBookingLabel(entry);
         const title = buildEntryTitle(entry, label);
+        const isStart = idx === slot.startIndex && slot.startsInMonth;
+        const isEnd = idx + span === slot.endIndex && slot.endsInMonth;
+        const halfDay = span > 0 ? 50 / span : 0;
+        let startOffset = isStart ? halfDay : 0;
+        let endOffset = isEnd ? halfDay : 0;
 
-        segments.push({ status, span, label, title });
+        if (span === 1 && isStart && isEnd) {
+          startOffset = 25;
+          endOffset = 25;
+        }
+
+        segments.push({ status, span, label, title, isStart, isEnd, startOffset, endOffset });
         idx += span;
       }
 
       const segmentCells = segments
         .map((segment) => {
-          const cls = classByStatus[segment.status] || classByStatus.CONFIRMED;
+          const baseClasses = classByStatus[segment.status] || classByStatus.CONFIRMED;
+          const classes = baseClasses.split(' ');
+          if (segment.isStart) classes.push('start');
+          if (segment.isEnd) classes.push('end');
+          if (segment.isStart && segment.isEnd) classes.push('single');
+          const cls = classes.join(' ');
           const titleAttr = segment.title ? ` title="${esc(segment.title)}"` : '';
           const content = segment.label ? `<span>${esc(segment.label)}</span>` : '<span>&nbsp;</span>';
-          return `<td class="${cls}" colspan="${segment.span}"${titleAttr}>${content}</td>`;
+          const startOffsetRaw = typeof segment.startOffset === 'number' ? segment.startOffset : 0;
+          const endOffsetRaw = typeof segment.endOffset === 'number' ? segment.endOffset : 0;
+          const startOffset = Math.round(startOffsetRaw * 10000) / 10000;
+          const endOffset = Math.round(endOffsetRaw * 10000) / 10000;
+          const styleAttr =
+            segment.status === 'FREE'
+              ? ''
+              : ` style="--span:${segment.span};--start-offset:${startOffset}%;--end-offset:${endOffset}%"`;
+          return `<td class="${cls}" colspan="${segment.span}"${titleAttr}${styleAttr}>${content}</td>`;
         })
         .join('');
 
