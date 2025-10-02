@@ -183,9 +183,16 @@ function registerAdminBookingsRoutes(app, { db, requireLogin, requireAdmin }) {
   
             <div class="flex items-center gap-3">
               <button class="btn btn-primary">Guardar alterações</button>
-              <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-                <button class="btn" style="background:#e11d48;color:#fff;">Cancelar</button>
-              </form>
+              <button
+                class="btn"
+                style="background:#e11d48;color:#fff;"
+                type="submit"
+                formaction="/admin/bookings/${b.id}/cancel"
+                formmethod="post"
+                onclick="return confirm('Cancelar esta reserva?');"
+              >
+                Cancelar
+              </button>
             </div>
           </form>
         </div>

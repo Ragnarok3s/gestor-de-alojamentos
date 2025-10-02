@@ -3,9 +3,21 @@ const html = require('../utils/html');
 function layout({ title = 'Booking Engine', body, user, activeNav = '', activeBackofficeNav = '' }) {
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
-  const backofficeNavClass = (key) =>
-    `subnav-link${activeBackofficeNav === key ? ' active' : ''}`;
+  const backofficeNavClass = (key) => `subnav-link${activeBackofficeNav === key ? ' active' : ''}`;
   const shouldShowBackofficeNav = hasUser && Boolean(activeBackofficeNav);
+
+  const navItems = hasUser
+    ? [
+        { key: 'search', label: 'Pesquisar', href: '/search' },
+        { key: 'calendar', label: 'Mapa de reservas', href: '/calendar' },
+        { key: 'backoffice', label: 'Backoffice', href: '/admin' },
+        { key: 'bookings', label: 'Reservas', href: '/admin/bookings' },
+        ...(user && user.role === 'admin'
+          ? [{ key: 'users', label: 'Utilizadores', href: '/admin/utilizadores' }]
+          : []),
+        { key: 'export', label: 'Exportar Excel', href: '/admin/export' },
+      ]
+    : [{ key: 'search', label: 'Pesquisar', href: '/search' }];
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -214,17 +226,14 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '', activeBa
               <span class="brand-name">Booking Engine</span>
             </a>
             <nav class="nav-links">
-              <a class="${navClass('search')}" href="/search">Pesquisar</a>
-              ${hasUser ? html`<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ''}
-              <a class="${navClass('backoffice')}" href="/admin">Backoffice</a>
-              ${hasUser ? html`<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ''}
-              ${user && user.role === 'admin' ? html`<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
-              ${hasUser ? html`<a class="${navClass('export')}" href="/admin/export">Exportar Excel</a>` : ''}
+              ${navItems
+                .map((item) => `<a class="${navClass(item.key)}" href="${item.href}">${item.label}</a>`)
+                .join('')}
             </nav>
             <div class="nav-actions">
               ${hasUser
-                ? html`<form class="logout-form" method="post" action="/logout"><button type="submit">Sair (${user.username})</button></form>`
-                : html`<a class="login-link" href="/login">Entrar</a>`}
+                ? html`<form class="logout-form" method="post" action="/logout"><button type="submit">Log-out (${user.username})</button></form>`
+                : html`<a class="login-link" href="/login">Login</a>`}
             </div>
           </div>
           <div class="nav-accent-bar"></div>
