@@ -15,18 +15,7 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
     const next = month.add(1, 'month').format('YYYY-MM');
 
     const monthStart = month.startOf('month');
-    const daysInMonth = month.daysInMonth();
     const monthEndExclusive = month.endOf('month').add(1, 'day');
-
-    const days = Array.from({ length: daysInMonth }, (_, idx) => {
-      const date = monthStart.add(idx, 'day');
-      const weekday = date.locale('pt').format('ddd').replace('.', '');
-      return {
-        label: date.format('DD'),
-        weekday: weekday.charAt(0).toUpperCase() + weekday.slice(1),
-        isWeekend: [0, 6].includes(date.day()),
-      };
-    });
 
     const units = db.prepare(
       'SELECT u.*, p.name as property_name ' +
@@ -49,12 +38,12 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
       ORDER BY checkin
     `);
 
-    const calendarRows = buildCalendarRows({
+    const calendarView = buildUnitCalendars({
       units,
-      days,
       monthStart,
       monthEndExclusive,
       entriesStmt,
+      month,
     });
 
     res.send(layout({
@@ -77,106 +66,90 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
           .calendar-swatch.confirmed{background:#047857;}
           .calendar-swatch.pending{background:#fbbf24;}
           .calendar-swatch.block{background:#dc2626;}
-          .calendar-wrapper{overflow-x:auto;border-radius:.75rem;border:1px solid #e2e8f0;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.08);}
-          table.calendar-table{width:100%;min-width:960px;border-collapse:separate;border-spacing:0;font-size:.75rem;}
-          .calendar-table thead th{position:sticky;top:0;background:#f8fafc;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding:10px 8px;border-bottom:1px solid #cbd5e1;z-index:2;}
-          .calendar-table thead th.day-header{text-transform:none;letter-spacing:0;font-size:.7rem;}
-          .calendar-table thead th.day-header span{display:block;line-height:1.1;}
-          .calendar-table thead th.day-header span:first-child{font-size:.6rem;text-transform:uppercase;color:#94a3b8;letter-spacing:.1em;}
-          .calendar-table thead th.day-header span:last-child{font-size:.85rem;font-weight:700;color:#1f2937;}
-          .calendar-table thead th.day-header.weekend{background:#e2e8f0;color:#1f2937;}
-          .calendar-table tbody td{border:1px solid #e2e8f0;padding:8px 6px;text-align:center;vertical-align:middle;}
-          .calendar-table tbody td.unit-cell{position:sticky;left:0;z-index:1;text-align:left;font-weight:600;color:#1f2937;background:#f8fafc;min-width:220px;font-size:.8125rem;}
-          .unit-cell-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-          .unit-cell-inner span{display:block;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-          .unit-cell-inner a{font-size:.7rem;color:#475569;text-decoration:none;font-weight:600;}
-          .unit-cell-inner a:hover{color:#111827;}
-          .calendar-table tbody tr:nth-of-type(odd) td.unit-cell{background:#f1f5f9;}
-          .calendar-table tbody tr.property-row td{background:#e2e8f0;color:#1e293b;font-weight:600;text-transform:uppercase;letter-spacing:.08em;}
-          .calendar-table tbody td.segment{position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:.72rem;text-align:left;padding:6px 6px;background:#fff;}
-          .calendar-table tbody td.segment span{display:block;position:relative;z-index:1;overflow:hidden;text-overflow:ellipsis;padding:0 4px;line-height:1.2;}
-          .calendar-table tbody td.segment.start span{padding-left:calc(var(--start-offset, 0%) + 4px);}
-          .calendar-table tbody td.segment.end span{padding-right:calc(var(--end-offset, 0%) + 4px);}
-          .calendar-table tbody td.segment.free{background:#f8fafc;color:#16a34a;font-weight:500;}
-          .calendar-table tbody td.segment.booking{color:#fff;--segment-color:#047857;--start-offset:0%;--end-offset:0%;--span:1;background-image:linear-gradient(to right,transparent 0,transparent var(--start-offset),var(--segment-color) var(--start-offset),var(--segment-color) calc(100% - var(--end-offset)),transparent calc(100% - var(--end-offset)),transparent 100%),repeating-linear-gradient(90deg,rgba(15,23,42,.16) 0,rgba(15,23,42,.16) 1px,transparent 1px,transparent calc(100% / var(--span)));background-repeat:no-repeat,repeat;background-color:transparent;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);}
-          .calendar-table tbody td.segment.booking span{color:inherit;}
-          .calendar-table tbody td.segment.booking.pending{color:#1f2937;--segment-color:#fbbf24;}
-          .calendar-table tbody td.segment.booking.block{--segment-color:#dc2626;}
-          @media (max-width:640px){.calendar-wrapper{border-radius:.5rem;} .calendar-table tbody td.unit-cell{position:static;}}
+          .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+          .calendar-weekday{font-size:.7rem;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.08em;text-align:center;}
+          .unit-calendar-card{background:#fff;border:1px solid #e2e8f0;border-radius:1rem;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.08);display:flex;flex-direction:column;gap:12px;}
+          .unit-calendar-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+          .unit-calendar-title{font-size:1rem;font-weight:600;color:#1e293b;}
+          .unit-calendar-actions a{font-size:.75rem;font-weight:600;color:#475569;text-decoration:none;}
+          .unit-calendar-actions a:hover{color:#0f172a;}
+          .calendar-cell{position:relative;min-height:56px;border-radius:.6rem;border:1px solid #e2e8f0;background:#f8fafc;padding:6px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;}
+          .calendar-cell.other-month{background:#f1f5f9;color:#94a3b8;}
+          .calendar-cell .day-number{position:absolute;top:6px;left:6px;font-size:.65rem;font-weight:600;}
+          .calendar-cell .cell-label{font-size:.68rem;font-weight:600;line-height:1.2;color:inherit;}
+          .calendar-cell.booking{color:#fff;background:transparent;border-color:rgba(14,116,144,.25);}
+          .calendar-cell.booking.pending{color:#1f2937;}
+          .calendar-cell::after{content:'';position:absolute;inset:4px;border-radius:.4rem;background:transparent;z-index:0;}
+          .calendar-cell.booking::after{background-image:linear-gradient(to right,transparent 0,transparent var(--start-offset,0%),var(--cell-color) var(--start-offset,0%),var(--cell-color) calc(100% - var(--end-offset,0%)),transparent calc(100% - var(--end-offset,0%)),transparent 100%);box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);}
+          .calendar-cell.booking.start::after{border-top-left-radius:.55rem;border-bottom-left-radius:.55rem;}
+          .calendar-cell.booking.end::after{border-top-right-radius:.55rem;border-bottom-right-radius:.55rem;}
+          .calendar-cell.booking.single::after{border-radius:.55rem;}
+          .calendar-cell.booking .day-number,.calendar-cell.booking .cell-label{position:relative;z-index:1;}
+          .calendar-cell.booking.confirmed{--cell-color:#047857;}
+          .calendar-cell.booking.pending{--cell-color:#fbbf24;}
+          .calendar-cell.booking.block{--cell-color:#dc2626;}
+          .calendar-cell.booking.other-month::after{opacity:.65;}
+          .calendar-cell.free{color:#16a34a;background:#f0fdf4;border-color:#bbf7d0;}
+          .calendar-cell.free .cell-label{font-weight:500;}
+          .unit-calendars{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+          @media (max-width:640px){.unit-calendars{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));}.calendar-cell{min-height:48px;}}
         </style>
-        <div class="calendar-legend mb-3">
+        <div class="calendar-legend mb-4">
           <span><span class="calendar-swatch free"></span> Livre</span>
           <span><span class="calendar-swatch confirmed"></span> Confirmado</span>
           <span><span class="calendar-swatch pending"></span> Pendente</span>
           <span><span class="calendar-swatch block"></span> Bloqueado</span>
           <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
         </div>
-        <div class="calendar-wrapper">
-          <table class="calendar-table">
-            <thead>
-              <tr>
-                <th class="unit-heading">Unidade</th>
-                ${days
-                  .map(
-                    (day) => `
-                      <th class="day-header${day.isWeekend ? ' weekend' : ''}">
-                        <span>${day.weekday}</span>
-                        <span>${day.label}</span>
-                      </th>
-                    `
-                  )
-                  .join('')}
-              </tr>
-            </thead>
-            <tbody>
-              ${calendarRows}
-            </tbody>
-          </table>
-        </div>
+        ${calendarView}
       `
     }));
   });
 
-  function buildCalendarRows({ units, days, monthStart, monthEndExclusive, entriesStmt }) {
-    const columnCount = days.length + 1;
-    const classByStatus = {
-      FREE: 'segment free',
-      CONFIRMED: 'segment booking confirmed',
-      PENDING: 'segment booking pending',
-      BLOCK: 'segment booking block',
-    };
-
+  function buildUnitCalendars({ units, monthStart, monthEndExclusive, entriesStmt, month }) {
     const monthEnd = monthEndExclusive.subtract(1, 'day');
     const monthStartIso = monthStart.format('YYYY-MM-DD');
     const monthEndIso = monthEndExclusive.format('YYYY-MM-DD');
 
+    const startWeekday = (monthStart.day() + 6) % 7; // Monday as first day (0)
+    const endWeekday = (monthEnd.day() + 6) % 7;
+    const gridStart = monthStart.subtract(startWeekday, 'day');
+    const gridEnd = monthEnd.add(6 - endWeekday, 'day');
+    const gridEndExclusive = gridEnd.add(1, 'day');
+    const totalDays = gridEndExclusive.diff(gridStart, 'day');
+
+    const calendarDays = Array.from({ length: totalDays }, (_, idx) => {
+      const date = gridStart.add(idx, 'day');
+      return {
+        date,
+        inMonth: date.month() === month.month(),
+        dayLabel: date.format('D'),
+      };
+    });
+
+    const weekdayNames = Array.from({ length: 7 }, (_, idx) => {
+      const date = gridStart.add(idx, 'day');
+      const weekday = date.locale('pt').format('ddd').replace('.', '');
+      return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+    });
+
+    const cards = [];
     let lastProperty = null;
-    const rows = [];
 
     for (const unit of units) {
-      if (lastProperty !== unit.property_name) {
-        lastProperty = unit.property_name;
-        rows.push(`
-          <tr class="property-row">
-            <td colspan="${columnCount}">${esc(lastProperty.toUpperCase())}</td>
-          </tr>
-        `);
-      }
-
       const entries = entriesStmt.all(unit.id, monthStartIso, monthEndIso, unit.id, monthStartIso, monthEndIso);
-
-      const occupancy = new Array(days.length).fill(null);
+      const occupancy = new Array(totalDays).fill(null);
       const keyForEntry = (entry) => `${entry.kind}:${entry.checkin}:${entry.checkout}:${entry.guest_name || ''}`;
 
       for (const entry of entries) {
         const entryCheckin = dayjs(entry.checkin);
         const entryCheckout = dayjs(entry.checkout);
 
-        if (!entryCheckout.isAfter(monthStart)) continue;
-        if (!entryCheckin.isBefore(monthEndExclusive)) continue;
+        if (!entryCheckout.isAfter(gridStart)) continue;
+        if (!entryCheckin.isBefore(gridEndExclusive)) continue;
 
-        const startIndex = Math.max(0, entryCheckin.diff(monthStart, 'day'));
-        const endIndex = Math.min(days.length, entryCheckout.diff(monthStart, 'day'));
+        const startIndex = Math.max(0, entryCheckin.diff(gridStart, 'day'));
+        const endIndex = Math.min(totalDays, entryCheckout.diff(gridStart, 'day'));
 
         if (startIndex >= endIndex) continue;
 
@@ -185,8 +158,8 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
           key: keyForEntry(entry),
           startIndex,
           endIndex,
-          startsInMonth: !entryCheckin.isBefore(monthStart),
-          endsInMonth: !entryCheckout.isAfter(monthEnd),
+          startsInView: !entryCheckin.isBefore(gridStart),
+          endsInView: !entryCheckout.isAfter(gridEndExclusive),
         };
 
         for (let idx = startIndex; idx < endIndex; idx++) {
@@ -194,80 +167,98 @@ function registerCalendarRoutes(app, { db, requireLogin }) {
         }
       }
 
-      const segments = [];
-      for (let idx = 0; idx < occupancy.length; ) {
+      const cells = calendarDays.map((calendarDay, idx) => {
         const slot = occupancy[idx];
         if (!slot) {
-          let span = 1;
-          while (idx + span < occupancy.length && !occupancy[idx + span]) span++;
-          segments.push({ status: 'FREE', span, label: '', title: '' });
-          idx += span;
-          continue;
-        }
-
-        let span = 1;
-        while (
-          idx + span < occupancy.length &&
-          occupancy[idx + span] &&
-          occupancy[idx + span].key === slot.key
-        ) {
-          span++;
+          const classes = ['calendar-cell'];
+          if (!calendarDay.inMonth) classes.push('other-month');
+          if (calendarDay.inMonth) {
+            classes.push('free');
+          }
+          return `
+            <div class="${classes.join(' ')}">
+              <span class="day-number">${calendarDay.dayLabel}</span>
+            </div>
+          `;
         }
 
         const entry = slot.entry;
         const status = entry.status;
         const label = status === 'BLOCK' ? 'Bloqueado' : formatBookingLabel(entry);
         const title = buildEntryTitle(entry, label);
-        const isStart = idx === slot.startIndex && slot.startsInMonth;
-        const isEnd = idx + span === slot.endIndex && slot.endsInMonth;
-        const halfDay = span > 0 ? 50 / span : 0;
-        let startOffset = isStart ? halfDay : 0;
-        let endOffset = isEnd ? halfDay : 0;
 
-        if (span === 1 && isStart && isEnd) {
+        const isSegmentStart = idx === slot.startIndex;
+        const isSegmentEnd = idx + 1 === slot.endIndex;
+        const isStart = isSegmentStart && slot.startsInView;
+        const isEnd = isSegmentEnd && slot.endsInView;
+        let startOffset = isStart ? 50 : 0;
+        let endOffset = isEnd ? 50 : 0;
+
+        if (isStart && isEnd) {
           startOffset = 25;
           endOffset = 25;
         }
 
-        segments.push({ status, span, label, title, isStart, isEnd, startOffset, endOffset });
-        idx += span;
-      }
+        const classes = ['calendar-cell', 'booking'];
+        if (!calendarDay.inMonth) classes.push('other-month');
+        classes.push(status.toLowerCase());
+        if (isStart) classes.push('start');
+        if (isEnd) classes.push('end');
+        if (isStart && isEnd) classes.push('single');
 
-      const segmentCells = segments
-        .map((segment) => {
-          const baseClasses = classByStatus[segment.status] || classByStatus.CONFIRMED;
-          const classes = baseClasses.split(' ');
-          if (segment.isStart) classes.push('start');
-          if (segment.isEnd) classes.push('end');
-          if (segment.isStart && segment.isEnd) classes.push('single');
-          const cls = classes.join(' ');
-          const titleAttr = segment.title ? ` title="${esc(segment.title)}"` : '';
-          const content = segment.label ? `<span>${esc(segment.label)}</span>` : '<span>&nbsp;</span>';
-          const startOffsetRaw = typeof segment.startOffset === 'number' ? segment.startOffset : 0;
-          const endOffsetRaw = typeof segment.endOffset === 'number' ? segment.endOffset : 0;
-          const startOffset = Math.round(startOffsetRaw * 10000) / 10000;
-          const endOffset = Math.round(endOffsetRaw * 10000) / 10000;
-          const styleAttr =
-            segment.status === 'FREE'
-              ? ''
-              : ` style="--span:${segment.span};--start-offset:${startOffset}%;--end-offset:${endOffset}%"`;
-          return `<td class="${cls}" colspan="${segment.span}"${titleAttr}${styleAttr}>${content}</td>`;
-        })
-        .join('');
+        const labelHtml = isSegmentStart && label ? `<div class="cell-label">${esc(label)}</div>` : '';
+        const titleAttr = title ? ` title="${esc(title)}"` : '';
+        const styleAttr = ` style="--start-offset:${startOffset}%;--end-offset:${endOffset}%"`;
+
+        return `
+          <div class="${classes.join(' ')}"${titleAttr}${styleAttr}>
+            <span class="day-number">${calendarDay.dayLabel}</span>
+            ${labelHtml}
+          </div>
+        `;
+      });
+
+      const weeks = [];
+      for (let i = 0; i < cells.length; i += 7) {
+        const weekCells = cells.slice(i, i + 7).join('');
+        weeks.push(`<div class="calendar-grid">${weekCells}</div>`);
+      }
 
       const unitLabel = unit.property_name === unit.name
         ? esc(unit.name)
         : `${esc(unit.property_name)} · ${esc(unit.name)}`;
 
-      rows.push(`
-        <tr>
-          <td class="unit-cell"><div class="unit-cell-inner"><span>${unitLabel}</span><a href="/admin/units/${unit.id}">Gerir</a></div></td>
-          ${segmentCells}
-        </tr>
+      if (lastProperty !== unit.property_name) {
+        if (lastProperty !== null) cards.push('</div>');
+        const headingClass = lastProperty === null
+          ? 'text-lg font-semibold text-slate-700 mb-3'
+          : 'text-lg font-semibold text-slate-700 mt-8 mb-3';
+        cards.push(`<h2 class="${headingClass}">${esc(unit.property_name)}</h2>`);
+        cards.push('<div class="unit-calendars">');
+        lastProperty = unit.property_name;
+      }
+
+      cards.push(`
+        <div class="unit-calendar-card">
+          <div class="unit-calendar-header">
+            <div class="unit-calendar-title">${unitLabel}</div>
+            <div class="unit-calendar-actions"><a href="/admin/units/${unit.id}">Gerir</a></div>
+          </div>
+          <div class="calendar-grid">
+            ${weekdayNames
+              .map((weekday) => `<div class="calendar-weekday">${weekday}</div>`)
+              .join('')}
+          </div>
+          ${weeks.join('')}
+        </div>
       `);
     }
 
-    return rows.join('');
+    if (lastProperty !== null) {
+      cards.push('</div>');
+    }
+
+    return cards.join('');
   }
 
   function formatBookingLabel(entry) {
