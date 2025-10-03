@@ -135,6 +135,33 @@ CREATE TABLE IF NOT EXISTS automation_state (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS session_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
+  meta_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS booking_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 db.exec(schema);
 
@@ -168,6 +195,98 @@ if (!hasBlocksUpdatedAt) {
   console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
 }
 
+const ROLE_LABELS = {
+  rececao: 'Receção',
+  gestao: 'Gestão',
+  direcao: 'Direção'
+};
+
+const ROLE_PERMISSIONS = {
+  rececao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'automation.view'
+  ]),
+  gestao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'calendar.block.manage',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'properties.manage',
+    'rates.manage',
+    'gallery.manage',
+    'automation.view',
+    'automation.export',
+    'audit.view'
+  ]),
+  direcao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'calendar.block.manage',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'properties.manage',
+    'rates.manage',
+    'gallery.manage',
+    'automation.view',
+    'automation.export',
+    'audit.view',
+    'users.manage',
+    'logs.view'
+  ])
+};
+
+function normalizeRole(role) {
+  const key = String(role || '').toLowerCase();
+  if (key === 'admin' || key === 'direcao' || key === 'direção') return 'direcao';
+  if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
+  if (key === 'limpezas' || key === 'rececao' || key === 'receção' || key === 'recepcao' || key === 'recepção') return 'rececao';
+  return 'rececao';
+}
+
+function buildUserContext(sessRow) {
+  const role = normalizeRole(sessRow.role);
+  const permissions = new Set(ROLE_PERMISSIONS[role] || []);
+  return {
+    id: sessRow.user_id,
+    username: sessRow.username,
+    role,
+    role_label: ROLE_LABELS[role] || role,
+    permissions
+  };
+}
+
+function userCan(user, permission) {
+  return !!(user && user.permissions && user.permissions.has(permission));
+}
+
 const rescheduleBookingUpdateStmt = db.prepare(
   hasBookingsUpdatedAt
     ? "UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime('now') WHERE id = ?"
@@ -198,6 +317,26 @@ const adminBookingUpdateStmt = db.prepare(
   ).trim()
 );
 
+function logSessionEvent(userId, action, req) {
+  try {
+    db.prepare(
+      'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
+    ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
+  } catch (err) {
+    console.error('Erro ao registar sessão', err.message);
+  }
+}
+
+function logActivity(actorId, action, entityType, entityId, meta) {
+  try {
+    db.prepare(
+      'INSERT INTO activity_logs(user_id, action, entity_type, entity_id, meta_json) VALUES (?,?,?,?,?)'
+    ).run(actorId || null, action, entityType || null, entityId || null, meta ? JSON.stringify(meta) : null);
+  } catch (err) {
+    console.error('Erro ao registar atividade', err.message);
+  }
+}
+
 function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
   try {
     db.prepare(
@@ -210,6 +349,10 @@ function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
       afterObj ? JSON.stringify(afterObj) : null,
       actorId
     );
+    logActivity(actorId, `change:${entityType}:${action}`, entityType, entityId, {
+      before: beforeObj || null,
+      after: afterObj || null
+    });
   } catch (err) {
     console.error('Erro ao registar auditoria', err.message);
   }
@@ -901,7 +1044,7 @@ try {
 const usersCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'admin');
+  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
   console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
 }
 
@@ -1008,6 +1151,17 @@ function renderAuditDiff(beforeJson, afterJson) {
     </tr>`;
   }).join('');
   return `<table class="w-full text-xs border-separate border-spacing-y-1">${rows}</table>`;
+}
+
+function formatJsonSnippet(json) {
+  if (!json) return '<span class="text-slate-400">—</span>';
+  try {
+    const parsed = JSON.parse(json);
+    const pretty = JSON.stringify(parsed, null, 2);
+    return `<pre class="text-xs whitespace-pre-wrap bg-slate-900/5 rounded p-2">${esc(pretty)}</pre>`;
+  } catch (_) {
+    return `<code class="text-xs">${esc(json)}</code>`;
+  }
 }
 
 const FEATURE_ICONS = {
@@ -1190,15 +1344,48 @@ function destroySession(token){ if (token) db.prepare('DELETE FROM sessions WHER
 function requireLogin(req,res,next){
   const sess = getSession(req.cookies.adm);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
-  req.user = { id: sess.user_id, username: sess.username, role: sess.role };
+  req.user = buildUserContext(sess);
   next();
 }
 function requireAdmin(req,res,next){
   const sess = getSession(req.cookies.adm);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
-  if (sess.role !== 'admin') return res.status(403).send('Sem permissão');
-  req.user = { id: sess.user_id, username: sess.username, role: sess.role };
+  const user = buildUserContext(sess);
+  req.user = user;
+  if (!userCan(user, 'users.manage')) {
+    return res.status(403).send('Sem permissão');
+  }
   next();
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    if (!req.user) {
+      const sess = getSession(req.cookies.adm);
+      if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+      req.user = buildUserContext(sess);
+    }
+    if (!userCan(req.user, permission)) {
+      if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+      return res.status(403).send('Sem permissão');
+    }
+    next();
+  };
+}
+
+function requireAnyPermission(permissions = []) {
+  return (req, res, next) => {
+    if (!req.user) {
+      const sess = getSession(req.cookies.adm);
+      if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+      req.user = buildUserContext(sess);
+    }
+    if (!permissions.some(perm => userCan(req.user, perm))) {
+      if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+      return res.status(403).send('Sem permissão');
+    }
+    next();
+  };
 }
 
 // Disponibilidade / Pricing
@@ -1238,8 +1425,9 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 // ===================== Layout =====================
 function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
   const hasUser = !!user;
-  const isManager = !!(user && (user.role === 'admin' || user.role === 'gestor'));
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
+  const can = (perm) => userCan(user, perm);
+  const userPermissions = user ? Array.from(user.permissions || []) : [];
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -1386,6 +1574,8 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       </style>
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
+        const USER_PERMISSIONS = new Set(${JSON.stringify(userPermissions)});
+        function userCanClient(perm){ return USER_PERMISSIONS.has(perm); }
         function refreshIcons(){
           if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
@@ -1673,15 +1863,16 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
-              ${isManager ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
-              ${isManager ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
-              ${isManager ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
-              ${isManager ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
-              ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
+              ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
+              ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
+              ${can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
               ${user
-                ? `<form method="post" action="/logout" class="logout-form">
+                ? `<div class="pill-indicator">${esc(user.username)} · ${esc(user.role_label)}</div>
+                   <form method="post" action="/logout" class="logout-form">
                      <button type="submit">Log-out</button>
                    </form>`
                 : `<a class="login-link" href="/login">Login</a>`}
@@ -1720,18 +1911,37 @@ app.post('/login', (req,res)=>{
   const { username, password, next: nxt } = req.body;
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!u || !bcrypt.compareSync(String(password), u.password_hash)) return res.redirect('/login?error=Credenciais inválidas');
+  const normalizedRole = normalizeRole(u.role);
+  if (normalizedRole !== u.role) {
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(normalizedRole, u.id);
+    u.role = normalizedRole;
+  }
   const token = createSession(u.id);
   const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
   res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
+  logSessionEvent(u.id, 'login', req);
+  logActivity(u.id, 'auth:login', null, null, {});
   res.redirect(nxt || '/admin');
 });
-app.post('/logout', (req,res)=>{ destroySession(req.cookies.adm); res.clearCookie('adm'); res.redirect('/'); });
+app.post('/logout', (req,res)=>{
+  const sess = getSession(req.cookies.adm);
+  if (sess) {
+    logSessionEvent(sess.user_id, 'logout', req);
+    logActivity(sess.user_id, 'auth:logout', null, null, {});
+  }
+  destroySession(req.cookies.adm);
+  res.clearCookie('adm');
+  res.redirect('/');
+});
 
 // ===================== Front Office =====================
 app.get('/', (req, res) => {
   const sess = getSession(req.cookies.adm);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
   const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+
   res.send(layout({
     title: 'Reservas',
     user,
@@ -2101,7 +2311,7 @@ app.get('/booking/:id', (req, res) => {
 });
 
 // ===================== Calendário (privado) =====================
-app.get('/calendar', requireLogin, (req, res) => {
+app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym; // YYYY-MM
   const base = ym ? dayjs(ym + '-01') : dayjs().startOf('month');
   const month = base.startOf('month');
@@ -2113,6 +2323,7 @@ app.get('/calendar', requireLogin, (req, res) => {
     'FROM units u JOIN properties p ON p.id = u.property_id ' +
     'ORDER BY p.name, u.name'
   ).all();
+  const canExportCalendar = userCan(req.user, 'bookings.export');
 
   res.send(layout({
     title: 'Mapa de Reservas',
@@ -2131,7 +2342,7 @@ app.get('/calendar', requireLogin, (req, res) => {
         <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
         <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
         <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
-        <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
+        ${canExportCalendar ? `<a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>` : ''}
       </div>
       <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
         ${units.map(u => unitCalendarCard(u, month)).join('')}
@@ -2151,6 +2362,12 @@ app.get('/calendar', requireLogin, (req, res) => {
           let dragCtx = null;
           let selectionCtx = null;
           let toastTimer = null;
+          const CAN_RESCHEDULE = userCanClient('calendar.reschedule');
+          const CAN_CANCEL_CALENDAR = userCanClient('calendar.cancel');
+          const CAN_CREATE_BLOCK = userCanClient('calendar.block.create');
+          const CAN_DELETE_BLOCK = userCanClient('calendar.block.delete');
+          const CAN_MANAGE_BLOCK = userCanClient('calendar.block.manage');
+          const CAN_VIEW_BOOKING = userCanClient('bookings.view');
 
           function isPrimaryPointer(e) {
             if (e.pointerType === 'mouse') {
@@ -2438,13 +2655,29 @@ app.get('/calendar', requireLogin, (req, res) => {
               if (label) {
                 html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
               }
+              const noteCount = Number(cell.getAttribute('data-entry-note-count') || '0');
+              const notePreview = cell.getAttribute('data-entry-note-preview') || '';
+              const noteMeta = cell.getAttribute('data-entry-note-meta') || '';
+              if (noteCount > 0 && notePreview) {
+                html += '<div class="text-xs text-slate-200 bg-slate-900/30 rounded-lg p-2 leading-relaxed">';
+                html += '<div class="font-semibold">Última nota (' + escapeHtml(noteMeta || noteCount + (noteCount === 1 ? ' nota' : ' notas')) + ')</div>';
+                html += '<div class="text-slate-100 whitespace-pre-line mt-1">' + escapeHtml(notePreview) + (notePreview.length >= 180 ? '…' : '') + '</div>';
+                if (noteCount > 1) {
+                  html += '<div class="mt-1 text-slate-400">' + noteCount + ' notas no total.</div>';
+                }
+                html += '</div>';
+              }
               html += '<div class="calendar-action__buttons">';
-              if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
-              html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              if (url && CAN_VIEW_BOOKING) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
+              if (CAN_CANCEL_CALENDAR) {
+                html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              }
               html += '</div>';
               html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
               if (status !== 'CONFIRMED') {
                 html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+              } else if (!CAN_RESCHEDULE) {
+                html += '<p class="text-xs text-amber-200">Não tem permissões para reagendar arrastando.</p>';
               } else {
                 html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
               }
@@ -2456,9 +2689,15 @@ app.get('/calendar', requireLogin, (req, res) => {
               }
               html += '<div class="calendar-action__buttons">';
               html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
-              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              if (CAN_DELETE_BLOCK) {
+                html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              }
               html += '</div>';
-              html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
+              if (CAN_MANAGE_BLOCK) {
+                html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
+              } else {
+                html += '<p class="text-xs text-amber-200">Não tem permissões para mover este bloqueio.</p>';
+              }
             }
             html += '</div>';
             showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
@@ -2481,12 +2720,17 @@ app.get('/calendar', requireLogin, (req, res) => {
             html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
             html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
             html += '<div class="calendar-action__buttons">';
-            html += '<button class="btn btn-primary" data-action="block-range"' + (ctx.conflict ? ' disabled' : '') + '>Bloquear estas datas</button>';
+            const disableBlock = ctx.conflict || !CAN_CREATE_BLOCK;
+            html += '<button class="btn btn-primary" data-action="block-range"' + (disableBlock ? ' disabled' : '') + '>Bloquear estas datas</button>';
             html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
             html += '</div>';
-            html += ctx.conflict
-              ? '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>'
-              : '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            if (ctx.conflict) {
+              html += '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>';
+            } else if (!CAN_CREATE_BLOCK) {
+              html += '<p class="text-xs text-amber-200">Não tem permissões para criar bloqueios.</p>';
+            } else {
+              html += '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            }
             html += '</div>';
             showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
             actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
@@ -2502,11 +2746,14 @@ app.get('/calendar', requireLogin, (req, res) => {
             if (entryId) {
               const entryKind = cell.getAttribute('data-entry-kind');
               const status = cell.getAttribute('data-entry-status') || '';
+              const reschedPermission = entryKind === 'BOOKING'
+                ? (CAN_RESCHEDULE && status === 'CONFIRMED')
+                : CAN_MANAGE_BLOCK;
               dragCtx = {
                 entryId: entryId,
                 entryKind: entryKind,
                 status: status,
-                canReschedule: entryKind !== 'BOOKING' || status === 'CONFIRMED',
+                canReschedule: reschedPermission,
                 unitId: cell.getAttribute('data-unit'),
                 originStart: cell.getAttribute('data-entry-start'),
                 originEnd: cell.getAttribute('data-entry-end'),
@@ -2517,6 +2764,7 @@ app.get('/calendar', requireLogin, (req, res) => {
                 conflict: false
               };
             } else {
+              if (!CAN_CREATE_BLOCK) return;
               selectionCtx = {
                 unitId: cell.getAttribute('data-unit'),
                 startDate: cell.getAttribute('data-date'),
@@ -2621,16 +2869,19 @@ app.get('/calendar', requireLogin, (req, res) => {
             if (!target || !actionCtx) return;
             const action = target.getAttribute('data-action');
             if (action === 'block-range' && actionCtx.type === 'selection') {
+              if (!CAN_CREATE_BLOCK) return;
               e.preventDefault();
               hideAction();
               submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
             }
             if (action === 'delete-block' && actionCtx.type === 'entry') {
+              if (!CAN_DELETE_BLOCK) return;
               e.preventDefault();
               hideAction();
               submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
             }
             if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
+              if (!CAN_CANCEL_CALENDAR) return;
               e.preventDefault();
               const proceed = window.confirm('Cancelar esta reserva?');
               if (!proceed) return;
@@ -2692,7 +2943,7 @@ app.get('/calendar', requireLogin, (req, res) => {
   }));
 });
 
-app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
+app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym;
   const month = (ym ? dayjs(ym + '-01') : dayjs().startOf('month')).startOf('month');
   const unit = db.prepare(`
@@ -2704,7 +2955,7 @@ app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
   res.send(unitCalendarCard(unit, month));
 });
 
-app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
+app.post('/calendar/booking/:id/reschedule', requireLogin, requirePermission('calendar.reschedule'), (req, res) => {
   const id = Number(req.params.id);
   const booking = db.prepare(`
     SELECT b.*, u.base_price_cents
@@ -2750,7 +3001,7 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
 });
 
-app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
+app.post('/calendar/booking/:id/cancel', requireLogin, requirePermission('calendar.cancel'), (req, res) => {
   const id = Number(req.params.id);
   const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
   if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
@@ -2767,7 +3018,7 @@ app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Reserva cancelada.', unit_id: booking.unit_id });
 });
 
-app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
+app.post('/calendar/block/:id/reschedule', requireLogin, requirePermission('calendar.block.manage'), (req, res) => {
   const id = Number(req.params.id);
   const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(id);
   if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
@@ -2805,7 +3056,7 @@ app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Bloqueio atualizado.', unit_id: block.unit_id });
 });
 
-app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
+app.post('/calendar/unit/:unitId/block', requireLogin, requirePermission('calendar.block.create'), (req, res) => {
   const unitId = Number(req.params.unitId);
   const unit = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
   if (!unit) return res.status(404).json({ ok: false, message: 'Unidade não encontrada.' });
@@ -2839,7 +3090,7 @@ app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Bloqueio criado.', unit_id: unitId });
 });
 
-app.delete('/calendar/block/:id', requireLogin, (req, res) => {
+app.delete('/calendar/block/:id', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
   const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(req.params.id);
   if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
   db.prepare('DELETE FROM blocks WHERE id = ?').run(block.id);
@@ -2853,18 +3104,60 @@ function unitCalendarCard(u, month) {
   const weekdayOfFirst = (monthStart.day() + 6) % 7;
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
-  const entries = db.prepare(
+  const rawEntries = db.prepare(
     `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
        FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
      UNION ALL
      SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, NULL as guest_email, NULL as guest_phone, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
        FROM blocks WHERE unit_id = ?`
-  ).all(u.id, u.id).map(row => ({
-    ...row,
-    label: row.kind === 'BLOCK'
-      ? 'Bloqueio de datas'
-      : `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
-  }));
+  ).all(u.id, u.id);
+
+  const bookingIds = rawEntries.filter(row => row.kind === 'BOOKING').map(row => row.id);
+  const noteCounts = new Map();
+  const noteLatest = new Map();
+  if (bookingIds.length) {
+    const placeholders = bookingIds.map(() => '?').join(',');
+    const countsStmt = db.prepare(`SELECT booking_id, COUNT(*) AS c FROM booking_notes WHERE booking_id IN (${placeholders}) GROUP BY booking_id`);
+    countsStmt.all(...bookingIds).forEach(row => noteCounts.set(row.booking_id, row.c));
+    const latestStmt = db.prepare(`
+      SELECT bn.booking_id, bn.note, bn.created_at, u.username
+        FROM booking_notes bn
+        JOIN users u ON u.id = bn.user_id
+       WHERE bn.booking_id IN (${placeholders})
+       ORDER BY bn.booking_id, bn.created_at DESC
+    `);
+    latestStmt.all(...bookingIds).forEach(row => {
+      if (!noteLatest.has(row.booking_id)) {
+        noteLatest.set(row.booking_id, {
+          note: row.note,
+          username: row.username,
+          created_at: row.created_at
+        });
+      }
+    });
+  }
+
+  const entries = rawEntries.map(row => {
+    if (row.kind === 'BOOKING') {
+      const latest = noteLatest.get(row.id) || null;
+      const preview = latest && latest.note ? String(latest.note).slice(0, 180) : '';
+      const meta = latest ? `${latest.username} · ${dayjs(latest.created_at).format('DD/MM HH:mm')}` : '';
+      return {
+        ...row,
+        label: `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
+        note_count: noteCounts.get(row.id) || 0,
+        note_preview: preview,
+        note_meta: meta
+      };
+    }
+    return {
+      ...row,
+      label: 'Bloqueio de datas',
+      note_count: 0,
+      note_preview: '',
+      note_meta: ''
+    };
+  });
 
   const cells = [];
   for (let i = 0; i < totalCells; i++) {
@@ -2915,7 +3208,10 @@ function unitCalendarCard(u, month) {
           `data-entry-email="${esc(hit.guest_email || '')}"`,
           `data-entry-phone="${esc(hit.guest_phone || '')}"`,
           `data-entry-adults="${hit.adults || 0}"`,
-          `data-entry-children="${hit.children || 0}"`
+          `data-entry-children="${hit.children || 0}"`,
+          `data-entry-note-count="${hit.note_count || 0}"`,
+          `data-entry-note-preview="${esc(hit.note_preview || '')}"`,
+          `data-entry-note-meta="${esc(hit.note_meta || '')}"`
         );
       }
     }
@@ -2943,7 +3239,7 @@ function unitCalendarCard(u, month) {
 }
 
 // ===================== Export Excel (privado) =====================
-app.get('/admin/export', requireLogin, (req,res)=>{
+app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (req,res)=>{
   const ymDefault = dayjs().format('YYYY-MM');
   res.send(layout({
     title: 'Exportar Mapa (Excel)',
@@ -2969,7 +3265,7 @@ app.get('/admin/export', requireLogin, (req,res)=>{
 });
 
 // Excel estilo Gantt + tabela de detalhes
-app.get('/admin/export/download', requireLogin, async (req, res) => {
+app.get('/admin/export/download', requireLogin, requirePermission('bookings.export'), async (req, res) => {
   const ym = String(req.query.ym || '').trim();
   const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
   if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');
@@ -3288,6 +3584,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
       ? `mapa_${start.format('YYYY_MM')}.xlsx`
       : `mapa_${start.format('YYYY_MM')}_+${months - 1}m.xlsx`;
 
+  logActivity(req.user.id, 'export:calendar_excel', null, null, { ym, months });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   await wb.xlsx.write(res);
@@ -3295,7 +3592,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
 });
 
 // ===================== Backoffice (protegido) =====================
-app.get('/admin', requireLogin, (req, res) => {
+app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
   const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
   const unitsRaw = db.prepare(
     `SELECT u.*, p.name as property_name
@@ -3856,13 +4153,13 @@ kitchen|Kitchenette"></textarea>
   }));
 });
 
-app.get('/admin/automation/operational.json', requireLogin, (req, res) => {
+app.get('/admin/automation/operational.json', requireLogin, requirePermission('automation.view'), (req, res) => {
   const data = computeOperationalDashboard(req.query || {});
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.send(JSON.stringify(data));
 });
 
-app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
+app.get('/admin/automation/export.csv', requireLogin, requirePermission('automation.export'), (req, res) => {
   const filters = parseOperationalFilters(req.query || {});
   const operational = computeOperationalDashboard(filters);
   const automationData = ensureAutomationFresh(5) || automationCache;
@@ -3964,18 +4261,19 @@ app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
   const filenameBase = filenameParts.filter(Boolean).join('_') || 'dashboard';
   const filename = `${filenameBase}.csv`;
 
+  logActivity(req.user.id, 'export:automation_csv', null, null, filters);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send('\ufeff' + csv);
 });
 
-app.post('/admin/properties/create', requireLogin, (req, res) => {
+app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const { name, location, description } = req.body;
   db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
   res.redirect('/admin');
 });
 
-app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
+app.post('/admin/properties/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const id = req.params.id;
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
   if (!property) return res.status(404).send('Propriedade não encontrada');
@@ -3983,7 +4281,7 @@ app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.get('/admin/properties/:id', requireLogin, (req, res) => {
+app.get('/admin/properties/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Propriedade não encontrada');
 
@@ -4026,7 +4324,7 @@ app.get('/admin/properties/:id', requireLogin, (req, res) => {
   }));
 });
 
-app.post('/admin/units/create', requireLogin, (req, res) => {
+app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
@@ -4035,7 +4333,7 @@ app.post('/admin/units/create', requireLogin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.get('/admin/units/:id', requireLogin, (req, res) => {
+app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const u = db.prepare(
     `SELECT u.*, p.name as property_name
        FROM units u
@@ -4400,7 +4698,7 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
   }));
 });
 
-app.post('/admin/units/:id/update', requireLogin, (req, res) => {
+app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const { name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
@@ -4409,12 +4707,12 @@ app.post('/admin/units/:id/update', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/units/:id/delete', requireLogin, (req, res) => {
+app.post('/admin/units/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
   db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
   res.redirect('/admin');
 });
 
-app.post('/admin/units/:id/block', requireLogin, (req, res) => {
+app.post('/admin/units/:id/block', requireLogin, requirePermission('calendar.block.create'), (req, res) => {
   const { start_date, end_date } = req.body;
   if (!dayjs(end_date).isAfter(dayjs(start_date)))
     return res.status(400).send('end_date deve ser > start_date');
@@ -4431,7 +4729,7 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
+app.post('/admin/blocks/:blockId/delete', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
   const block = db.prepare('SELECT unit_id, start_date, end_date FROM blocks WHERE id = ?').get(req.params.blockId);
   if (!block) return res.status(404).send('Bloqueio não encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
@@ -4443,7 +4741,7 @@ app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
-app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
+app.post('/admin/units/:id/rates/create', requireLogin, requirePermission('rates.manage'), (req, res) => {
   const { start_date, end_date, price_eur, min_stay } = req.body;
   if (!dayjs(end_date).isAfter(dayjs(start_date)))
     return res.status(400).send('end_date deve ser > start_date');
@@ -4455,7 +4753,7 @@ app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
+app.post('/admin/rates/:rateId/delete', requireLogin, requirePermission('rates.manage'), (req, res) => {
   const r = db.prepare('SELECT unit_id FROM rates WHERE id = ?').get(req.params.rateId);
   if (!r) return res.status(404).send('Rate não encontrada');
   db.prepare('DELETE FROM rates WHERE id = ?').run(req.params.rateId);
@@ -4463,7 +4761,7 @@ app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
 });
 
 // Imagens
-app.post('/admin/units/:id/images', requireLogin, upload.array('images', 24), async (req, res) => {
+app.post('/admin/units/:id/images', requireLogin, requirePermission('gallery.manage'), upload.array('images', 24), async (req, res) => {
   const unitId = Number(req.params.id);
   const files = req.files || [];
   if (!files.length) {
@@ -4511,7 +4809,7 @@ app.post('/admin/units/:id/images', requireLogin, upload.array('images', 24), as
   }
 });
 
-app.post('/admin/images/:imageId/delete', requireLogin, (req, res) => {
+app.post('/admin/images/:imageId/delete', requireLogin, requirePermission('gallery.manage'), (req, res) => {
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
   if (!img) {
     if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
@@ -4547,7 +4845,7 @@ app.post('/admin/images/:imageId/delete', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${img.unit_id}`);
 });
 
-app.post('/admin/images/:imageId/primary', requireLogin, (req, res) => {
+app.post('/admin/images/:imageId/primary', requireLogin, requirePermission('gallery.manage'), (req, res) => {
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
   if (!img) {
     if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
@@ -4566,7 +4864,7 @@ app.post('/admin/images/:imageId/primary', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${img.unit_id}`);
 });
 
-app.post('/admin/units/:id/images/reorder', requireLogin, (req, res) => {
+app.post('/admin/units/:id/images/reorder', requireLogin, requirePermission('gallery.manage'), (req, res) => {
   const unitId = Number(req.params.id);
   const order = Array.isArray(req.body.order) ? req.body.order : [];
   const ids = order
@@ -4602,7 +4900,7 @@ app.post('/admin/units/:id/images/reorder', requireLogin, (req, res) => {
 });
 
 // ===================== Booking Management (Admin) =====================
-app.get('/admin/bookings', requireLogin, (req, res) => {
+app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const q = String(req.query.q || '').trim();
   const status = String(req.query.status || '').trim(); // '', CONFIRMED, PENDING
   const ym = String(req.query.ym || '').trim();         // YYYY-MM opcional
@@ -4677,10 +4975,12 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
                   </span>
                 </td>
                 <td class="whitespace-nowrap">
-                  <a class="underline" href="/admin/bookings/${b.id}">Editar</a>
-                  <form method="post" action="/admin/bookings/${b.id}/cancel" style="display:inline" onsubmit="return confirm('Cancelar esta reserva?');">
-                    <button class="text-rose-600 ml-2">Cancelar</button>
-                  </form>
+                  <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
+                  ${canCancelBooking ? `
+                    <form method="post" action="/admin/bookings/${b.id}/cancel" style="display:inline" onsubmit="return confirm('Cancelar esta reserva?');">
+                      <button class="text-rose-600 ml-2">Cancelar</button>
+                    </form>
+                  ` : ''}
                 </td>
               </tr>
             `).join('')}
@@ -4692,7 +4992,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
   }));
 });
 
-app.get('/admin/bookings/:id', requireLogin, (req, res) => {
+app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const b = db.prepare(`
     SELECT b.*, u.name as unit_name, u.capacity, u.base_price_cents, p.name as property_name
       FROM bookings b
@@ -4701,6 +5001,20 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
      WHERE b.id = ?
   `).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
+
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+  const canAddNote = userCan(req.user, 'bookings.notes');
+  const bookingNotes = db.prepare(`
+    SELECT bn.id, bn.note, bn.created_at, u.username
+      FROM booking_notes bn
+      JOIN users u ON u.id = bn.user_id
+     WHERE bn.booking_id = ?
+     ORDER BY bn.created_at DESC
+  `).all(b.id).map(n => ({
+    ...n,
+    created_human: dayjs(n.created_at).format('DD/MM/YYYY HH:mm')
+  }));
 
   res.send(layout({
     title: `Editar reserva #${b.id}`,
@@ -4727,64 +5041,88 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
           ` : ''}
         </div>
 
-        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3">
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="text-sm">Check-in</label>
-              <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
+        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3" id="booking-update-form">
+          <fieldset class="grid gap-3" ${canEditBooking ? '' : 'disabled'}>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Check-in</label>
+                <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
+              </div>
+              <div>
+                <label class="text-sm">Check-out</label>
+                <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
+              </div>
             </div>
-            <div>
-              <label class="text-sm">Check-out</label>
-              <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Adultos</label>
+                <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
+              </div>
+              <div>
+                <label class="text-sm">Crianças</label>
+                <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
+              </div>
             </div>
-          </div>
 
-          <div class="grid grid-cols-2 gap-2">
+            <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
+            <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
+            <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
+            <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
             <div>
-              <label class="text-sm">Adultos</label>
-              <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
+              <label class="text-sm">Agência</label>
+              <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
             </div>
+            <div class="grid gap-1">
+              <label class="text-sm">Anotações internas</label>
+              <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
+              <p class="text-xs text-slate-500">Não aparece para o hóspede.</p>
+            </div>
+
             <div>
-              <label class="text-sm">Crianças</label>
-              <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
+              <label class="text-sm">Estado</label>
+              <select name="status" class="input">
+                <option value="CONFIRMED" ${b.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
+                <option value="PENDING" ${b.status==='PENDING'?'selected':''}>PENDING</option>
+              </select>
             </div>
-          </div>
 
-          <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
-          <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
-          <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
-          <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
-          <div>
-            <label class="text-sm">Agência</label>
-            <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
-          </div>
-          <div class="grid gap-1">
-            <label class="text-sm">Anotacoes internas</label>
-            <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
-            <p class="text-xs text-slate-500">Nao aparece para o hospede.</p>
-          </div>
-
-          <div>
-            <label class="text-sm">Estado</label>
-            <select name="status" class="input">
-              <option value="CONFIRMED" ${b.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-              <option value="PENDING" ${b.status==='PENDING'?'selected':''}>PENDING</option>
-            </select>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <button class="btn btn-primary">Guardar alterações</button>
-            <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-              <button class="btn" style="background:#e11d48;color:#fff;">Cancelar</button>
-            </form>
-          </div>
+            <button class="btn btn-primary justify-self-start">Guardar alterações</button>
+          </fieldset>
+          ${canEditBooking ? '' : '<p class="text-xs text-slate-500">Sem permissões para editar esta reserva.</p>'}
         </form>
+        ${canCancelBooking ? `
+          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');" class="self-end">
+            <button class="btn btn-danger mt-2">Cancelar reserva</button>
+          </form>
+        ` : ''}
+        <section class="md:col-span-2 card p-4" id="notes">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="font-semibold">Notas internas</h2>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${bookingNotes.length} nota${bookingNotes.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="mt-3 space-y-3">
+            ${bookingNotes.length ? bookingNotes.map(n => `
+              <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div class="text-xs text-slate-500 mb-1">${esc(n.username)} &middot; ${esc(n.created_human)}</div>
+                <div class="text-sm text-slate-700 whitespace-pre-line">${esc(n.note)}</div>
+              </article>
+            `).join('') : '<p class="text-sm text-slate-500">Sem notas adicionadas pela equipa.</p>'}
+          </div>
+          ${canAddNote ? `
+            <form method="post" action="/admin/bookings/${b.id}/notes" class="mt-4 grid gap-2">
+              <label class="text-sm" for="note">Adicionar nova nota</label>
+              <textarea class="input" id="note" name="note" rows="3" placeholder="Partilhe contexto para a equipa" required></textarea>
+              <button class="btn btn-primary justify-self-start">Gravar nota</button>
+            </form>
+          ` : '<p class="text-xs text-slate-500 mt-4">Sem permissões para adicionar novas notas.</p>'}
+        </section>
       </div>
     `
   }));
 });
 
-app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
+app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const id = req.params.id;
   const b = db.prepare(`
     SELECT b.*, u.capacity, u.base_price_cents
@@ -4854,7 +5192,18 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   res.redirect(`/admin/bookings/${id}`);
 });
 
-app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
+app.post('/admin/bookings/:id/notes', requireLogin, requirePermission('bookings.notes'), (req, res) => {
+  const bookingId = Number(req.params.id);
+  const exists = db.prepare('SELECT id FROM bookings WHERE id = ?').get(bookingId);
+  if (!exists) return res.status(404).send('Reserva não encontrada');
+  const noteRaw = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+  if (!noteRaw) return res.status(400).send('Nota obrigatória.');
+  db.prepare('INSERT INTO booking_notes(booking_id, user_id, note) VALUES (?,?,?)').run(bookingId, req.user.id, noteRaw);
+  logActivity(req.user.id, 'booking:note_add', 'booking', bookingId, { snippet: noteRaw.slice(0, 200) });
+  res.redirect(`/admin/bookings/${bookingId}#notes`);
+});
+
+app.post('/admin/bookings/:id/cancel', requireLogin, requirePermission('bookings.cancel'), (req, res) => {
   const id = req.params.id;
   const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
   if (!existing) return res.status(404).send('Reserva não encontrada');
@@ -4885,70 +5234,165 @@ app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
   res.redirect('/admin/bookings');
 });
 
-app.get('/admin/auditoria', requireLogin, (req, res) => {
+app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'logs.view']), (req, res) => {
   const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
   const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
-  const filters = [];
-  const params = [];
-  if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
-  const idNumber = Number(idRaw);
-  if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  const logs = db.prepare(`
-    SELECT cl.*, u.username
-      FROM change_logs cl
-      JOIN users u ON u.id = cl.actor_id
-     ${where}
-     ORDER BY cl.created_at DESC
-     LIMIT 200
-  `).all(...params);
+  const canViewAudit = userCan(req.user, 'audit.view');
+  const canViewLogs = userCan(req.user, 'logs.view');
+
+  let changeLogs = [];
+  if (canViewAudit) {
+    const filters = [];
+    const params = [];
+    if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
+    const idNumber = Number(idRaw);
+    if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    changeLogs = db.prepare(`
+      SELECT cl.*, u.username
+        FROM change_logs cl
+        JOIN users u ON u.id = cl.actor_id
+       ${where}
+       ORDER BY cl.created_at DESC
+       LIMIT 200
+    `).all(...params);
+  }
+
+  const sessionLogs = canViewLogs
+    ? db.prepare(`
+        SELECT sl.*, u.username
+          FROM session_logs sl
+          LEFT JOIN users u ON u.id = sl.user_id
+         ORDER BY sl.created_at DESC
+         LIMIT 120
+      `).all()
+    : [];
+
+  const activityLogs = canViewLogs
+    ? db.prepare(`
+        SELECT al.*, u.username
+          FROM activity_logs al
+          LEFT JOIN users u ON u.id = al.user_id
+         ORDER BY al.created_at DESC
+         LIMIT 200
+      `).all()
+    : [];
 
   res.send(layout({
     title: 'Auditoria',
     user: req.user,
     activeNav: 'audit',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Histórico de alterações</h1>
-      <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
-        <div class="grid gap-1">
-          <label class="text-sm text-slate-600">Entidade</label>
-          <select class="input" name="entity">
-            <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
-            <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
-            <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
-          </select>
-        </div>
-        <div class="grid gap-1">
-          <label class="text-sm text-slate-600">ID</label>
-          <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
-        </div>
-        <div class="self-end">
-          <button class="btn btn-primary w-full">Filtrar</button>
-        </div>
-      </form>
+      <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
+      ${canViewAudit ? `
+        <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">Entidade</label>
+            <select class="input" name="entity">
+              <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+              <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+              <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+            </select>
+          </div>
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">ID</label>
+            <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+          </div>
+          <div class="self-end">
+            <button class="btn btn-primary w-full">Filtrar</button>
+          </div>
+        </form>
 
-      <div class="space-y-4">
-        ${logs.length ? logs.map(log => html`
-          <article class="card p-4 grid gap-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
-              <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
-            </div>
-            <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-              <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
-              <span class="text-slate-500">por ${esc(log.username)}</span>
-            </div>
-            <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
-          </article>
-        `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
-      </div>
+        <div class="space-y-4">
+          ${changeLogs.length ? changeLogs.map(log => html`
+            <article class="card p-4 grid gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
+                <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
+              </div>
+              <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+                <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
+                <span class="text-slate-500">por ${esc(log.username)}</span>
+              </div>
+              <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
+            </article>
+          `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
+        </div>
+      ` : `<div class="card p-4 text-sm text-slate-500">Sem permissões para consultar o histórico de alterações.</div>`}
+
+      ${canViewLogs ? `
+        <section class="mt-8 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Logs de sessão</h2>
+            <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
+          </div>
+          <div class="card p-0 overflow-x-auto">
+            <table class="w-full min-w-[720px] text-sm">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="text-left px-4 py-2">Quando</th>
+                  <th class="text-left px-4 py-2">Utilizador</th>
+                  <th class="text-left px-4 py-2">Ação</th>
+                  <th class="text-left px-4 py-2">IP</th>
+                  <th class="text-left px-4 py-2">User-Agent</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sessionLogs.length ? sessionLogs.map(row => `
+                  <tr class="border-t">
+                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
+                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
+                    <td class="px-4 py-2">${esc(row.action)}</td>
+                    <td class="px-4 py-2">${esc(row.ip || '')}</td>
+                    <td class="px-4 py-2 text-slate-500">${esc((row.user_agent || '').slice(0, 120))}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade de sessão registada.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="mt-8 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Atividade da aplicação</h2>
+            <span class="text-xs text-slate-500">Últimos ${activityLogs.length} eventos</span>
+          </div>
+          <div class="card p-0 overflow-x-auto">
+            <table class="w-full min-w-[820px] text-sm">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="text-left px-4 py-2">Quando</th>
+                  <th class="text-left px-4 py-2">Utilizador</th>
+                  <th class="text-left px-4 py-2">Ação</th>
+                  <th class="text-left px-4 py-2">Entidade</th>
+                  <th class="text-left px-4 py-2">Detalhes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${activityLogs.length ? activityLogs.map(row => `
+                  <tr class="border-t align-top">
+                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
+                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
+                    <td class="px-4 py-2">${esc(row.action)}</td>
+                    <td class="px-4 py-2">${row.entity_type ? esc(row.entity_type) + (row.entity_id ? ' #' + row.entity_id : '') : '—'}</td>
+                    <td class="px-4 py-2">${formatJsonSnippet(row.meta_json)}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade registada.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ` : ''}
     `
   }));
 });
 
 // ===================== Utilizadores (admin) =====================
 app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
-  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all();
+  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all().map(u => ({
+    ...u,
+    role_key: normalizeRole(u.role)
+  }));
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
@@ -4961,9 +5405,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
           <select name="role" class="input">
-            <option value="admin">admin</option>
-            <option value="gestor">gestor</option>
-            <option value="limpezas">limpezas</option>
+            <option value="rececao">Receção</option>
+            <option value="gestao">Gestão</option>
+            <option value="direcao">Direção</option>
           </select>
           <button class="btn btn-primary">Criar</button>
         </form>
@@ -4974,7 +5418,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <form method="post" action="/admin/users/password" class="grid gap-2">
           <label class="text-sm">Selecionar utilizador</label>
           <select required name="user_id" class="input">
-            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${u.role})</option>`).join('')}
+            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`).join('')}
           </select>
           <input required type="password" name="new_password" class="input" placeholder="Nova password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
@@ -4993,7 +5437,9 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
   if (exists) return res.status(400).send('Utilizador já existe.');
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, role || 'gestor');
+  const roleKey = normalizeRole(role);
+  const result = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, roleKey);
+  logActivity(req.user.id, 'user:create', 'user', result.lastInsertRowid, { username, role: roleKey });
   res.redirect('/admin/utilizadores');
 });
 
@@ -5006,6 +5452,7 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
+  logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
 });
 
