@@ -119,6 +119,13 @@ CREATE TABLE IF NOT EXISTS change_logs (
   actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS automation_state (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 db.exec(schema);
 
@@ -197,6 +204,511 @@ function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
     console.error('Erro ao registar auditoria', err.message);
   }
 }
+
+// ===================== Automação Operacional =====================
+const automationStateGetStmt = db.prepare('SELECT value FROM automation_state WHERE key = ?');
+const automationStateUpsertStmt = db.prepare(
+  "INSERT INTO automation_state(key,value,created_at,updated_at) VALUES (?,?,datetime('now'),datetime('now')) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+);
+
+const selectAutomationUnitsStmt = db.prepare(
+  `SELECT u.id, u.name, u.capacity, u.base_price_cents, p.name AS property_name
+     FROM units u
+     JOIN properties p ON p.id = u.property_id
+    ORDER BY u.id`
+);
+const selectAutomationUpcomingBookingsStmt = db.prepare(
+  `SELECT b.*, u.name AS unit_name, u.capacity, u.base_price_cents, u.property_id, p.name AS property_name
+     FROM bookings b
+     JOIN units u ON u.id = b.unit_id
+     JOIN properties p ON p.id = u.property_id
+    WHERE b.checkout > ?
+      AND b.status IN ('CONFIRMED','PENDING')
+    ORDER BY b.unit_id, b.checkin`
+);
+const selectAutomationBlocksExactStmt = db.prepare(
+  'SELECT id FROM blocks WHERE unit_id = ? AND start_date = ? AND end_date = ?'
+);
+const selectAutomationBlockOverlapStmt = db.prepare(
+  'SELECT id FROM blocks WHERE unit_id = ? AND NOT (end_date <= ? OR start_date >= ?)'
+);
+const selectAutomationBookingOverlapStmt = db.prepare(
+  "SELECT id FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)"
+);
+const selectAutomationCancellationsStmt = db.prepare(
+  "SELECT id, entity_id, before_json, created_at FROM change_logs WHERE entity_type = 'booking' AND action = 'cancel' ORDER BY id DESC LIMIT 12"
+);
+
+function readAutomationState(key) {
+  const row = automationStateGetStmt.get(key);
+  if (!row || row.value == null) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeAutomationState(key, payload) {
+  try {
+    automationStateUpsertStmt.run(key, JSON.stringify(payload || null));
+  } catch (err) {
+    console.error('Automação: erro ao guardar estado', err.message);
+  }
+}
+
+const AUTO_CHAIN_THRESHOLD = 4;
+const AUTO_CHAIN_CLEANUP_NIGHTS = 1;
+const HOT_DEMAND_THRESHOLD = 0.7;
+
+const AUTOMATION_SEVERITY_STYLES = {
+  info: { border: 'border-sky-200', dot: 'text-sky-600', badge: 'bg-sky-100 text-sky-800' },
+  warning: { border: 'border-amber-300', dot: 'text-amber-600', badge: 'bg-amber-100 text-amber-800' },
+  danger: { border: 'border-rose-300', dot: 'text-rose-600', badge: 'bg-rose-100 text-rose-700' },
+  success: { border: 'border-emerald-300', dot: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700' }
+};
+
+function automationSeverityStyle(severity) {
+  return AUTOMATION_SEVERITY_STYLES[severity] || AUTOMATION_SEVERITY_STYLES.info;
+}
+
+function formatDateRangeShort(start, endExclusive) {
+  const startDay = dayjs(start);
+  const endDay = dayjs(endExclusive).subtract(1, 'day');
+  if (!endDay.isAfter(startDay)) return startDay.format('DD/MM');
+  return `${startDay.format('DD/MM')} → ${endDay.format('DD/MM')}`;
+}
+
+function safeJsonParse(str) {
+  if (!str) return null;
+  try { return JSON.parse(str); } catch (_) { return null; }
+}
+
+function isoWeekStart(dateLike) {
+  const d = dayjs(dateLike);
+  const diff = (d.day() + 6) % 7;
+  return d.subtract(diff, 'day');
+}
+
+let automationCache = {
+  lastRun: null,
+  generatedBlocks: [],
+  tariffSuggestions: [],
+  notifications: [],
+  summaries: { daily: [], weekly: [] },
+  revenue: { next7: 0, next30: 0 },
+  demandPeaks: [],
+  metrics: { checkins48h: 0, longStays: 0, occupancyToday: 0 }
+};
+
+function runAutomationSweep(trigger = 'manual') {
+  const started = dayjs();
+  const today = started.format('YYYY-MM-DD');
+
+  const units = selectAutomationUnitsStmt.all();
+  const unitMap = new Map(units.map(u => [u.id, u]));
+  const totalUnits = units.length;
+  const upcomingActive = selectAutomationUpcomingBookingsStmt.all(today);
+
+  const occupancyMap = new Map();
+  const arrivalsMap = new Map();
+  const departuresMap = new Map();
+  const confirmedBookings = [];
+  const longStayBookings = [];
+
+  const horizon7 = started.add(7, 'day');
+  const horizon30 = started.add(30, 'day');
+  let revenue7 = 0;
+  let revenue30 = 0;
+
+  upcomingActive.forEach(b => {
+    const isConfirmed = b.status === 'CONFIRMED';
+    if (isConfirmed) confirmedBookings.push(b);
+
+    const checkin = dayjs(b.checkin);
+    const checkout = dayjs(b.checkout);
+    for (let d = checkin; d.isBefore(checkout); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      let occ = occupancyMap.get(key);
+      if (!occ) { occ = { confirmed: 0, pending: 0 }; occupancyMap.set(key, occ); }
+      occ[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    }
+
+    const arr = arrivalsMap.get(b.checkin) || { confirmed: 0, pending: 0 };
+    arr[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    arrivalsMap.set(b.checkin, arr);
+
+    const dep = departuresMap.get(b.checkout) || { confirmed: 0, pending: 0 };
+    dep[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    departuresMap.set(b.checkout, dep);
+
+    if (isConfirmed) {
+      if (checkin.isBefore(horizon7) && checkout.isAfter(started)) revenue7 += b.total_cents;
+      if (checkin.isBefore(horizon30) && checkout.isAfter(started)) revenue30 += b.total_cents;
+      const stayLength = dateRangeNights(b.checkin, b.checkout).length;
+      if (stayLength >= 7) longStayBookings.push(b);
+    }
+  });
+
+  const confirmedByUnit = new Map();
+  confirmedBookings.forEach(b => {
+    if (!confirmedByUnit.has(b.unit_id)) confirmedByUnit.set(b.unit_id, []);
+    confirmedByUnit.get(b.unit_id).push(b);
+  });
+
+  const notifications = [];
+  const blockEvents = [];
+
+  const automationTransaction = db.transaction(() => {
+    units.forEach(u => {
+      const unitBookings = confirmedByUnit.get(u.id) || [];
+      if (unitBookings.length < AUTO_CHAIN_THRESHOLD) return;
+
+      let chainCount = 1;
+      for (let i = 1; i < unitBookings.length; i++) {
+        const prev = unitBookings[i - 1];
+        const curr = unitBookings[i];
+        if (dayjs(curr.checkin).isSame(dayjs(prev.checkout))) {
+          chainCount += 1;
+        } else {
+          chainCount = 1;
+        }
+
+        if (chainCount >= AUTO_CHAIN_THRESHOLD) {
+          const blockStart = dayjs(curr.checkout).format('YYYY-MM-DD');
+          const blockEnd = dayjs(curr.checkout).add(AUTO_CHAIN_CLEANUP_NIGHTS, 'day').format('YYYY-MM-DD');
+          if (dayjs(blockEnd).isAfter(dayjs(blockStart))) {
+            const key = `auto:block:chain:${u.id}:${blockStart}:${blockEnd}`;
+            const existingBlock = selectAutomationBlocksExactStmt.get(u.id, blockStart, blockEnd);
+            if (existingBlock) {
+              writeAutomationState(key, {
+                unit_id: u.id,
+                block_id: existingBlock.id,
+                start: blockStart,
+                end: blockEnd,
+                reason: 'chain'
+              });
+            } else {
+              const bookingConflict = selectAutomationBookingOverlapStmt.get(u.id, blockStart, blockEnd);
+              const blockConflict = selectAutomationBlockOverlapStmt.get(u.id, blockStart, blockEnd);
+              if (!bookingConflict && !blockConflict) {
+                const inserted = insertBlockStmt.run(u.id, blockStart, blockEnd);
+                writeAutomationState(key, {
+                  unit_id: u.id,
+                  block_id: inserted.lastInsertRowid,
+                  start: blockStart,
+                  end: blockEnd,
+                  reason: 'chain',
+                  created_at: started.toISOString(),
+                  trigger
+                });
+                blockEvents.push({
+                  type: 'chain',
+                  unit_id: u.id,
+                  unit_name: u.name,
+                  property_name: u.property_name,
+                  start: blockStart,
+                  end: blockEnd
+                });
+                notifications.push({
+                  type: 'auto-block',
+                  severity: 'info',
+                  created_at: started.toISOString(),
+                  title: 'Dia de recuperação bloqueado',
+                  message: `${u.property_name} · ${u.name}: bloqueio ${formatDateRangeShort(blockStart, blockEnd)} após ${AUTO_CHAIN_THRESHOLD} reservas seguidas.`
+                });
+              } else {
+                notifications.push({
+                  type: 'auto-block',
+                  severity: 'warning',
+                  created_at: started.toISOString(),
+                  title: 'Bloqueio por sequência cheia falhou',
+                  message: `${u.property_name} · ${u.name}: conflito ao reservar ${formatDateRangeShort(blockStart, blockEnd)} para limpeza.`
+                });
+              }
+            }
+          }
+          chainCount = 1;
+        }
+      }
+    });
+
+    confirmedBookings.forEach(b => {
+      const quote = rateQuote(b.unit_id, b.checkin, b.checkout, b.base_price_cents);
+      const stayLength = dateRangeNights(b.checkin, b.checkout).length;
+      const minStay = quote.minStayReq || 1;
+      if (minStay > stayLength) {
+        const extraNights = minStay - stayLength;
+        const blockStart = dayjs(b.checkout).format('YYYY-MM-DD');
+        const blockEnd = dayjs(b.checkout).add(extraNights, 'day').format('YYYY-MM-DD');
+        if (dayjs(blockEnd).isAfter(dayjs(blockStart))) {
+          const key = `auto:block:minstay:${b.id}:${blockStart}:${blockEnd}`;
+          const existingBlock = selectAutomationBlocksExactStmt.get(b.unit_id, blockStart, blockEnd);
+          if (existingBlock) {
+            writeAutomationState(key, {
+              booking_id: b.id,
+              block_id: existingBlock.id,
+              start: blockStart,
+              end: blockEnd,
+              reason: 'minstay'
+            });
+          } else {
+            const bookingConflict = selectAutomationBookingOverlapStmt.get(b.unit_id, blockStart, blockEnd);
+            const blockConflict = selectAutomationBlockOverlapStmt.get(b.unit_id, blockStart, blockEnd);
+            if (!bookingConflict && !blockConflict) {
+              const inserted = insertBlockStmt.run(b.unit_id, blockStart, blockEnd);
+              writeAutomationState(key, {
+                booking_id: b.id,
+                block_id: inserted.lastInsertRowid,
+                start: blockStart,
+                end: blockEnd,
+                reason: 'minstay',
+                created_at: started.toISOString(),
+                extra_nights: extraNights,
+                trigger
+              });
+              blockEvents.push({
+                type: 'minstay',
+                unit_id: b.unit_id,
+                unit_name: b.unit_name,
+                property_name: b.property_name,
+                start: blockStart,
+                end: blockEnd,
+                extra_nights: extraNights
+              });
+              notifications.push({
+                type: 'auto-block',
+                severity: 'info',
+                created_at: started.toISOString(),
+                title: 'Estadia mínima reforçada',
+                message: `${b.property_name} · ${b.unit_name}: bloqueadas ${extraNights} noite(s) (${formatDateRangeShort(blockStart, blockEnd)}) após reserva curta.`
+              });
+            } else {
+              notifications.push({
+                type: 'auto-block',
+                severity: 'warning',
+                created_at: started.toISOString(),
+                title: 'Não foi possível reforçar estadia mínima',
+                message: `${b.property_name} · ${b.unit_name}: conflito ao bloquear ${formatDateRangeShort(blockStart, blockEnd)}.`
+              });
+            }
+          }
+        }
+      }
+    });
+  });
+
+  try {
+    automationTransaction();
+  } catch (err) {
+    console.error('Automação: falha ao executar sweep', err);
+    notifications.push({
+      type: 'automation',
+      severity: 'danger',
+      created_at: started.toISOString(),
+      title: 'Erro no motor de automação',
+      message: err.message || 'Erro inesperado ao processar regras automáticas.'
+    });
+  }
+
+  units.forEach(u => {
+    const unitBookings = upcomingActive.filter(b => b.unit_id === u.id);
+    for (let i = 1; i < unitBookings.length; i++) {
+      const prev = unitBookings[i - 1];
+      const curr = unitBookings[i];
+      if (dayjs(curr.checkin).isBefore(dayjs(prev.checkout))) {
+        notifications.push({
+          type: 'overlap',
+          severity: 'danger',
+          created_at: started.toISOString(),
+          title: 'Sobreposição de reservas',
+          message: `${u.property_name} · ${u.name}: ${prev.guest_name} (${dayjs(prev.checkin).format('DD/MM')}→${dayjs(prev.checkout).format('DD/MM')}) sobrepõe ${curr.guest_name} (${dayjs(curr.checkin).format('DD/MM')}→${dayjs(curr.checkout).format('DD/MM')}).`
+        });
+      }
+    }
+  });
+
+  longStayBookings.forEach(b => {
+    notifications.push({
+      type: 'long-stay',
+      severity: 'success',
+      created_at: started.toISOString(),
+      title: 'Estadia longa confirmada',
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} fica ${dateRangeNights(b.checkin, b.checkout).length} noites (check-in ${dayjs(b.checkin).format('DD/MM')}).`
+    });
+  });
+
+  const upcomingCheckins = confirmedBookings.filter(b => {
+    const diffHours = dayjs(b.checkin).diff(started, 'hour');
+    return diffHours >= 0 && diffHours <= 48;
+  });
+  upcomingCheckins.forEach(b => {
+    notifications.push({
+      type: 'checkin',
+      severity: 'info',
+      created_at: started.toISOString(),
+      title: 'Check-in próximo',
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`
+    });
+  });
+
+  const cancellationRows = selectAutomationCancellationsStmt.all();
+  cancellationRows.forEach(row => {
+    const payload = safeJsonParse(row.before_json);
+    if (!payload) return;
+    const unitInfo = payload.unit_id ? unitMap.get(payload.unit_id) : null;
+    const createdAt = row.created_at || started.toISOString();
+    if (createdAt && dayjs(createdAt).isBefore(started.subtract(14, 'day'))) return;
+    const title = 'Reserva cancelada';
+    const guest = payload.guest_name || 'Reserva';
+    const stayRange = payload.checkin && payload.checkout
+      ? `${dayjs(payload.checkin).format('DD/MM')}→${dayjs(payload.checkout).format('DD/MM')}`
+      : '';
+    const unitLabel = unitInfo ? `${unitInfo.property_name} · ${unitInfo.name}` : `Unidade #${payload.unit_id || '?'}`;
+    notifications.push({
+      type: 'cancel',
+      severity: 'info',
+      created_at: createdAt,
+      title,
+      message: `${unitLabel}: ${guest} (${stayRange}) cancelada.`
+    });
+  });
+
+  const suggestions = [];
+  if (totalUnits > 0) {
+    const suggestionHorizon = started.add(30, 'day');
+    for (let d = dayjs(today); d.isBefore(suggestionHorizon); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      const occ = occupancyMap.get(key);
+      if (!occ) continue;
+      const occupancyRate = occ.confirmed / totalUnits;
+      if (occupancyRate >= HOT_DEMAND_THRESHOLD) {
+        const increase = Math.min(35, Math.max(10, Math.round((occupancyRate - HOT_DEMAND_THRESHOLD) * 100) + 10));
+        suggestions.push({
+          date: key,
+          occupancyRate,
+          confirmedCount: occ.confirmed,
+          pendingCount: occ.pending,
+          suggestedIncreasePct: increase
+        });
+      }
+    }
+  }
+
+  suggestions.sort((a, b) => {
+    if (b.occupancyRate !== a.occupancyRate) return b.occupancyRate - a.occupancyRate;
+    return a.date.localeCompare(b.date);
+  });
+
+  const demandPeaks = suggestions.slice(0, 10);
+  const tariffSuggestions = suggestions.slice(0, 6);
+
+  const dailySummary = [];
+  for (let i = 0; i < 7; i++) {
+    const day = dayjs(today).add(i, 'day');
+    const key = day.format('YYYY-MM-DD');
+    const occ = occupancyMap.get(key) || { confirmed: 0, pending: 0 };
+    const arr = arrivalsMap.get(key) || { confirmed: 0, pending: 0 };
+    const dep = departuresMap.get(key) || { confirmed: 0, pending: 0 };
+    dailySummary.push({
+      date: key,
+      occupancyRate: totalUnits ? occ.confirmed / totalUnits : 0,
+      confirmedCount: occ.confirmed,
+      pendingCount: occ.pending,
+      arrivalsConfirmed: arr.confirmed,
+      arrivalsPending: arr.pending,
+      departuresConfirmed: dep.confirmed,
+      departuresPending: dep.pending
+    });
+  }
+
+  const weeklySummary = [];
+  const baseWeek = isoWeekStart(today);
+  for (let i = 0; i < 4; i++) {
+    const startWeek = baseWeek.add(i, 'week');
+    const endWeek = startWeek.add(7, 'day');
+    let confirmedNights = 0;
+    let pendingNights = 0;
+    for (let d = startWeek; d.isBefore(endWeek); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      const occ = occupancyMap.get(key);
+      if (occ) {
+        confirmedNights += occ.confirmed;
+        pendingNights += occ.pending;
+      }
+    }
+    weeklySummary.push({
+      start: startWeek.format('YYYY-MM-DD'),
+      end: endWeek.format('YYYY-MM-DD'),
+      occupancyRate: totalUnits ? confirmedNights / (totalUnits * 7) : 0,
+      confirmedNights,
+      pendingNights
+    });
+  }
+
+  const seenNotifications = new Set();
+  const uniqueNotifications = [];
+  notifications.forEach(n => {
+    const key = `${n.type}|${n.title}|${n.message}`;
+    if (seenNotifications.has(key)) return;
+    seenNotifications.add(key);
+    uniqueNotifications.push(n);
+  });
+
+  uniqueNotifications.sort((a, b) => {
+    const aTime = dayjs(a.created_at || started).valueOf();
+    const bTime = dayjs(b.created_at || started).valueOf();
+    return bTime - aTime;
+  });
+
+  const trimmedNotifications = uniqueNotifications.slice(0, 20);
+
+  const metrics = {
+    checkins48h: upcomingCheckins.length,
+    longStays: longStayBookings.length,
+    occupancyToday: totalUnits ? ((occupancyMap.get(today) || { confirmed: 0 }).confirmed / totalUnits) : 0,
+    revenue7,
+    revenue30,
+    totalUnits,
+    totalConfirmed: confirmedBookings.length
+  };
+
+  automationCache = {
+    lastRun: started.toISOString(),
+    generatedBlocks: blockEvents,
+    tariffSuggestions,
+    notifications: trimmedNotifications,
+    summaries: { daily: dailySummary, weekly: weeklySummary },
+    revenue: { next7: revenue7, next30: revenue30 },
+    demandPeaks,
+    metrics
+  };
+
+  return automationCache;
+}
+
+function ensureAutomationFresh(maxAgeMinutes = 10) {
+  if (!automationCache.lastRun) return runAutomationSweep('lazy');
+  if (dayjs().diff(dayjs(automationCache.lastRun), 'minute') > maxAgeMinutes) {
+    return runAutomationSweep('lazy');
+  }
+  return automationCache;
+}
+
+try {
+  runAutomationSweep('startup');
+} catch (err) {
+  console.error('Automação: falha inicial', err);
+}
+
+setInterval(() => {
+  try {
+    runAutomationSweep('interval');
+  } catch (err) {
+    console.error('Automação: falha periódica', err);
+  }
+}, 30 * 60 * 1000);
 
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
@@ -2522,8 +3034,160 @@ app.get('/admin', requireLogin, (req, res) => {
        JOIN units u ON u.id = b.unit_id
        JOIN properties p ON p.id = u.property_id
       ORDER BY b.created_at DESC
-      LIMIT 10`
+      LIMIT 12`
   ).all();
+
+  const automationData = ensureAutomationFresh(5) || automationCache;
+  const automationMetrics = automationData.metrics || {};
+  const automationNotifications = automationData.notifications || [];
+  const automationSuggestions = automationData.tariffSuggestions || [];
+  const automationBlocks = automationData.generatedBlocks || [];
+  const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
+  const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
+  const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
+  const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
+  const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
+
+  const notificationsHtml = automationNotifications.length
+    ? `<ul class="space-y-3">${automationNotifications.map(n => {
+        const styles = automationSeverityStyle(n.severity);
+        const ts = n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun;
+        return `
+          <li class="border-l-4 pl-3 ${styles.border} bg-white/40 rounded-sm">
+            <div class="text-[11px] text-slate-400">${esc(ts)}</div>
+            <div class="text-sm font-semibold text-slate-800">${esc(n.title || '')}</div>
+            <div class="text-sm text-slate-600">${esc(n.message || '')}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Sem alertas no momento.</p>';
+
+  const suggestionsHtml = automationSuggestions.length
+    ? `<ul class="space-y-2">${automationSuggestions.map(s => {
+        const occPct = Math.round((s.occupancyRate || 0) * 100);
+        const pendLabel = s.pendingCount ? ` <span class=\"text-xs text-slate-500\">(+${s.pendingCount} pend)</span>` : '';
+        return `
+          <li class="border rounded-lg p-3 bg-slate-50">
+            <div class="flex items-center justify-between text-sm font-semibold text-slate-700">
+              <span>${dayjs(s.date).format('DD/MM')}</span>
+              <span>${occPct}% ocup.</span>
+            </div>
+            <div class="text-sm text-slate-600">Sugerir +${s.suggestedIncreasePct}% no preço base · ${s.confirmedCount}/${totalUnitsCount} confirmadas${pendLabel}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Sem datas de alta procura.</p>';
+
+  const blockEventsHtml = automationBlocks.length
+    ? `<ul class="space-y-2">${automationBlocks.slice(-6).reverse().map(evt => {
+        const label = evt.type === 'minstay' ? 'Estadia mínima' : 'Sequência cheia';
+        const extra = evt.extra_nights ? ` · +${evt.extra_nights} noite(s)` : '';
+        return `
+          <li class="border rounded-lg p-3 bg-white/40">
+            <div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(label)}</div>
+            <div class="text-sm font-semibold text-slate-800">${esc(evt.property_name)} · ${esc(evt.unit_name)}</div>
+            <div class="text-sm text-slate-600">${esc(formatDateRangeShort(evt.start, evt.end))}${extra}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Nenhum bloqueio automático recente.</p>';
+
+  const dailyRows = automationDaily.length
+    ? automationDaily.map(d => {
+        const occPct = Math.round((d.occupancyRate || 0) * 100);
+        const arrLabel = d.arrivalsPending ? `${d.arrivalsConfirmed} <span class=\"text-xs text-slate-500\">(+${d.arrivalsPending} pend)</span>` : String(d.arrivalsConfirmed);
+        const depLabel = d.departuresPending ? `${d.departuresConfirmed} <span class=\"text-xs text-slate-500\">(+${d.departuresPending} pend)</span>` : String(d.departuresConfirmed);
+        const pendingBadge = d.pendingCount ? `<span class=\"text-xs text-slate-500 ml-1\">(+${d.pendingCount} pend)</span>` : '';
+        return `
+          <tr class="border-t">
+            <td class="py-2 text-sm">${dayjs(d.date).format('DD/MM')}</td>
+            <td class="py-2 text-sm">${occPct}%</td>
+            <td class="py-2 text-sm">${d.confirmedCount}${pendingBadge}</td>
+            <td class="py-2 text-sm">${arrLabel}</td>
+            <td class="py-2 text-sm">${depLabel}</td>
+          </tr>`;
+      }).join('')
+    : '<tr><td class="py-2 text-sm text-slate-500" colspan="5">Sem dados para o período.</td></tr>';
+
+  const weeklyRows = automationWeekly.length
+    ? automationWeekly.map(w => {
+        const occPct = Math.round((w.occupancyRate || 0) * 100);
+        const pending = w.pendingNights ? ` <span class=\"text-xs text-slate-500\">(+${w.pendingNights} pend)</span>` : '';
+        const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
+        return `
+          <tr class="border-t">
+            <td class="py-2 text-sm">${dayjs(w.start).format('DD/MM')} → ${endLabel}</td>
+            <td class="py-2 text-sm">${occPct}%</td>
+            <td class="py-2 text-sm">${w.confirmedNights}${pending}</td>
+          </tr>`;
+      }).join('')
+    : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
+
+  const automationCard = html`
+      <section class="card p-4 mb-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Motor inteligente</h2>
+            <p class="text-sm text-slate-600">Bloqueios automáticos, alertas e insights de ocupação para agir rapidamente.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 text-sm text-slate-600 md:text-right">
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Última execução</div>
+              <div class="font-semibold text-slate-900">${automationLastRun}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Check-ins 48h</div>
+              <div class="font-semibold text-slate-900">${automationMetrics.checkins48h || 0}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Receita próxima semana</div>
+              <div class="font-semibold text-slate-900">€ ${eur(automationRevenue7)}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Ocupação hoje</div>
+              <div class="font-semibold text-slate-900">${Math.round((automationMetrics.occupancyToday || 0) * 100)}%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
+            ${notificationsHtml}
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
+            ${suggestionsHtml}
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
+            ${blockEventsHtml}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <div class="overflow-x-auto">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo diário (7 dias)</h3>
+            <table class="w-full min-w-[420px] text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
+                </tr>
+              </thead>
+              <tbody>${dailyRows}</tbody>
+            </table>
+          </div>
+          <div class="overflow-x-auto">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo semanal</h3>
+            <table class="w-full min-w-[320px] text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
+                </tr>
+              </thead>
+              <tbody>${weeklyRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+  `;
 
   res.send(layout({
     title: 'Backoffice',
@@ -2531,6 +3195,8 @@ app.get('/admin', requireLogin, (req, res) => {
     activeNav: 'backoffice',
     body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
+
+      ${automationCard}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <section class="card p-4">
@@ -2620,6 +3286,46 @@ kitchen|Kitchenette"></textarea>
       </section>
     `
   }));
+});
+
+app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
+  const data = ensureAutomationFresh(5) || automationCache;
+  const daily = (data.summaries && data.summaries.daily) || [];
+  const weekly = (data.summaries && data.summaries.weekly) || [];
+
+  const rows = [];
+  rows.push(['Secção', 'Referência', 'Valor']);
+  rows.push(['Execução', 'Última', data.lastRun ? dayjs(data.lastRun).format('YYYY-MM-DD HH:mm') : '-']);
+  rows.push(['Receita', 'Próximos 7 dias (€)', eur(data.revenue ? data.revenue.next7 || 0 : 0)]);
+  rows.push(['Receita', 'Próximos 30 dias (€)', eur(data.revenue ? data.revenue.next30 || 0 : 0)]);
+  rows.push(['Métrica', 'Check-ins 48h', (data.metrics && data.metrics.checkins48h) || 0]);
+  rows.push(['Métrica', 'Estadias longas', (data.metrics && data.metrics.longStays) || 0]);
+  rows.push(['Métrica', 'Ocupação hoje (%)', Math.round(((data.metrics && data.metrics.occupancyToday) || 0) * 100)]);
+
+  daily.forEach(d => {
+    rows.push([
+      'Resumo diário',
+      `${dayjs(d.date).format('YYYY-MM-DD')}`,
+      `${Math.round((d.occupancyRate || 0) * 100)}% · ${d.confirmedCount} confirmadas`
+    ]);
+  });
+
+  weekly.forEach(w => {
+    const endLabel = dayjs(w.end).subtract(1, 'day').format('YYYY-MM-DD');
+    rows.push([
+      'Resumo semanal',
+      `${dayjs(w.start).format('YYYY-MM-DD')} → ${endLabel}`,
+      `${Math.round((w.occupancyRate || 0) * 100)}% · ${w.confirmedNights} noites`
+    ]);
+  });
+
+  const csv = rows
+    .map(cols => cols.map(col => `"${String(col ?? '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="resumo-automacao.csv"');
+  res.send('\ufeff' + csv);
 });
 
 app.post('/admin/properties/create', requireLogin, (req, res) => {
