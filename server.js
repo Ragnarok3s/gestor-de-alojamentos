@@ -1575,6 +1575,34 @@ app.get('/calendar', requireLogin, (req, res) => {
               });
           }
 
+          function escapeHtml(str) {
+            return String(str == null ? '' : str)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+          }
+
+          function formatStatusLabel(status) {
+            switch ((status || '').toUpperCase()) {
+              case 'CONFIRMED':
+                return 'Reserva confirmada';
+              case 'PENDING':
+                return 'Reserva pendente';
+              case 'BLOCK':
+                return 'Bloqueio';
+              default:
+                return status ? 'Estado: ' + status : '';
+            }
+          }
+
+          function formatGuestSummary(adults, children) {
+            const parts = [];
+            if (adults > 0) parts.push(adults + ' ' + (adults === 1 ? 'adulto' : 'adultos'));
+            if (children > 0) parts.push(children + ' ' + (children === 1 ? 'criança' : 'crianças'));
+            return parts.join(' · ');
+          }
+
           function showEntryActions(cell) {
             if (!cell) return;
             const entryId = cell.getAttribute('data-entry-id');
@@ -1586,28 +1614,70 @@ app.get('/calendar', requireLogin, (req, res) => {
             const start = cell.getAttribute('data-entry-start');
             const end = cell.getAttribute('data-entry-end');
             const url = cell.getAttribute('data-entry-url');
+            const cancelUrl = cell.getAttribute('data-entry-cancel-url');
             const historyUrl = '/admin/auditoria?entity=' + encodeURIComponent(entryKind === 'BOOKING' ? 'booking' : 'block') + '&id=' + encodeURIComponent(entryId);
             const rect = cell.getBoundingClientRect();
             let html = '<div class="calendar-action__card">';
-            html += '<div class="calendar-action__title">' + (entryKind === 'BOOKING' ? 'Reserva' : 'Bloqueio') + '</div>';
-            if (guest) html += '<div class="text-xs text-slate-200 uppercase tracking-wide">' + guest + '</div>';
-            html += '<div class="text-sm text-slate-200">' + label + '</div>';
-            html += '<div class="text-xs text-slate-400">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
-            html += '<div class="calendar-action__buttons">';
-            if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
-            html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
-            if (entryKind === 'BLOCK') {
-              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
-            }
-            html += '</div>';
-            if (entryKind === 'BOOKING' && status !== 'CONFIRMED') {
-              html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+            if (entryKind === 'BOOKING') {
+              const email = cell.getAttribute('data-entry-email') || '';
+              const phone = cell.getAttribute('data-entry-phone') || '';
+              const adults = Number(cell.getAttribute('data-entry-adults') || '0');
+              const children = Number(cell.getAttribute('data-entry-children') || '0');
+              const guestSummary = formatGuestSummary(adults, children);
+              const nights = diffDays(start, end);
+              const statusLabel = formatStatusLabel(status);
+              html += '<div class="calendar-action__title">' + escapeHtml(guest || 'Reserva') + '</div>';
+              if (statusLabel) {
+                html += '<div class="text-xs text-slate-300 uppercase tracking-wide">' + escapeHtml(statusLabel) + '</div>';
+              }
+              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1));
+              if (nights > 0) {
+                html += ' · ' + nights + ' ' + (nights === 1 ? 'noite' : 'noites');
+              }
+              html += '</div>';
+              if (guestSummary) {
+                html += '<div class="text-sm text-slate-200">' + escapeHtml(guestSummary) + '</div>';
+              }
+              if (email || phone) {
+                html += '<div class="text-xs text-slate-300 leading-relaxed">';
+                if (email) {
+                  const mailHref = 'mailto:' + encodeURIComponent(email.trim());
+                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Email</span> <a class="text-white underline" href="' + mailHref + '">' + escapeHtml(email) + '</a></div>';
+                }
+                if (phone) {
+                  const telHref = 'tel:' + encodeURIComponent(phone.replace(/\s+/g, ''));
+                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Telefone</span> <a class="text-white underline" href="' + telHref + '">' + escapeHtml(phone) + '</a></div>';
+                }
+                html += '</div>';
+              }
+              if (label) {
+                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
+              }
+              html += '<div class="calendar-action__buttons">';
+              if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
+              html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              html += '</div>';
+              html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
+              if (status !== 'CONFIRMED') {
+                html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+              } else {
+                html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+              }
             } else {
-              html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+              html += '<div class="calendar-action__title">Bloqueio</div>';
+              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
+              if (label) {
+                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
+              }
+              html += '<div class="calendar-action__buttons">';
+              html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
+              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              html += '</div>';
+              html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
             }
             html += '</div>';
             showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
-            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit') };
+            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit'), cancelUrl: cancelUrl };
           }
 
           function normalizeRange(a, b) {
@@ -1767,6 +1837,37 @@ app.get('/calendar', requireLogin, (req, res) => {
               hideAction();
               submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
             }
+            if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
+              e.preventDefault();
+              const proceed = window.confirm('Cancelar esta reserva?');
+              if (!proceed) return;
+              const cancelUrl = target.getAttribute('data-cancel-url') || actionCtx.cancelUrl || ('/calendar/booking/' + actionCtx.entryId + '/cancel');
+              const unitId = actionCtx.unitId;
+              fetch(cancelUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+              })
+                .then(function(res){
+                  return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                    return { res: res, data: data };
+                  });
+                })
+                .then(function(result){
+                  const ok = result.res && result.res.ok && result.data && result.data.ok;
+                  if (ok) {
+                    showToast(result.data.message || 'Reserva cancelada.', 'info');
+                    refreshUnitCard(unitId);
+                  } else {
+                    showToast(result.data && result.data.message ? result.data.message : 'Não foi possível cancelar.', 'danger');
+                    refreshUnitCard(unitId);
+                  }
+                })
+                .catch(function(){
+                  showToast('Erro ao cancelar a reserva.', 'danger');
+                  refreshUnitCard(unitId);
+                });
+            }
           }
 
           function onDocumentClick(e) {
@@ -1853,6 +1954,23 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
   );
 
   res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
+});
+
+app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
+
+  db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  logChange(req.user.id, 'booking', id, 'cancel', {
+    checkin: booking.checkin,
+    checkout: booking.checkout,
+    guest_name: booking.guest_name,
+    status: booking.status,
+    unit_id: booking.unit_id
+  }, null);
+
+  res.json({ ok: true, message: 'Reserva cancelada.', unit_id: booking.unit_id });
 });
 
 app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
@@ -1942,10 +2060,10 @@ function unitCalendarCard(u, month) {
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
   const entries = db.prepare(
-    `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, status, adults, children, total_cents, agency
+    `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
        FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
      UNION ALL
-     SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
+     SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, NULL as guest_email, NULL as guest_phone, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
        FROM blocks WHERE unit_id = ?`
   ).all(u.id, u.id).map(row => ({
     ...row,
@@ -1996,9 +2114,14 @@ function unitCalendarCard(u, month) {
       if (hit.kind === 'BOOKING') {
         dataAttrs.push(
           `data-entry-url="/admin/bookings/${hit.id}"`,
+          `data-entry-cancel-url="/calendar/booking/${hit.id}/cancel"`,
           `data-entry-agency="${esc(hit.agency || '')}"`,
           `data-entry-total="${hit.total_cents || 0}"`,
-          `data-entry-guest="${esc(hit.guest_name || '')}"`
+          `data-entry-guest="${esc(hit.guest_name || '')}"`,
+          `data-entry-email="${esc(hit.guest_email || '')}"`,
+          `data-entry-phone="${esc(hit.guest_phone || '')}"`,
+          `data-entry-adults="${hit.adults || 0}"`,
+          `data-entry-children="${hit.children || 0}"`
         );
       }
     }
