@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS unit_images (
   position INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS change_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT,
+  actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS automation_state (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 db.exec(schema);
 
@@ -127,7 +145,572 @@ try {
   ensureColumn('bookings', 'internal_notes', 'TEXT');
   ensureColumn('units', 'features', 'TEXT');
   ensureColumn('bookings', 'external_ref', 'TEXT');
+  ensureColumn('bookings', 'updated_at', 'TEXT');
+  ensureColumn('blocks', 'updated_at', 'TEXT');
 } catch (_) {}
+
+const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
+const blockColumns = db.prepare('PRAGMA table_info(blocks)').all();
+const hasBookingsUpdatedAt = bookingColumns.some(col => col.name === 'updated_at');
+const hasBlocksUpdatedAt = blockColumns.some(col => col.name === 'updated_at');
+if (!hasBookingsUpdatedAt) {
+  console.warn('Aviso: bookings.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
+}
+if (!hasBlocksUpdatedAt) {
+  console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
+}
+
+const rescheduleBookingUpdateStmt = db.prepare(
+  hasBookingsUpdatedAt
+    ? "UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime('now') WHERE id = ?"
+    : 'UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ? WHERE id = ?'
+);
+const rescheduleBlockUpdateStmt = db.prepare(
+  hasBlocksUpdatedAt
+    ? "UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime('now') WHERE id = ?"
+    : 'UPDATE blocks SET start_date = ?, end_date = ? WHERE id = ?'
+);
+const insertBlockStmt = db.prepare(
+  hasBlocksUpdatedAt
+    ? "INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime('now'))"
+    : 'INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)'
+);
+const adminBookingUpdateStmt = db.prepare(
+  (hasBookingsUpdatedAt
+    ? `
+    UPDATE bookings
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, updated_at = datetime('now')
+     WHERE id = ?
+  `
+    : `
+    UPDATE bookings
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
+     WHERE id = ?
+  `
+  ).trim()
+);
+
+function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
+  try {
+    db.prepare(
+      'INSERT INTO change_logs(entity_type, entity_id, action, before_json, after_json, actor_id) VALUES (?,?,?,?,?,?)'
+    ).run(
+      entityType,
+      entityId,
+      action,
+      beforeObj ? JSON.stringify(beforeObj) : null,
+      afterObj ? JSON.stringify(afterObj) : null,
+      actorId
+    );
+  } catch (err) {
+    console.error('Erro ao registar auditoria', err.message);
+  }
+}
+
+// ===================== Automação Operacional =====================
+const automationStateGetStmt = db.prepare('SELECT value FROM automation_state WHERE key = ?');
+const automationStateUpsertStmt = db.prepare(
+  "INSERT INTO automation_state(key,value,created_at,updated_at) VALUES (?,?,datetime('now'),datetime('now')) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+);
+
+const selectAutomationUnitsStmt = db.prepare(
+  `SELECT u.id, u.name, u.capacity, u.base_price_cents, p.name AS property_name
+     FROM units u
+     JOIN properties p ON p.id = u.property_id
+    ORDER BY u.id`
+);
+const selectAutomationUpcomingBookingsStmt = db.prepare(
+  `SELECT b.*, u.name AS unit_name, u.capacity, u.base_price_cents, u.property_id, p.name AS property_name
+     FROM bookings b
+     JOIN units u ON u.id = b.unit_id
+     JOIN properties p ON p.id = u.property_id
+    WHERE b.checkout > ?
+      AND b.status IN ('CONFIRMED','PENDING')
+    ORDER BY b.unit_id, b.checkin`
+);
+const selectAutomationBlocksExactStmt = db.prepare(
+  'SELECT id FROM blocks WHERE unit_id = ? AND start_date = ? AND end_date = ?'
+);
+const selectAutomationBlockOverlapStmt = db.prepare(
+  'SELECT id FROM blocks WHERE unit_id = ? AND NOT (end_date <= ? OR start_date >= ?)'
+);
+const selectAutomationBookingOverlapStmt = db.prepare(
+  "SELECT id FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)"
+);
+const selectAutomationCancellationsStmt = db.prepare(
+  "SELECT id, entity_id, before_json, created_at FROM change_logs WHERE entity_type = 'booking' AND action = 'cancel' ORDER BY id DESC LIMIT 12"
+);
+
+function readAutomationState(key) {
+  const row = automationStateGetStmt.get(key);
+  if (!row || row.value == null) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeAutomationState(key, payload) {
+  try {
+    automationStateUpsertStmt.run(key, JSON.stringify(payload || null));
+  } catch (err) {
+    console.error('Automação: erro ao guardar estado', err.message);
+  }
+}
+
+const AUTO_CHAIN_THRESHOLD = 4;
+const AUTO_CHAIN_CLEANUP_NIGHTS = 1;
+const HOT_DEMAND_THRESHOLD = 0.7;
+
+const AUTOMATION_SEVERITY_STYLES = {
+  info: { border: 'border-sky-200', dot: 'text-sky-600', badge: 'bg-sky-100 text-sky-800' },
+  warning: { border: 'border-amber-300', dot: 'text-amber-600', badge: 'bg-amber-100 text-amber-800' },
+  danger: { border: 'border-rose-300', dot: 'text-rose-600', badge: 'bg-rose-100 text-rose-700' },
+  success: { border: 'border-emerald-300', dot: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700' }
+};
+
+function automationSeverityStyle(severity) {
+  return AUTOMATION_SEVERITY_STYLES[severity] || AUTOMATION_SEVERITY_STYLES.info;
+}
+
+function formatDateRangeShort(start, endExclusive) {
+  const startDay = dayjs(start);
+  const endDay = dayjs(endExclusive).subtract(1, 'day');
+  if (!endDay.isAfter(startDay)) return startDay.format('DD/MM');
+  return `${startDay.format('DD/MM')} → ${endDay.format('DD/MM')}`;
+}
+
+function safeJsonParse(str) {
+  if (!str) return null;
+  try { return JSON.parse(str); } catch (_) { return null; }
+}
+
+function isoWeekStart(dateLike) {
+  const d = dayjs(dateLike);
+  const diff = (d.day() + 6) % 7;
+  return d.subtract(diff, 'day');
+}
+
+let automationCache = {
+  lastRun: null,
+  generatedBlocks: [],
+  tariffSuggestions: [],
+  notifications: [],
+  summaries: { daily: [], weekly: [] },
+  revenue: { next7: 0, next30: 0 },
+  demandPeaks: [],
+  metrics: { checkins48h: 0, longStays: 0, occupancyToday: 0 }
+};
+
+function runAutomationSweep(trigger = 'manual') {
+  const started = dayjs();
+  const today = started.format('YYYY-MM-DD');
+
+  const units = selectAutomationUnitsStmt.all();
+  const unitMap = new Map(units.map(u => [u.id, u]));
+  const totalUnits = units.length;
+  const upcomingActive = selectAutomationUpcomingBookingsStmt.all(today);
+
+  const occupancyMap = new Map();
+  const arrivalsMap = new Map();
+  const departuresMap = new Map();
+  const confirmedBookings = [];
+  const longStayBookings = [];
+
+  const horizon7 = started.add(7, 'day');
+  const horizon30 = started.add(30, 'day');
+  let revenue7 = 0;
+  let revenue30 = 0;
+
+  upcomingActive.forEach(b => {
+    const isConfirmed = b.status === 'CONFIRMED';
+    if (isConfirmed) confirmedBookings.push(b);
+
+    const checkin = dayjs(b.checkin);
+    const checkout = dayjs(b.checkout);
+    for (let d = checkin; d.isBefore(checkout); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      let occ = occupancyMap.get(key);
+      if (!occ) { occ = { confirmed: 0, pending: 0 }; occupancyMap.set(key, occ); }
+      occ[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    }
+
+    const arr = arrivalsMap.get(b.checkin) || { confirmed: 0, pending: 0 };
+    arr[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    arrivalsMap.set(b.checkin, arr);
+
+    const dep = departuresMap.get(b.checkout) || { confirmed: 0, pending: 0 };
+    dep[isConfirmed ? 'confirmed' : 'pending'] += 1;
+    departuresMap.set(b.checkout, dep);
+
+    if (isConfirmed) {
+      if (checkin.isBefore(horizon7) && checkout.isAfter(started)) revenue7 += b.total_cents;
+      if (checkin.isBefore(horizon30) && checkout.isAfter(started)) revenue30 += b.total_cents;
+      const stayLength = dateRangeNights(b.checkin, b.checkout).length;
+      if (stayLength >= 7) longStayBookings.push(b);
+    }
+  });
+
+  const confirmedByUnit = new Map();
+  confirmedBookings.forEach(b => {
+    if (!confirmedByUnit.has(b.unit_id)) confirmedByUnit.set(b.unit_id, []);
+    confirmedByUnit.get(b.unit_id).push(b);
+  });
+
+  const notifications = [];
+  const blockEvents = [];
+
+  const automationTransaction = db.transaction(() => {
+    units.forEach(u => {
+      const unitBookings = confirmedByUnit.get(u.id) || [];
+      if (unitBookings.length < AUTO_CHAIN_THRESHOLD) return;
+
+      let chainCount = 1;
+      for (let i = 1; i < unitBookings.length; i++) {
+        const prev = unitBookings[i - 1];
+        const curr = unitBookings[i];
+        if (dayjs(curr.checkin).isSame(dayjs(prev.checkout))) {
+          chainCount += 1;
+        } else {
+          chainCount = 1;
+        }
+
+        if (chainCount >= AUTO_CHAIN_THRESHOLD) {
+          const blockStart = dayjs(curr.checkout).format('YYYY-MM-DD');
+          const blockEnd = dayjs(curr.checkout).add(AUTO_CHAIN_CLEANUP_NIGHTS, 'day').format('YYYY-MM-DD');
+          if (dayjs(blockEnd).isAfter(dayjs(blockStart))) {
+            const key = `auto:block:chain:${u.id}:${blockStart}:${blockEnd}`;
+            const existingBlock = selectAutomationBlocksExactStmt.get(u.id, blockStart, blockEnd);
+            if (existingBlock) {
+              writeAutomationState(key, {
+                unit_id: u.id,
+                block_id: existingBlock.id,
+                start: blockStart,
+                end: blockEnd,
+                reason: 'chain'
+              });
+            } else {
+              const bookingConflict = selectAutomationBookingOverlapStmt.get(u.id, blockStart, blockEnd);
+              const blockConflict = selectAutomationBlockOverlapStmt.get(u.id, blockStart, blockEnd);
+              if (!bookingConflict && !blockConflict) {
+                const inserted = insertBlockStmt.run(u.id, blockStart, blockEnd);
+                writeAutomationState(key, {
+                  unit_id: u.id,
+                  block_id: inserted.lastInsertRowid,
+                  start: blockStart,
+                  end: blockEnd,
+                  reason: 'chain',
+                  created_at: started.toISOString(),
+                  trigger
+                });
+                blockEvents.push({
+                  type: 'chain',
+                  unit_id: u.id,
+                  unit_name: u.name,
+                  property_name: u.property_name,
+                  start: blockStart,
+                  end: blockEnd
+                });
+                notifications.push({
+                  type: 'auto-block',
+                  severity: 'info',
+                  created_at: started.toISOString(),
+                  title: 'Dia de recuperação bloqueado',
+                  message: `${u.property_name} · ${u.name}: bloqueio ${formatDateRangeShort(blockStart, blockEnd)} após ${AUTO_CHAIN_THRESHOLD} reservas seguidas.`
+                });
+              } else {
+                notifications.push({
+                  type: 'auto-block',
+                  severity: 'warning',
+                  created_at: started.toISOString(),
+                  title: 'Bloqueio por sequência cheia falhou',
+                  message: `${u.property_name} · ${u.name}: conflito ao reservar ${formatDateRangeShort(blockStart, blockEnd)} para limpeza.`
+                });
+              }
+            }
+          }
+          chainCount = 1;
+        }
+      }
+    });
+
+    confirmedBookings.forEach(b => {
+      const quote = rateQuote(b.unit_id, b.checkin, b.checkout, b.base_price_cents);
+      const stayLength = dateRangeNights(b.checkin, b.checkout).length;
+      const minStay = quote.minStayReq || 1;
+      if (minStay > stayLength) {
+        const extraNights = minStay - stayLength;
+        const blockStart = dayjs(b.checkout).format('YYYY-MM-DD');
+        const blockEnd = dayjs(b.checkout).add(extraNights, 'day').format('YYYY-MM-DD');
+        if (dayjs(blockEnd).isAfter(dayjs(blockStart))) {
+          const key = `auto:block:minstay:${b.id}:${blockStart}:${blockEnd}`;
+          const existingBlock = selectAutomationBlocksExactStmt.get(b.unit_id, blockStart, blockEnd);
+          if (existingBlock) {
+            writeAutomationState(key, {
+              booking_id: b.id,
+              block_id: existingBlock.id,
+              start: blockStart,
+              end: blockEnd,
+              reason: 'minstay'
+            });
+          } else {
+            const bookingConflict = selectAutomationBookingOverlapStmt.get(b.unit_id, blockStart, blockEnd);
+            const blockConflict = selectAutomationBlockOverlapStmt.get(b.unit_id, blockStart, blockEnd);
+            if (!bookingConflict && !blockConflict) {
+              const inserted = insertBlockStmt.run(b.unit_id, blockStart, blockEnd);
+              writeAutomationState(key, {
+                booking_id: b.id,
+                block_id: inserted.lastInsertRowid,
+                start: blockStart,
+                end: blockEnd,
+                reason: 'minstay',
+                created_at: started.toISOString(),
+                extra_nights: extraNights,
+                trigger
+              });
+              blockEvents.push({
+                type: 'minstay',
+                unit_id: b.unit_id,
+                unit_name: b.unit_name,
+                property_name: b.property_name,
+                start: blockStart,
+                end: blockEnd,
+                extra_nights: extraNights
+              });
+              notifications.push({
+                type: 'auto-block',
+                severity: 'info',
+                created_at: started.toISOString(),
+                title: 'Estadia mínima reforçada',
+                message: `${b.property_name} · ${b.unit_name}: bloqueadas ${extraNights} noite(s) (${formatDateRangeShort(blockStart, blockEnd)}) após reserva curta.`
+              });
+            } else {
+              notifications.push({
+                type: 'auto-block',
+                severity: 'warning',
+                created_at: started.toISOString(),
+                title: 'Não foi possível reforçar estadia mínima',
+                message: `${b.property_name} · ${b.unit_name}: conflito ao bloquear ${formatDateRangeShort(blockStart, blockEnd)}.`
+              });
+            }
+          }
+        }
+      }
+    });
+  });
+
+  try {
+    automationTransaction();
+  } catch (err) {
+    console.error('Automação: falha ao executar sweep', err);
+    notifications.push({
+      type: 'automation',
+      severity: 'danger',
+      created_at: started.toISOString(),
+      title: 'Erro no motor de automação',
+      message: err.message || 'Erro inesperado ao processar regras automáticas.'
+    });
+  }
+
+  units.forEach(u => {
+    const unitBookings = upcomingActive.filter(b => b.unit_id === u.id);
+    for (let i = 1; i < unitBookings.length; i++) {
+      const prev = unitBookings[i - 1];
+      const curr = unitBookings[i];
+      if (dayjs(curr.checkin).isBefore(dayjs(prev.checkout))) {
+        notifications.push({
+          type: 'overlap',
+          severity: 'danger',
+          created_at: started.toISOString(),
+          title: 'Sobreposição de reservas',
+          message: `${u.property_name} · ${u.name}: ${prev.guest_name} (${dayjs(prev.checkin).format('DD/MM')}→${dayjs(prev.checkout).format('DD/MM')}) sobrepõe ${curr.guest_name} (${dayjs(curr.checkin).format('DD/MM')}→${dayjs(curr.checkout).format('DD/MM')}).`
+        });
+      }
+    }
+  });
+
+  longStayBookings.forEach(b => {
+    notifications.push({
+      type: 'long-stay',
+      severity: 'success',
+      created_at: started.toISOString(),
+      title: 'Estadia longa confirmada',
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} fica ${dateRangeNights(b.checkin, b.checkout).length} noites (check-in ${dayjs(b.checkin).format('DD/MM')}).`
+    });
+  });
+
+  const upcomingCheckins = confirmedBookings.filter(b => {
+    const diffHours = dayjs(b.checkin).diff(started, 'hour');
+    return diffHours >= 0 && diffHours <= 48;
+  });
+  upcomingCheckins.forEach(b => {
+    notifications.push({
+      type: 'checkin',
+      severity: 'info',
+      created_at: started.toISOString(),
+      title: 'Check-in próximo',
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`
+    });
+  });
+
+  const cancellationRows = selectAutomationCancellationsStmt.all();
+  cancellationRows.forEach(row => {
+    const payload = safeJsonParse(row.before_json);
+    if (!payload) return;
+    const unitInfo = payload.unit_id ? unitMap.get(payload.unit_id) : null;
+    const createdAt = row.created_at || started.toISOString();
+    if (createdAt && dayjs(createdAt).isBefore(started.subtract(14, 'day'))) return;
+    const title = 'Reserva cancelada';
+    const guest = payload.guest_name || 'Reserva';
+    const stayRange = payload.checkin && payload.checkout
+      ? `${dayjs(payload.checkin).format('DD/MM')}→${dayjs(payload.checkout).format('DD/MM')}`
+      : '';
+    const unitLabel = unitInfo ? `${unitInfo.property_name} · ${unitInfo.name}` : `Unidade #${payload.unit_id || '?'}`;
+    notifications.push({
+      type: 'cancel',
+      severity: 'info',
+      created_at: createdAt,
+      title,
+      message: `${unitLabel}: ${guest} (${stayRange}) cancelada.`
+    });
+  });
+
+  const suggestions = [];
+  if (totalUnits > 0) {
+    const suggestionHorizon = started.add(30, 'day');
+    for (let d = dayjs(today); d.isBefore(suggestionHorizon); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      const occ = occupancyMap.get(key);
+      if (!occ) continue;
+      const occupancyRate = occ.confirmed / totalUnits;
+      if (occupancyRate >= HOT_DEMAND_THRESHOLD) {
+        const increase = Math.min(35, Math.max(10, Math.round((occupancyRate - HOT_DEMAND_THRESHOLD) * 100) + 10));
+        suggestions.push({
+          date: key,
+          occupancyRate,
+          confirmedCount: occ.confirmed,
+          pendingCount: occ.pending,
+          suggestedIncreasePct: increase
+        });
+      }
+    }
+  }
+
+  suggestions.sort((a, b) => {
+    if (b.occupancyRate !== a.occupancyRate) return b.occupancyRate - a.occupancyRate;
+    return a.date.localeCompare(b.date);
+  });
+
+  const demandPeaks = suggestions.slice(0, 10);
+  const tariffSuggestions = suggestions.slice(0, 6);
+
+  const dailySummary = [];
+  for (let i = 0; i < 7; i++) {
+    const day = dayjs(today).add(i, 'day');
+    const key = day.format('YYYY-MM-DD');
+    const occ = occupancyMap.get(key) || { confirmed: 0, pending: 0 };
+    const arr = arrivalsMap.get(key) || { confirmed: 0, pending: 0 };
+    const dep = departuresMap.get(key) || { confirmed: 0, pending: 0 };
+    dailySummary.push({
+      date: key,
+      occupancyRate: totalUnits ? occ.confirmed / totalUnits : 0,
+      confirmedCount: occ.confirmed,
+      pendingCount: occ.pending,
+      arrivalsConfirmed: arr.confirmed,
+      arrivalsPending: arr.pending,
+      departuresConfirmed: dep.confirmed,
+      departuresPending: dep.pending
+    });
+  }
+
+  const weeklySummary = [];
+  const baseWeek = isoWeekStart(today);
+  for (let i = 0; i < 4; i++) {
+    const startWeek = baseWeek.add(i, 'week');
+    const endWeek = startWeek.add(7, 'day');
+    let confirmedNights = 0;
+    let pendingNights = 0;
+    for (let d = startWeek; d.isBefore(endWeek); d = d.add(1, 'day')) {
+      const key = d.format('YYYY-MM-DD');
+      const occ = occupancyMap.get(key);
+      if (occ) {
+        confirmedNights += occ.confirmed;
+        pendingNights += occ.pending;
+      }
+    }
+    weeklySummary.push({
+      start: startWeek.format('YYYY-MM-DD'),
+      end: endWeek.format('YYYY-MM-DD'),
+      occupancyRate: totalUnits ? confirmedNights / (totalUnits * 7) : 0,
+      confirmedNights,
+      pendingNights
+    });
+  }
+
+  const seenNotifications = new Set();
+  const uniqueNotifications = [];
+  notifications.forEach(n => {
+    const key = `${n.type}|${n.title}|${n.message}`;
+    if (seenNotifications.has(key)) return;
+    seenNotifications.add(key);
+    uniqueNotifications.push(n);
+  });
+
+  uniqueNotifications.sort((a, b) => {
+    const aTime = dayjs(a.created_at || started).valueOf();
+    const bTime = dayjs(b.created_at || started).valueOf();
+    return bTime - aTime;
+  });
+
+  const trimmedNotifications = uniqueNotifications.slice(0, 20);
+
+  const metrics = {
+    checkins48h: upcomingCheckins.length,
+    longStays: longStayBookings.length,
+    occupancyToday: totalUnits ? ((occupancyMap.get(today) || { confirmed: 0 }).confirmed / totalUnits) : 0,
+    revenue7,
+    revenue30,
+    totalUnits,
+    totalConfirmed: confirmedBookings.length
+  };
+
+  automationCache = {
+    lastRun: started.toISOString(),
+    generatedBlocks: blockEvents,
+    tariffSuggestions,
+    notifications: trimmedNotifications,
+    summaries: { daily: dailySummary, weekly: weeklySummary },
+    revenue: { next7: revenue7, next30: revenue30 },
+    demandPeaks,
+    metrics
+  };
+
+  return automationCache;
+}
+
+function ensureAutomationFresh(maxAgeMinutes = 10) {
+  if (!automationCache.lastRun) return runAutomationSweep('lazy');
+  if (dayjs().diff(dayjs(automationCache.lastRun), 'minute') > maxAgeMinutes) {
+    return runAutomationSweep('lazy');
+  }
+  return automationCache;
+}
+
+try {
+  runAutomationSweep('startup');
+} catch (err) {
+  console.error('Automação: falha inicial', err);
+}
+
+setInterval(() => {
+  try {
+    runAutomationSweep('interval');
+  } catch (err) {
+    console.error('Automação: falha periódica', err);
+  }
+}, 30 * 60 * 1000);
 
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
@@ -198,6 +781,37 @@ const esc = (str = '') => String(str)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
+
+function formatAuditValue(val) {
+  if (val === undefined || val === null || val === '') return '<span class="text-slate-400">—</span>';
+  if (typeof val === 'object') return `<code>${esc(JSON.stringify(val))}</code>`;
+  return esc(String(val));
+}
+
+function renderAuditDiff(beforeJson, afterJson) {
+  let beforeObj = null;
+  let afterObj = null;
+  try { beforeObj = beforeJson ? JSON.parse(beforeJson) : null; } catch (_) {}
+  try { afterObj = afterJson ? JSON.parse(afterJson) : null; } catch (_) {}
+  const keys = Array.from(new Set([
+    ...(beforeObj ? Object.keys(beforeObj) : []),
+    ...(afterObj ? Object.keys(afterObj) : [])
+  ])).sort();
+  if (!keys.length) return '<div class="text-xs text-slate-500">Sem detalhes</div>';
+  const rows = keys.map(key => {
+    const beforeVal = beforeObj ? beforeObj[key] : undefined;
+    const afterVal = afterObj ? afterObj[key] : undefined;
+    const changed = JSON.stringify(beforeVal) !== JSON.stringify(afterVal);
+    const cls = changed ? 'text-emerald-700' : 'text-slate-600';
+    return `<tr class="${cls}">
+      <td class="font-semibold pr-2 align-top">${esc(key)}</td>
+      <td class="pr-2 align-top">${formatAuditValue(beforeVal)}</td>
+      <td class="pr-2 align-top">→</td>
+      <td class="align-top">${formatAuditValue(afterVal)}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="w-full text-xs border-separate border-spacing-y-1">${rows}</table>`;
+}
 
 const FEATURE_ICONS = {
   bed: 'Camas',
@@ -393,6 +1007,9 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .btn  { display:inline-block; padding:.5rem .75rem; border-radius:.5rem; }
         .btn-primary{ background:#0f172a; color:#fff; }
         .btn-muted{ background:#e2e8f0; }
+        .btn-light{ background:#f8fafc; color:#0f172a; font-weight:600; }
+        .btn-danger{ background:#f43f5e; color:#fff; }
+        .btn[disabled]{opacity:.5;cursor:not-allowed;}
         .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
         body.app-body{margin:0;background:#fafafa;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
@@ -416,6 +1033,15 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
         .search-hero{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:32px;text-align:center;}
         .search-title{font-size:2.25rem;font-weight:600;color:#5a5c68;margin:0;}
+        .search-intro{color:#5f616d;font-size:1.05rem;line-height:1.7;margin:0 auto;max-width:720px;}
+        .reassurance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-top:8px;}
+        .reassurance-card{background:rgba(255,255,255,.85);border-radius:18px;padding:18px 20px;border:1px solid rgba(148,163,184,.35);display:flex;flex-direction:column;gap:6px;box-shadow:0 18px 32px rgba(148,163,184,.14);}
+        .reassurance-icon{width:32px;height:32px;border-radius:999px;background:linear-gradient(130deg,#34d399,#0ea5e9);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;align-self:flex-start;}
+        .reassurance-title{font-size:.95rem;font-weight:600;color:#374151;}
+        .reassurance-copy{font-size:.85rem;color:#64748b;margin:0;line-height:1.5;}
+        .progress-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:0;padding:0;list-style:none;color:#475569;font-size:.95rem;}
+        .progress-step{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:999px;background:#f1f5f9;border:1px solid rgba(148,163,184,.35);font-weight:500;}
+        .progress-step.is-active{background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;box-shadow:0 12px 22px rgba(255,107,0,.25);}
         .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:#f7f6f9;border-radius:28px;padding:32px;border:1px solid rgba(255,166,67,.4);box-shadow:0 24px 42px rgba(15,23,42,.08);}
         .search-field{display:flex;flex-direction:column;gap:10px;text-align:left;}
         .search-field label{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:#9b9ca6;}
@@ -425,8 +1051,47 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .search-submit{display:flex;justify-content:flex-end;}
         .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
         .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(255,107,0,.25);}
+        .search-button[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none;transform:none;}
+        .search-button[data-loading="true"]{position:relative;color:transparent;}
+        .search-button[data-loading="true"]::after{content:'A procurar...';color:#fff;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;}
+        .inline-feedback{border-radius:18px;padding:14px 18px;text-align:left;font-size:.9rem;display:flex;gap:12px;align-items:flex-start;line-height:1.5;}
+        .inline-feedback[data-variant="info"]{background:#ecfeff;border:1px solid #67e8f9;color:#155e75;}
+        .inline-feedback[data-variant="success"]{background:#ecfdf3;border:1px solid #4ade80;color:#166534;}
+        .inline-feedback[data-variant="warning"]{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;}
+        .inline-feedback[data-variant="danger"]{background:#fee2e2;border:1px solid #f87171;color:#991b1b;}
+        .inline-feedback strong{font-weight:600;}
+        .inline-feedback-icon{width:26px;height:26px;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;box-shadow:0 10px 20px rgba(15,23,42,.08);}
+        .pill-indicator{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:.75rem;font-weight:500;color:#475569;text-transform:uppercase;letter-spacing:.08em;}
+        .result-header{display:flex;flex-direction:column;gap:12px;margin-bottom:24px;}
+        .result-header .progress-steps{justify-content:flex-start;}
+        .calendar-card{position:relative;}
+        .calendar-card[data-loading="true"]::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(15,23,42,.08);backdrop-filter:blur(1px);}
+        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:#0f172a;animation:spin .9s linear infinite;}
+        .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+        .calendar-cell{position:relative;height:3rem;display:flex;align-items:center;justify-content:center;border-radius:.6rem;font-size:.75rem;user-select:none;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;}
+        @media (min-width:640px){.calendar-cell{height:3.5rem;font-size:.85rem;}}
+        .calendar-cell:hover{transform:translateY(-1px);box-shadow:0 8px 14px rgba(15,23,42,.12);}
+        .calendar-cell[data-in-month="0"]{cursor:default;}
+        .calendar-cell--selection{outline:2px solid rgba(59,130,246,.6);outline-offset:2px;box-shadow:0 0 0 3px rgba(59,130,246,.25);}
+        .calendar-cell--preview{outline:2px dashed rgba(16,185,129,.75);outline-offset:2px;}
+        .calendar-cell--invalid{outline:2px solid rgba(239,68,68,.75);outline-offset:2px;}
+        .calendar-action{position:fixed;z-index:60;transform:translate(-50%,-100%);min-width:260px;}
+        .calendar-action[hidden]{display:none;}
+        .calendar-action__card{background:#0f172a;color:#fff;padding:18px 20px;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,.3);display:grid;gap:12px;}
+        .calendar-action__title{font-weight:600;font-size:.95rem;}
+        .calendar-action__buttons{display:flex;flex-wrap:wrap;gap:10px;}
+        .calendar-action__buttons .btn{flex:1 1 auto;justify-content:center;}
+        .calendar-toast{position:fixed;z-index:70;bottom:24px;right:24px;padding:14px 18px;border-radius:16px;font-size:.9rem;font-weight:500;display:flex;align-items:center;gap:12px;box-shadow:0 16px 30px rgba(15,23,42,.18);}
+        .calendar-toast[hidden]{display:none;}
+        .calendar-toast[data-variant="success"]{background:#ecfdf5;color:#065f46;}
+        .calendar-toast[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
+        .calendar-toast[data-variant="danger"]{background:#fee2e2;color:#b91c1c;}
+        .calendar-toast__dot{width:10px;height:10px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(255,255,255,.6);}
+        .calendar-dialog{border:none;border-radius:20px;padding:0;max-width:420px;width:92vw;}
+        .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
-        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
         .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
         .gallery-overlay.show{opacity:1;pointer-events:auto;}
         .gallery-overlay .gallery-inner{position:relative;width:100%;max-width:min(960px,90vw);}
@@ -438,6 +1103,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .gallery-overlay .gallery-prev{left:-1.5rem;}
         .gallery-overlay .gallery-next{right:-1.5rem;}
         .gallery-overlay .gallery-counter{font-weight:600;}
+        @keyframes spin{to{transform:rotate(360deg);}}
         @media (max-width:640px){
           .gallery-overlay{padding:1rem;}
           .gallery-overlay .gallery-close{top:.5rem;right:.5rem;}
@@ -466,6 +1132,129 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           if (co && co.value && co.value <= ci) { co.value = ci; }
           if (co) co.min = ci;
         }
+        const FEEDBACK_ICONS = { info: 'ℹ', success: '✓', warning: '!', danger: '!' };
+        function renderFeedback(el, variant, headline, detail){
+          if (!el) return;
+          el.dataset.variant = variant;
+          const icon = FEEDBACK_ICONS[variant] || FEEDBACK_ICONS.info;
+          const headlineHtml = '<strong>' + headline + '</strong>';
+          const message = detail
+            ? '<div>' + headlineHtml + '<br/>' + detail + '</div>'
+            : '<div>' + headlineHtml + '</div>';
+          el.innerHTML = '<span class="inline-feedback-icon">' + icon + '</span>' + message;
+        }
+        function enhanceSearchForm(){
+          const form = document.querySelector('[data-search-form]');
+          if (!form || form.dataset.enhanced === 'true') return;
+          form.dataset.enhanced = 'true';
+          const checkin = form.querySelector('[name="checkin"]');
+          const checkout = form.querySelector('[name="checkout"]');
+          const adults = form.querySelector('[name="adults"]');
+          const children = form.querySelector('[name="children"]');
+          const property = form.querySelector('[name="property_id"]');
+          const submit = form.querySelector('[data-submit]');
+          const feedback = form.querySelector('[data-feedback]');
+          const update = () => {
+            let variant = 'info';
+            let headline = 'Comece por escolher as datas.';
+            let detail = 'Escolha check-in e check-out válidos para ver disponibilidade instantânea.';
+            let disabled = true;
+            if (checkin && checkin.value && (!checkout || !checkout.value)) {
+              variant = 'warning';
+              headline = 'Falta indicar a data de saída.';
+              detail = 'Escolha uma data de check-out posterior ao check-in para avançar.';
+            }
+            if (checkin && checkout && checkin.value && checkout.value) {
+              const ci = new Date(checkin.value);
+              const co = new Date(checkout.value);
+              if (co <= ci) {
+                variant = 'danger';
+                headline = 'Verifique as datas selecionadas.';
+                detail = 'O check-out deve ser posterior ao check-in. Ajuste as datas para continuar.';
+              } else {
+                const diff = Math.round((co - ci) / (1000 * 60 * 60 * 24));
+                const guestCount = (() => {
+                  const ad = adults ? Math.max(1, Number(adults.value || 1)) : 1;
+                  const ch = children ? Math.max(0, Number(children.value || 0)) : 0;
+                  let label = ad + ' adulto' + (ad > 1 ? 's' : '');
+                  if (ch > 0) {
+                    label += ' · ' + ch + ' criança' + (ch > 1 ? 's' : '');
+                  }
+                  return label;
+                })();
+                variant = 'success';
+                headline = 'Perfeito! Disponibilidade pronta a pesquisar.';
+                detail = diff + ' noite' + (diff > 1 ? 's' : '') + ' · ' + guestCount + (property && property.value ? ' · ' + property.options[property.selectedIndex].text : '');
+                disabled = false;
+              }
+            }
+            if (submit) {
+              submit.disabled = disabled;
+              if (disabled) submit.removeAttribute('data-loading');
+            }
+            renderFeedback(feedback, variant, headline, detail);
+          };
+          [checkin, checkout, adults, children, property]
+            .filter(Boolean)
+            .forEach(field => {
+              field.addEventListener('input', update);
+              field.addEventListener('change', update);
+            });
+          form.addEventListener('submit', () => {
+            if (submit) {
+              submit.setAttribute('data-loading', 'true');
+            }
+          });
+          update();
+        }
+        function enhanceBookingForm(){
+          const form = document.querySelector('[data-booking-form]');
+          if (!form || form.dataset.enhanced === 'true') return;
+          form.dataset.enhanced = 'true';
+          const feedback = form.querySelector('[data-booking-feedback]');
+          const adults = form.querySelector('input[name="adults"]');
+          const children = form.querySelector('input[name="children"]');
+          const required = Array.from(form.querySelectorAll('[data-required]'));
+          const occupancy = form.querySelector('[data-occupancy-summary]');
+          const update = () => {
+            const missing = required.filter(field => !String(field.value || '').trim());
+            if (occupancy) {
+              const ad = adults ? Math.max(0, Number(adults.value || 0)) : 0;
+              const ch = children ? Math.max(0, Number(children.value || 0)) : 0;
+              let summary = ad + ' adulto' + (ad !== 1 ? 's' : '');
+              if (ch > 0) summary += ' · ' + ch + ' criança' + (ch !== 1 ? 's' : '');
+              occupancy.textContent = summary;
+            }
+            if (missing.length > 0) {
+              const first = missing[0];
+              const label = first.getAttribute('placeholder') || first.getAttribute('aria-label') || (first.previousElementSibling ? first.previousElementSibling.textContent.trim() : 'campo obrigatório');
+              renderFeedback(feedback, 'warning', 'Ainda falta completar os dados.', 'Preencha ' + label.toLowerCase() + ' para finalizar com segurança.');
+            } else {
+              renderFeedback(feedback, 'success', 'Tudo pronto para confirmar!', 'Revise os dados e confirme para bloquear imediatamente a estadia.');
+            }
+          };
+          required.forEach(field => {
+            field.addEventListener('input', update);
+            field.addEventListener('change', update);
+          });
+          [adults, children]
+            .filter(Boolean)
+            .forEach(field => {
+              field.addEventListener('input', update);
+              field.addEventListener('change', update);
+            });
+          update();
+        }
+        function initFrontOffice(){
+          enhanceSearchForm();
+          enhanceBookingForm();
+        }
+        if (document.readyState !== 'loading') {
+          initFrontOffice();
+        } else {
+          document.addEventListener('DOMContentLoaded', initFrontOffice);
+        }
+        document.addEventListener('htmx:afterSwap', initFrontOffice);
         if (HAS_USER) {
           window.addEventListener('keydown', (e) => {
             if (e.key.toLowerCase() === 'm' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
@@ -616,6 +1405,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               ${isManager ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
               ${isManager ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
               ${isManager ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${isManager ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
               ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
@@ -677,8 +1467,15 @@ app.get('/', (req, res) => {
     activeNav: 'search',
     body: html`
       <section class="search-hero">
-        <h1 class="search-title">Reservar a Casa</h1>
-        <form action="/search" method="get" class="search-form">
+        <span class="pill-indicator">Passo 1 de 3</span>
+        <h1 class="search-title">Reservar connosco é simples e seguro</h1>
+        <p class="search-intro">Escolha as datas ideais e veja em segundos as unidades disponíveis. Apostamos em clareza total: preços transparentes, mensagens imediatas e confirmações instantâneas.</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step is-active">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step">3. Confirme e relaxe</li>
+        </ul>
+        <form action="/search" method="get" class="search-form" data-search-form>
           <div class="search-field">
             <label for="checkin">Datas</label>
             <div class="search-dates">
@@ -702,7 +1499,11 @@ app.get('/', (req, res) => {
             </select>
           </div>
           <div class="search-submit">
-            <button class="search-button" type="submit">Procurar</button>
+            <button class="search-button" type="submit" data-submit>Procurar</button>
+          </div>
+          <div class="inline-feedback" data-feedback data-variant="info" aria-live="polite" role="status">
+            <span class="inline-feedback-icon">ℹ</span>
+            <div><strong>Comece por escolher as datas.</strong><br/>Escolha check-in e check-out válidos para ver disponibilidade instantânea.</div>
           </div>
         </form>
       </section>
@@ -752,11 +1553,23 @@ app.get('/search', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Alojamentos disponíveis</h1>
-      <p class="mb-4 text-slate-600">
-        ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
-        · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
-      </p>
+      <div class="result-header">
+        <span class="pill-indicator">Passo 2 de 3</span>
+        <h1 class="text-2xl font-semibold">Alojamentos disponíveis</h1>
+        <p class="text-slate-600">
+          ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
+          · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
+        </p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step is-active">2. Escolha o alojamento</li>
+          <li class="progress-step">3. Confirme e relaxe</li>
+        </ul>
+        <div class="inline-feedback" data-variant="info" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">💡</span>
+          <div><strong>Selecione a unidade perfeita.</strong><br/>Clique em "Reservar" para confirmar em apenas mais um passo.</div>
+        </div>
+      </div>
       <div class="grid md:grid-cols-2 gap-4">
         ${available.map(u => {
           const galleryData = esc(JSON.stringify(u.images.map(img => ({ url: img.url, alt: img.alt }))));
@@ -839,7 +1652,16 @@ app.get('/book/:unitId', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">${u.property_name} – ${u.name}</h1>
+      <div class="result-header">
+        <span class="pill-indicator">Passo 3 de 3</span>
+        <h1 class="text-2xl font-semibold">${u.property_name} – ${u.name}</h1>
+        <p class="text-slate-600">Último passo antes de garantir a estadia.</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step is-active">3. Confirme e relaxe</li>
+        </ul>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="card p-4">
           <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
@@ -847,14 +1669,15 @@ app.get('/book/:unitId', (req, res) => {
             <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
             <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
             <li>Noites: <strong>${quote.nights}</strong></li>
-            <li>Hóspedes: <strong>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
+            <li>Hóspedes: <strong data-occupancy-summary>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
             <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
             <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
           </ul>
           ${unitFeaturesBooking}
         </div>
-        <form class="card p-4" method="post" action="/book">
+        <form class="card p-4" method="post" action="/book" data-booking-form>
           <h2 class="font-semibold mb-3">Dados do hóspede</h2>
+          <p class="text-sm text-slate-500 mb-3">Confirmamos a reserva assim que estes dados forem submetidos. Usamos esta informação apenas para contacto com o hóspede.</p>
           <input type="hidden" name="unit_id" value="${u.id}" />
           <input type="hidden" name="checkin" value="${checkin}" />
           <input type="hidden" name="checkout" value="${checkout}" />
@@ -868,15 +1691,19 @@ app.get('/book/:unitId', (req, res) => {
               <input required type="number" min="0" name="children" value="${children}" class="input"/>
             </div>
           </div>
+          <div class="inline-feedback mt-4" data-booking-feedback data-variant="info" aria-live="polite" role="status">
+            <span class="inline-feedback-icon">ℹ</span>
+            <div><strong>Preencha os dados do hóspede.</strong><br/>Os campos abaixo permitem-nos enviar a confirmação personalizada.</div>
+          </div>
           <div class="grid gap-3 mt-2">
-            <input required name="guest_name" class="input" placeholder="Nome completo" />
-            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" />
-            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" />
-            <input required type="email" name="guest_email" class="input" placeholder="Email" />
+            <input required name="guest_name" class="input" placeholder="Nome completo" data-required />
+            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" data-required />
+            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" data-required />
+            <input required type="email" name="guest_email" class="input" placeholder="Email" data-required />
             ${user ? `
               <div>
                 <label class="text-sm">Agencia</label>
-                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required />
+                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required data-required />
               </div>
             ` : ''}
             <button class="btn btn-primary">Confirmar Reserva</button>
@@ -962,9 +1789,21 @@ app.get('/booking/:id', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <div class="card p-6">
-        <h1 class="text-2xl font-semibold mb-2">Reserva confirmada</h1>
-        <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Enviámos um email de confirmação para ${b.guest_email} (mock).</p>
+      <div class="result-header">
+        <span class="pill-indicator">Reserva finalizada</span>
+        <h1 class="text-2xl font-semibold">Reserva confirmada</h1>
+        <p class="text-slate-600">Enviámos a confirmação para ${b.guest_email}. Obrigado por reservar connosco!</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step is-active">3. Confirme e relaxe</li>
+        </ul>
+      </div>
+      <div class="card p-6 space-y-6">
+        <div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">✓</span>
+          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
+        </div>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
             <div class="font-semibold">${b.property_name} – ${b.unit_name}</div>
@@ -982,7 +1821,7 @@ app.get('/booking/:id', (req, res) => {
             <div class="text-xs text-slate-500">Status: ${b.status}</div>
           </div>
         </div>
-        <div class="mt-6"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
+        <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
       </div>
     `
   }));
@@ -1021,11 +1860,718 @@ app.get('/calendar', requireLogin, (req, res) => {
         <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
         <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
       </div>
-      <div class="space-y-6">
+      <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
         ${units.map(u => unitCalendarCard(u, month)).join('')}
       </div>
+      <div class="calendar-action" data-calendar-action hidden></div>
+      <div class="calendar-toast" data-calendar-toast hidden><span class="calendar-toast__dot"></span><span data-calendar-toast-message></span></div>
+      <script>
+        (function(){
+          const root = document.querySelector('[data-calendar]');
+          if (!root) return;
+          const actionEl = document.querySelector('[data-calendar-action]');
+          const toastEl = document.querySelector('[data-calendar-toast]');
+          const toastMessage = toastEl ? toastEl.querySelector('[data-calendar-toast-message]') : null;
+          const fetchTemplate = root.getAttribute('data-calendar-fetch');
+          const month = root.getAttribute('data-month');
+          let actionCtx = null;
+          let dragCtx = null;
+          let selectionCtx = null;
+          let toastTimer = null;
+
+          function isPrimaryPointer(e) {
+            if (e.pointerType === 'mouse') {
+              return typeof e.button === 'number' ? e.button === 0 : e.isPrimary !== false;
+            }
+            return true;
+          }
+
+          function parseDate(str) {
+            if (!str) return null;
+            const parts = str.split('-').map(Number);
+            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+            return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+          }
+
+          function toISO(date) {
+            return date.toISOString().slice(0, 10);
+          }
+
+          function shiftDate(str, delta) {
+            const base = parseDate(str);
+            if (!base) return null;
+            base.setUTCDate(base.getUTCDate() + delta);
+            return toISO(base);
+          }
+
+          function diffDays(start, end) {
+            const a = parseDate(start);
+            const b = parseDate(end);
+            if (!a || !b) return 0;
+            return Math.round((b - a) / 86400000);
+          }
+
+          function formatHuman(str) {
+            const date = parseDate(str);
+            if (!date) return str;
+            return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+          }
+
+          function clearHighlight(className) {
+            root.querySelectorAll('.' + className).forEach(function(cell){
+              cell.classList.remove(className);
+            });
+          }
+
+          function highlightRange(unitId, start, endExclusive, className) {
+            clearHighlight(className);
+            if (!start || !endExclusive) return;
+            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
+            cells.forEach(function(cell){
+              const date = cell.getAttribute('data-date');
+              if (date && date >= start && date < endExclusive) {
+                cell.classList.add(className);
+              }
+            });
+          }
+
+          function rangeHasConflicts(unitId, start, endExclusive, currentId, currentKind) {
+            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
+            return cells.some(function(cell){
+              const date = cell.getAttribute('data-date');
+              if (!date || date < start || date >= endExclusive) return false;
+              const otherId = cell.getAttribute('data-entry-id');
+              if (!otherId) return false;
+              const otherKind = cell.getAttribute('data-entry-kind');
+              if (otherId === currentId && otherKind === currentKind) return false;
+              return true;
+            });
+          }
+
+          function showToast(message, variant) {
+            if (!toastEl || !toastMessage) return;
+            toastEl.setAttribute('data-variant', variant || 'success');
+            toastMessage.textContent = message;
+            toastEl.hidden = false;
+            if (toastTimer) window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(function(){ toastEl.hidden = true; }, 3200);
+          }
+
+          function hideAction() {
+            if (!actionEl) return;
+            actionEl.hidden = true;
+            actionEl.innerHTML = '';
+            actionCtx = null;
+          }
+
+          function showAction(config) {
+            if (!actionEl) return;
+            actionCtx = config;
+            actionEl.style.left = config.clientX + 'px';
+            actionEl.style.top = (config.clientY - 12) + 'px';
+            actionEl.innerHTML = config.html;
+            actionEl.hidden = false;
+          }
+
+          function refreshUnitCard(unitId) {
+            const card = root.querySelector('[data-unit-card="' + unitId + '"]');
+            if (!card || !fetchTemplate) return;
+            card.setAttribute('data-loading', 'true');
+            const url = fetchTemplate.replace(':id', unitId) + '?ym=' + month;
+            fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+              .then(function(res){ return res.text(); })
+              .then(function(html){
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = html.trim();
+                const nextCard = wrapper.firstElementChild;
+                if (nextCard) {
+                  card.replaceWith(nextCard);
+                } else {
+                  card.removeAttribute('data-loading');
+                }
+                hideAction();
+              })
+              .catch(function(){
+                card.removeAttribute('data-loading');
+                showToast('Não foi possível atualizar o calendário.', 'danger');
+                hideAction();
+              });
+          }
+
+          function submitReschedule(ctx, range) {
+            let url;
+            let payload;
+            if (ctx.entryKind === 'BOOKING') {
+              url = '/calendar/booking/' + ctx.entryId + '/reschedule';
+              payload = { checkin: range.start, checkout: range.end };
+            } else {
+              url = '/calendar/block/' + ctx.entryId + '/reschedule';
+              payload = { start_date: range.start, end_date: range.end };
+            }
+            fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Atualizado com sucesso', 'success');
+                  refreshUnitCard(result.data.unit_id || ctx.unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível reagendar.', 'danger');
+                  refreshUnitCard(ctx.unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro de rede ao guardar.', 'danger');
+                refreshUnitCard(ctx.unitId);
+              });
+          }
+
+          function submitBlock(unitId, start, endExclusive) {
+            fetch('/calendar/unit/' + unitId + '/block', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ start_date: start, end_date: endExclusive })
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Bloqueio criado.', 'success');
+                  refreshUnitCard(unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível bloquear estas datas.', 'danger');
+                  refreshUnitCard(unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro de rede ao bloquear datas.', 'danger');
+                refreshUnitCard(unitId);
+              });
+          }
+
+          function submitBlockRemoval(blockId, unitId) {
+            fetch('/calendar/block/' + blockId, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Bloqueio removido.', 'success');
+                  refreshUnitCard(unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível remover o bloqueio.', 'danger');
+                  refreshUnitCard(unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro ao remover bloqueio.', 'danger');
+                refreshUnitCard(unitId);
+              });
+          }
+
+          function escapeHtml(str) {
+            return String(str == null ? '' : str)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+          }
+
+          function formatStatusLabel(status) {
+            switch ((status || '').toUpperCase()) {
+              case 'CONFIRMED':
+                return 'Reserva confirmada';
+              case 'PENDING':
+                return 'Reserva pendente';
+              case 'BLOCK':
+                return 'Bloqueio';
+              default:
+                return status ? 'Estado: ' + status : '';
+            }
+          }
+
+          function formatGuestSummary(adults, children) {
+            const parts = [];
+            if (adults > 0) parts.push(adults + ' ' + (adults === 1 ? 'adulto' : 'adultos'));
+            if (children > 0) parts.push(children + ' ' + (children === 1 ? 'criança' : 'crianças'));
+            return parts.join(' · ');
+          }
+
+          function showEntryActions(cell) {
+            if (!cell) return;
+            const entryId = cell.getAttribute('data-entry-id');
+            if (!entryId) return;
+            const entryKind = cell.getAttribute('data-entry-kind');
+            const status = cell.getAttribute('data-entry-status') || '';
+            const guest = cell.getAttribute('data-entry-guest') || '';
+            const label = cell.getAttribute('data-entry-label') || '';
+            const start = cell.getAttribute('data-entry-start');
+            const end = cell.getAttribute('data-entry-end');
+            const url = cell.getAttribute('data-entry-url');
+            const cancelUrl = cell.getAttribute('data-entry-cancel-url');
+            const historyUrl = '/admin/auditoria?entity=' + encodeURIComponent(entryKind === 'BOOKING' ? 'booking' : 'block') + '&id=' + encodeURIComponent(entryId);
+            const rect = cell.getBoundingClientRect();
+            let html = '<div class="calendar-action__card">';
+            if (entryKind === 'BOOKING') {
+              const email = cell.getAttribute('data-entry-email') || '';
+              const phone = cell.getAttribute('data-entry-phone') || '';
+              const adults = Number(cell.getAttribute('data-entry-adults') || '0');
+              const children = Number(cell.getAttribute('data-entry-children') || '0');
+              const guestSummary = formatGuestSummary(adults, children);
+              const nights = diffDays(start, end);
+              const statusLabel = formatStatusLabel(status);
+              html += '<div class="calendar-action__title">' + escapeHtml(guest || 'Reserva') + '</div>';
+              if (statusLabel) {
+                html += '<div class="text-xs text-slate-300 uppercase tracking-wide">' + escapeHtml(statusLabel) + '</div>';
+              }
+              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1));
+              if (nights > 0) {
+                html += ' · ' + nights + ' ' + (nights === 1 ? 'noite' : 'noites');
+              }
+              html += '</div>';
+              if (guestSummary) {
+                html += '<div class="text-sm text-slate-200">' + escapeHtml(guestSummary) + '</div>';
+              }
+              if (email || phone) {
+                html += '<div class="text-xs text-slate-300 leading-relaxed">';
+                if (email) {
+                  const mailHref = 'mailto:' + encodeURIComponent(email.trim());
+                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Email</span> <a class="text-white underline" href="' + mailHref + '">' + escapeHtml(email) + '</a></div>';
+                }
+                if (phone) {
+                  const telHref = 'tel:' + encodeURIComponent(phone.replace(/\s+/g, ''));
+                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Telefone</span> <a class="text-white underline" href="' + telHref + '">' + escapeHtml(phone) + '</a></div>';
+                }
+                html += '</div>';
+              }
+              if (label) {
+                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
+              }
+              html += '<div class="calendar-action__buttons">';
+              if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
+              html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              html += '</div>';
+              html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
+              if (status !== 'CONFIRMED') {
+                html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+              } else {
+                html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+              }
+            } else {
+              html += '<div class="calendar-action__title">Bloqueio</div>';
+              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
+              if (label) {
+                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
+              }
+              html += '<div class="calendar-action__buttons">';
+              html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
+              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              html += '</div>';
+              html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
+            }
+            html += '</div>';
+            showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
+            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit'), cancelUrl: cancelUrl };
+          }
+
+          function normalizeRange(a, b) {
+            if (!a || !b) return { start: a, endExclusive: shiftDate(a, 1), end: b };
+            if (a <= b) {
+              return { start: a, endExclusive: shiftDate(b, 1), end: b };
+            }
+            return { start: b, endExclusive: shiftDate(a, 1), end: a };
+          }
+
+          function showSelectionActions(ctx) {
+            const humanStart = formatHuman(ctx.start);
+            const humanEnd = formatHuman(shiftDate(ctx.end, -1));
+            const nights = diffDays(ctx.start, ctx.end);
+            let html = '<div class="calendar-action__card">';
+            html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
+            html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
+            html += '<div class="calendar-action__buttons">';
+            html += '<button class="btn btn-primary" data-action="block-range"' + (ctx.conflict ? ' disabled' : '') + '>Bloquear estas datas</button>';
+            html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
+            html += '</div>';
+            html += ctx.conflict
+              ? '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>'
+              : '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            html += '</div>';
+            showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
+            actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
+          }
+
+          function onPointerDown(e) {
+            if (!isPrimaryPointer(e)) return;
+            const cell = e.target.closest('[data-calendar-cell]');
+            if (!cell) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            hideAction();
+            const entryId = cell.getAttribute('data-entry-id');
+            if (entryId) {
+              const entryKind = cell.getAttribute('data-entry-kind');
+              const status = cell.getAttribute('data-entry-status') || '';
+              dragCtx = {
+                entryId: entryId,
+                entryKind: entryKind,
+                status: status,
+                canReschedule: entryKind !== 'BOOKING' || status === 'CONFIRMED',
+                unitId: cell.getAttribute('data-unit'),
+                originStart: cell.getAttribute('data-entry-start'),
+                originEnd: cell.getAttribute('data-entry-end'),
+                anchorDate: cell.getAttribute('data-date'),
+                pointerStart: { x: e.clientX, y: e.clientY },
+                moved: false,
+                preview: null,
+                conflict: false
+              };
+            } else {
+              selectionCtx = {
+                unitId: cell.getAttribute('data-unit'),
+                startDate: cell.getAttribute('data-date'),
+                endDate: cell.getAttribute('data-date'),
+                pointerStart: { x: e.clientX, y: e.clientY },
+                active: true
+              };
+              highlightRange(selectionCtx.unitId, selectionCtx.startDate, shiftDate(selectionCtx.startDate, 1), 'calendar-cell--selection');
+            }
+          }
+
+          function onPointerMove(e) {
+            if (dragCtx) {
+              if (!dragCtx.canReschedule) return;
+              if (!dragCtx.moved) {
+                const delta = Math.abs(e.clientX - dragCtx.pointerStart.x) + Math.abs(e.clientY - dragCtx.pointerStart.y);
+                if (delta > 5) dragCtx.moved = true;
+              }
+              if (!dragCtx.moved) return;
+              const el = document.elementFromPoint(e.clientX, e.clientY);
+              const cell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
+              if (!cell) return;
+              const hoverDate = cell.getAttribute('data-date');
+              if (!hoverDate) return;
+              const anchorOffset = diffDays(dragCtx.originStart, dragCtx.anchorDate);
+              const duration = diffDays(dragCtx.originStart, dragCtx.originEnd);
+              const newStart = shiftDate(hoverDate, -anchorOffset);
+              const newEnd = shiftDate(newStart, duration);
+              dragCtx.preview = { start: newStart, end: newEnd };
+              dragCtx.conflict = rangeHasConflicts(dragCtx.unitId, newStart, newEnd, dragCtx.entryId, dragCtx.entryKind);
+              highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--preview');
+              if (dragCtx.conflict) {
+                highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--invalid');
+              } else {
+                clearHighlight('calendar-cell--invalid');
+              }
+              e.preventDefault();
+            } else if (selectionCtx && selectionCtx.active) {
+              const targetEl = document.elementFromPoint(e.clientX, e.clientY);
+              const targetCell = targetEl && targetEl.closest('[data-calendar-cell][data-unit="' + selectionCtx.unitId + '"]');
+              if (!targetCell) return;
+              const targetDate = targetCell.getAttribute('data-date');
+              if (!targetDate || targetDate === selectionCtx.endDate) return;
+              selectionCtx.endDate = targetDate;
+              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
+              highlightRange(selectionCtx.unitId, range.start, range.endExclusive, 'calendar-cell--selection');
+            }
+          }
+
+          function onPointerUp(e) {
+            if (dragCtx) {
+              const preview = dragCtx.preview;
+              const wasDragging = dragCtx.moved;
+              const conflict = dragCtx.conflict;
+              if (!wasDragging) {
+                clearHighlight('calendar-cell--preview');
+                clearHighlight('calendar-cell--invalid');
+                dragCtx = null;
+                return;
+              }
+              clearHighlight('calendar-cell--preview');
+              clearHighlight('calendar-cell--invalid');
+              const changed = preview && (preview.start !== dragCtx.originStart || preview.end !== dragCtx.originEnd);
+              const ctxCopy = dragCtx;
+              dragCtx = null;
+              if (preview && !conflict && changed) {
+                submitReschedule(ctxCopy, preview);
+              } else if (conflict) {
+                showToast('As novas datas entram em conflito com outra ocupação.', 'danger');
+                refreshUnitCard(ctxCopy.unitId);
+              }
+            } else if (selectionCtx && selectionCtx.active) {
+              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
+              clearHighlight('calendar-cell--selection');
+              const conflict = rangeHasConflicts(selectionCtx.unitId, range.start, range.endExclusive);
+              showSelectionActions({
+                unitId: selectionCtx.unitId,
+                start: range.start,
+                end: range.endExclusive,
+                conflict: conflict,
+                clientX: e.clientX,
+                clientY: e.clientY
+              });
+              selectionCtx = null;
+            }
+          }
+
+          function onDoubleClick(e) {
+            if (e.button !== 0) return;
+            const cell = e.target.closest('[data-calendar-cell]');
+            if (!cell) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            const entryId = cell.getAttribute('data-entry-id');
+            if (!entryId) return;
+            dragCtx = null;
+            hideAction();
+            showEntryActions(cell);
+          }
+
+          function onActionClick(e) {
+            const target = e.target.closest('[data-action]');
+            if (!target || !actionCtx) return;
+            const action = target.getAttribute('data-action');
+            if (action === 'block-range' && actionCtx.type === 'selection') {
+              e.preventDefault();
+              hideAction();
+              submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
+            }
+            if (action === 'delete-block' && actionCtx.type === 'entry') {
+              e.preventDefault();
+              hideAction();
+              submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
+            }
+            if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
+              e.preventDefault();
+              const proceed = window.confirm('Cancelar esta reserva?');
+              if (!proceed) return;
+              const cancelUrl = target.getAttribute('data-cancel-url') || actionCtx.cancelUrl || ('/calendar/booking/' + actionCtx.entryId + '/cancel');
+              const unitId = actionCtx.unitId;
+              fetch(cancelUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+              })
+                .then(function(res){
+                  return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                    return { res: res, data: data };
+                  });
+                })
+                .then(function(result){
+                  const ok = result.res && result.res.ok && result.data && result.data.ok;
+                  if (ok) {
+                    showToast(result.data.message || 'Reserva cancelada.', 'info');
+                    refreshUnitCard(unitId);
+                  } else {
+                    showToast(result.data && result.data.message ? result.data.message : 'Não foi possível cancelar.', 'danger');
+                    refreshUnitCard(unitId);
+                  }
+                })
+                .catch(function(){
+                  showToast('Erro ao cancelar a reserva.', 'danger');
+                  refreshUnitCard(unitId);
+                });
+            }
+          }
+
+          function onDocumentClick(e) {
+            if (!actionEl || actionEl.hidden) return;
+            if (!actionEl.contains(e.target)) hideAction();
+          }
+
+          function onKeyDown(e) {
+            if (e.key === 'Escape') {
+              clearHighlight('calendar-cell--selection');
+              clearHighlight('calendar-cell--preview');
+              clearHighlight('calendar-cell--invalid');
+              hideAction();
+              dragCtx = null;
+              selectionCtx = null;
+            }
+          }
+
+          root.addEventListener('pointerdown', onPointerDown);
+          window.addEventListener('pointermove', onPointerMove);
+          window.addEventListener('pointerup', onPointerUp);
+          root.addEventListener('dblclick', onDoubleClick);
+          if (actionEl) actionEl.addEventListener('click', onActionClick);
+          document.addEventListener('click', onDocumentClick);
+          document.addEventListener('keydown', onKeyDown);
+        })();
+      </script>
     `
   }));
+});
+
+app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
+  const ym = req.query.ym;
+  const month = (ym ? dayjs(ym + '-01') : dayjs().startOf('month')).startOf('month');
+  const unit = db.prepare(`
+    SELECT u.*, p.name as property_name
+      FROM units u JOIN properties p ON p.id = u.property_id
+     WHERE u.id = ?
+  `).get(req.params.id);
+  if (!unit) return res.status(404).send('');
+  res.send(unitCalendarCard(unit, month));
+});
+
+app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const booking = db.prepare(`
+    SELECT b.*, u.base_price_cents
+      FROM bookings b JOIN units u ON u.id = b.unit_id
+     WHERE b.id = ?
+  `).get(id);
+  if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
+
+  const checkin = req.body && req.body.checkin;
+  const checkout = req.body && req.body.checkout;
+  if (!checkin || !checkout) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(checkout).isAfter(dayjs(checkin))) return res.status(400).json({ ok: false, message: 'checkout deve ser > checkin' });
+
+  const conflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND id <> ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, booking.id, checkin, checkout);
+  if (conflict) return res.status(409).json({ ok: false, message: 'Conflito com outra reserva.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, checkin, checkout);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'As novas datas estão bloqueadas.' });
+
+  const quote = rateQuote(booking.unit_id, checkin, checkout, booking.base_price_cents);
+  if (quote.nights < quote.minStayReq)
+    return res.status(400).json({ ok: false, message: `Estadia mínima: ${quote.minStayReq} noites.` });
+
+  rescheduleBookingUpdateStmt.run(checkin, checkout, quote.total_cents, booking.id);
+
+  logChange(req.user.id, 'booking', booking.id, 'reschedule',
+    { checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
+    { checkin, checkout, total_cents: quote.total_cents }
+  );
+
+  res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
+});
+
+app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
+
+  db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  logChange(req.user.id, 'booking', id, 'cancel', {
+    checkin: booking.checkin,
+    checkout: booking.checkout,
+    guest_name: booking.guest_name,
+    status: booking.status,
+    unit_id: booking.unit_id
+  }, null);
+
+  res.json({ ok: true, message: 'Reserva cancelada.', unit_id: booking.unit_id });
+});
+
+app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(id);
+  if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+
+  const start = req.body && req.body.start_date;
+  const end = req.body && req.body.end_date;
+  if (!start || !end) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(end).isAfter(dayjs(start))) return res.status(400).json({ ok: false, message: 'end_date deve ser > start_date' });
+
+  const bookingConflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(block.unit_id, start, end);
+  if (bookingConflict) return res.status(409).json({ ok: false, message: 'Existem reservas neste período.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND id <> ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(block.unit_id, block.id, start, end);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'Conflito com outro bloqueio.' });
+
+  rescheduleBlockUpdateStmt.run(start, end, block.id);
+
+  logChange(req.user.id, 'block', block.id, 'reschedule',
+    { start_date: block.start_date, end_date: block.end_date },
+    { start_date: start, end_date: end }
+  );
+
+  res.json({ ok: true, message: 'Bloqueio atualizado.', unit_id: block.unit_id });
+});
+
+app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
+  const unitId = Number(req.params.unitId);
+  const unit = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
+  if (!unit) return res.status(404).json({ ok: false, message: 'Unidade não encontrada.' });
+
+  const start = req.body && req.body.start_date;
+  const end = req.body && req.body.end_date;
+  if (!start || !end) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(end).isAfter(dayjs(start))) return res.status(400).json({ ok: false, message: 'end_date deve ser > start_date' });
+
+  const bookingConflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(unitId, start, end);
+  if (bookingConflict) return res.status(409).json({ ok: false, message: 'Existem reservas nestas datas.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(unitId, start, end);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'Já existe um bloqueio neste período.' });
+
+  const inserted = insertBlockStmt.run(unitId, start, end);
+
+  logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date: start, end_date: end, unit_id: unitId });
+
+  res.json({ ok: true, message: 'Bloqueio criado.', unit_id: unitId });
+});
+
+app.delete('/calendar/block/:id', requireLogin, (req, res) => {
+  const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(req.params.id);
+  if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+  db.prepare('DELETE FROM blocks WHERE id = ?').run(block.id);
+  logChange(req.user.id, 'block', block.id, 'delete', { start_date: block.start_date, end_date: block.end_date }, null);
+  res.json({ ok: true, message: 'Bloqueio removido.', unit_id: block.unit_id });
 });
 
 function unitCalendarCard(u, month) {
@@ -1035,12 +2581,17 @@ function unitCalendarCard(u, month) {
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
   const entries = db.prepare(
-    `SELECT 'B' as t, checkin as s, checkout as e, (guest_name || ' (' || adults || 'A+' || children || 'C)') as label, status
+    `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
        FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
      UNION ALL
-     SELECT 'X' as t, start_date as s, end_date as e, 'BLOQUEADO' as label, 'BLOCK' as status
+     SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, NULL as guest_email, NULL as guest_phone, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
        FROM blocks WHERE unit_id = ?`
-  ).all(u.id, u.id);
+  ).all(u.id, u.id).map(row => ({
+    ...row,
+    label: row.kind === 'BLOCK'
+      ? 'Bloqueio de datas'
+      : `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
+  }));
 
   const cells = [];
   for (let i = 0; i < totalCells; i++) {
@@ -1052,22 +2603,59 @@ function unitCalendarCard(u, month) {
     const nextDate = d.add(1, 'day').format('YYYY-MM-DD');
 
     const hit = entries.find(en => overlaps(en.s, en.e, date, nextDate));
-    let cls = !inMonth ? 'bg-slate-100 text-slate-400' : 'bg-emerald-500 text-white'; // livre
+    const classNames = ['calendar-cell'];
+    if (!inMonth) {
+      classNames.push('bg-slate-100', 'text-slate-400');
+    } else if (!hit) {
+      classNames.push('bg-emerald-500', 'text-white');
+    } else if (hit.status === 'BLOCK') {
+      classNames.push('bg-red-600', 'text-white');
+    } else if (hit.status === 'PENDING') {
+      classNames.push('bg-amber-400', 'text-black');
+    } else {
+      classNames.push('bg-rose-500', 'text-white');
+    }
+
+    const dataAttrs = [
+      'data-calendar-cell',
+      `data-unit="${u.id}"`,
+      `data-date="${date}"`,
+      `data-in-month="${inMonth ? 1 : 0}"`,
+    ];
+
     if (hit) {
-      if (hit.status === 'BLOCK') cls = 'bg-red-600 text-white';
-      else if (hit.status === 'PENDING') cls = 'bg-amber-400 text-black';
-      else cls = 'bg-rose-500 text-white'; // CONFIRMED
+      dataAttrs.push(
+        `data-entry-id="${hit.id}"`,
+        `data-entry-kind="${hit.kind}"`,
+        `data-entry-start="${hit.s}"`,
+        `data-entry-end="${hit.e}"`,
+        `data-entry-status="${hit.status}"`,
+        `data-entry-label="${esc(hit.label)}"`
+      );
+      if (hit.kind === 'BOOKING') {
+        dataAttrs.push(
+          `data-entry-url="/admin/bookings/${hit.id}"`,
+          `data-entry-cancel-url="/calendar/booking/${hit.id}/cancel"`,
+          `data-entry-agency="${esc(hit.agency || '')}"`,
+          `data-entry-total="${hit.total_cents || 0}"`,
+          `data-entry-guest="${esc(hit.guest_name || '')}"`,
+          `data-entry-email="${esc(hit.guest_email || '')}"`,
+          `data-entry-phone="${esc(hit.guest_phone || '')}"`,
+          `data-entry-adults="${hit.adults || 0}"`,
+          `data-entry-children="${hit.children || 0}"`
+        );
+      }
     }
 
     const title = hit ? ` title="${(hit.label || '').replace(/"/g, "'")}"` : '';
-    cells.push(`<div class="h-12 sm:h-14 flex items-center justify-center rounded ${cls} text-xs sm:text-sm"${title}>${d.date()}</div>`);
+    cells.push(`<div class="${classNames.join(' ')}" ${dataAttrs.join(' ')}${title}>${d.date()}</div>`);
   }
 
   const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
     .map(w => `<div class="text-center text-xs text-slate-500 py-1">${w}</div>`)
     .join('');
   return `
-    <div class="card p-4">
+    <div class="card p-4 calendar-card" data-unit-card="${u.id}" data-unit-name="${esc(u.name)}">
       <div class="flex items-center justify-between mb-2">
         <div>
           <div class="text-sm text-slate-500">${u.property_name}</div>
@@ -1075,8 +2663,8 @@ function unitCalendarCard(u, month) {
         </div>
         <a class="text-slate-600 hover:text-slate-900" href="/admin/units/${u.id}">Gerir</a>
       </div>
-      <div class="grid grid-cols-7 gap-1 mb-1">${weekdayHeader}</div>
-      <div class="grid grid-cols-7 gap-1">${cells.join('')}</div>
+      <div class="calendar-grid mb-1">${weekdayHeader}</div>
+      <div class="calendar-grid" data-calendar-unit="${u.id}">${cells.join('')}</div>
     </div>
   `;
 }
@@ -1448,8 +3036,160 @@ app.get('/admin', requireLogin, (req, res) => {
        JOIN units u ON u.id = b.unit_id
        JOIN properties p ON p.id = u.property_id
       ORDER BY b.created_at DESC
-      LIMIT 10`
+      LIMIT 12`
   ).all();
+
+  const automationData = ensureAutomationFresh(5) || automationCache;
+  const automationMetrics = automationData.metrics || {};
+  const automationNotifications = automationData.notifications || [];
+  const automationSuggestions = automationData.tariffSuggestions || [];
+  const automationBlocks = automationData.generatedBlocks || [];
+  const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
+  const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
+  const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
+  const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
+  const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
+
+  const notificationsHtml = automationNotifications.length
+    ? `<ul class="space-y-3">${automationNotifications.map(n => {
+        const styles = automationSeverityStyle(n.severity);
+        const ts = n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun;
+        return `
+          <li class="border-l-4 pl-3 ${styles.border} bg-white/40 rounded-sm">
+            <div class="text-[11px] text-slate-400">${esc(ts)}</div>
+            <div class="text-sm font-semibold text-slate-800">${esc(n.title || '')}</div>
+            <div class="text-sm text-slate-600">${esc(n.message || '')}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Sem alertas no momento.</p>';
+
+  const suggestionsHtml = automationSuggestions.length
+    ? `<ul class="space-y-2">${automationSuggestions.map(s => {
+        const occPct = Math.round((s.occupancyRate || 0) * 100);
+        const pendLabel = s.pendingCount ? ` <span class=\"text-xs text-slate-500\">(+${s.pendingCount} pend)</span>` : '';
+        return `
+          <li class="border rounded-lg p-3 bg-slate-50">
+            <div class="flex items-center justify-between text-sm font-semibold text-slate-700">
+              <span>${dayjs(s.date).format('DD/MM')}</span>
+              <span>${occPct}% ocup.</span>
+            </div>
+            <div class="text-sm text-slate-600">Sugerir +${s.suggestedIncreasePct}% no preço base · ${s.confirmedCount}/${totalUnitsCount} confirmadas${pendLabel}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Sem datas de alta procura.</p>';
+
+  const blockEventsHtml = automationBlocks.length
+    ? `<ul class="space-y-2">${automationBlocks.slice(-6).reverse().map(evt => {
+        const label = evt.type === 'minstay' ? 'Estadia mínima' : 'Sequência cheia';
+        const extra = evt.extra_nights ? ` · +${evt.extra_nights} noite(s)` : '';
+        return `
+          <li class="border rounded-lg p-3 bg-white/40">
+            <div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(label)}</div>
+            <div class="text-sm font-semibold text-slate-800">${esc(evt.property_name)} · ${esc(evt.unit_name)}</div>
+            <div class="text-sm text-slate-600">${esc(formatDateRangeShort(evt.start, evt.end))}${extra}</div>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="text-sm text-slate-500">Nenhum bloqueio automático recente.</p>';
+
+  const dailyRows = automationDaily.length
+    ? automationDaily.map(d => {
+        const occPct = Math.round((d.occupancyRate || 0) * 100);
+        const arrLabel = d.arrivalsPending ? `${d.arrivalsConfirmed} <span class=\"text-xs text-slate-500\">(+${d.arrivalsPending} pend)</span>` : String(d.arrivalsConfirmed);
+        const depLabel = d.departuresPending ? `${d.departuresConfirmed} <span class=\"text-xs text-slate-500\">(+${d.departuresPending} pend)</span>` : String(d.departuresConfirmed);
+        const pendingBadge = d.pendingCount ? `<span class=\"text-xs text-slate-500 ml-1\">(+${d.pendingCount} pend)</span>` : '';
+        return `
+          <tr class="border-t">
+            <td class="py-2 text-sm">${dayjs(d.date).format('DD/MM')}</td>
+            <td class="py-2 text-sm">${occPct}%</td>
+            <td class="py-2 text-sm">${d.confirmedCount}${pendingBadge}</td>
+            <td class="py-2 text-sm">${arrLabel}</td>
+            <td class="py-2 text-sm">${depLabel}</td>
+          </tr>`;
+      }).join('')
+    : '<tr><td class="py-2 text-sm text-slate-500" colspan="5">Sem dados para o período.</td></tr>';
+
+  const weeklyRows = automationWeekly.length
+    ? automationWeekly.map(w => {
+        const occPct = Math.round((w.occupancyRate || 0) * 100);
+        const pending = w.pendingNights ? ` <span class=\"text-xs text-slate-500\">(+${w.pendingNights} pend)</span>` : '';
+        const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
+        return `
+          <tr class="border-t">
+            <td class="py-2 text-sm">${dayjs(w.start).format('DD/MM')} → ${endLabel}</td>
+            <td class="py-2 text-sm">${occPct}%</td>
+            <td class="py-2 text-sm">${w.confirmedNights}${pending}</td>
+          </tr>`;
+      }).join('')
+    : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
+
+  const automationCard = html`
+      <section class="card p-4 mb-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Motor inteligente</h2>
+            <p class="text-sm text-slate-600">Bloqueios automáticos, alertas e insights de ocupação para agir rapidamente.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4 text-sm text-slate-600 md:text-right">
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Última execução</div>
+              <div class="font-semibold text-slate-900">${automationLastRun}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Check-ins 48h</div>
+              <div class="font-semibold text-slate-900">${automationMetrics.checkins48h || 0}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Receita próxima semana</div>
+              <div class="font-semibold text-slate-900">€ ${eur(automationRevenue7)}</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-400">Ocupação hoje</div>
+              <div class="font-semibold text-slate-900">${Math.round((automationMetrics.occupancyToday || 0) * 100)}%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
+            ${notificationsHtml}
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
+            ${suggestionsHtml}
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
+            ${blockEventsHtml}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <div class="overflow-x-auto">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo diário (7 dias)</h3>
+            <table class="w-full min-w-[420px] text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
+                </tr>
+              </thead>
+              <tbody>${dailyRows}</tbody>
+            </table>
+          </div>
+          <div class="overflow-x-auto">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo semanal</h3>
+            <table class="w-full min-w-[320px] text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
+                </tr>
+              </thead>
+              <tbody>${weeklyRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+  `;
 
   res.send(layout({
     title: 'Backoffice',
@@ -1457,6 +3197,8 @@ app.get('/admin', requireLogin, (req, res) => {
     activeNav: 'backoffice',
     body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
+
+      ${automationCard}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <section class="card p-4">
@@ -1546,6 +3288,46 @@ kitchen|Kitchenette"></textarea>
       </section>
     `
   }));
+});
+
+app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
+  const data = ensureAutomationFresh(5) || automationCache;
+  const daily = (data.summaries && data.summaries.daily) || [];
+  const weekly = (data.summaries && data.summaries.weekly) || [];
+
+  const rows = [];
+  rows.push(['Secção', 'Referência', 'Valor']);
+  rows.push(['Execução', 'Última', data.lastRun ? dayjs(data.lastRun).format('YYYY-MM-DD HH:mm') : '-']);
+  rows.push(['Receita', 'Próximos 7 dias (€)', eur(data.revenue ? data.revenue.next7 || 0 : 0)]);
+  rows.push(['Receita', 'Próximos 30 dias (€)', eur(data.revenue ? data.revenue.next30 || 0 : 0)]);
+  rows.push(['Métrica', 'Check-ins 48h', (data.metrics && data.metrics.checkins48h) || 0]);
+  rows.push(['Métrica', 'Estadias longas', (data.metrics && data.metrics.longStays) || 0]);
+  rows.push(['Métrica', 'Ocupação hoje (%)', Math.round(((data.metrics && data.metrics.occupancyToday) || 0) * 100)]);
+
+  daily.forEach(d => {
+    rows.push([
+      'Resumo diário',
+      `${dayjs(d.date).format('YYYY-MM-DD')}`,
+      `${Math.round((d.occupancyRate || 0) * 100)}% · ${d.confirmedCount} confirmadas`
+    ]);
+  });
+
+  weekly.forEach(w => {
+    const endLabel = dayjs(w.end).subtract(1, 'day').format('YYYY-MM-DD');
+    rows.push([
+      'Resumo semanal',
+      `${dayjs(w.start).format('YYYY-MM-DD')} → ${endLabel}`,
+      `${Math.round((w.occupancyRate || 0) * 100)}% · ${w.confirmedNights} noites`
+    ]);
+  });
+
+  const csv = rows
+    .map(cols => cols.map(col => `"${String(col ?? '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="resumo-automacao.csv"');
+  res.send('\ufeff' + csv);
 });
 
 app.post('/admin/properties/create', requireLogin, (req, res) => {
@@ -1815,14 +3597,20 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   if (conflicts.length)
     return res.status(409).send('As datas incluem reservas existentes');
 
-  db.prepare('INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)').run(req.params.id, start_date, end_date);
+  const inserted = insertBlockStmt.run(req.params.id, start_date, end_date);
+  logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date, end_date, unit_id: Number(req.params.id) });
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
 app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
-  const block = db.prepare('SELECT unit_id FROM blocks WHERE id = ?').get(req.params.blockId);
+  const block = db.prepare('SELECT unit_id, start_date, end_date FROM blocks WHERE id = ?').get(req.params.blockId);
   if (!block) return res.status(404).send('Bloqueio não encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
+  logChange(req.user.id, 'block', Number(req.params.blockId), 'delete', {
+    unit_id: block.unit_id,
+    start_date: block.start_date,
+    end_date: block.end_date
+  }, null);
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
@@ -2085,28 +3873,127 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   const q = rateQuote(b.unit_id, checkin, checkout, b.base_price_cents);
   if (q.nights < q.minStayReq) return res.status(400).send(`Estadia mínima: ${q.minStayReq} noites`);
 
-  db.prepare(`
-    UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
-     WHERE id = ?
-  `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, internal_notes, status, q.total_cents, id);
+  adminBookingUpdateStmt.run(
+    checkin,
+    checkout,
+    adults,
+    children,
+    guest_name,
+    guest_email,
+    guest_phone,
+    guest_nationality,
+    agency,
+    internal_notes,
+    status,
+    q.total_cents,
+    id
+  );
+
+  logChange(req.user.id, 'booking', Number(id), 'update',
+    {
+      checkin: b.checkin,
+      checkout: b.checkout,
+      adults: b.adults,
+      children: b.children,
+      status: b.status,
+      total_cents: b.total_cents
+    },
+    { checkin, checkout, adults, children, status, total_cents: q.total_cents }
+  );
 
   res.redirect(`/admin/bookings/${id}`);
 });
 
 app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
   const id = req.params.id;
-  const exists = db.prepare('SELECT 1 FROM bookings WHERE id = ?').get(id);
-  if (!exists) return res.status(404).send('Reserva não encontrada');
+  const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!existing) return res.status(404).send('Reserva não encontrada');
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  logChange(req.user.id, 'booking', Number(id), 'cancel', {
+    checkin: existing.checkin,
+    checkout: existing.checkout,
+    guest_name: existing.guest_name,
+    status: existing.status,
+    unit_id: existing.unit_id
+  }, null);
   const back = req.get('referer') || '/admin/bookings';
   res.redirect(back);
 });
 
 // (Opcional) Apagar definitivamente
 app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
-  db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+  const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
+  if (existing) {
+    db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+    logChange(req.user.id, 'booking', Number(req.params.id), 'delete', {
+      checkin: existing.checkin,
+      checkout: existing.checkout,
+      unit_id: existing.unit_id,
+      guest_name: existing.guest_name
+    }, null);
+  }
   res.redirect('/admin/bookings');
+});
+
+app.get('/admin/auditoria', requireLogin, (req, res) => {
+  const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
+  const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  const filters = [];
+  const params = [];
+  if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
+  const idNumber = Number(idRaw);
+  if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const logs = db.prepare(`
+    SELECT cl.*, u.username
+      FROM change_logs cl
+      JOIN users u ON u.id = cl.actor_id
+     ${where}
+     ORDER BY cl.created_at DESC
+     LIMIT 200
+  `).all(...params);
+
+  res.send(layout({
+    title: 'Auditoria',
+    user: req.user,
+    activeNav: 'audit',
+    body: html`
+      <h1 class="text-2xl font-semibold mb-4">Histórico de alterações</h1>
+      <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+        <div class="grid gap-1">
+          <label class="text-sm text-slate-600">Entidade</label>
+          <select class="input" name="entity">
+            <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+            <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+            <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+          </select>
+        </div>
+        <div class="grid gap-1">
+          <label class="text-sm text-slate-600">ID</label>
+          <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+        </div>
+        <div class="self-end">
+          <button class="btn btn-primary w-full">Filtrar</button>
+        </div>
+      </form>
+
+      <div class="space-y-4">
+        ${logs.length ? logs.map(log => html`
+          <article class="card p-4 grid gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
+              <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+              <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
+              <span class="text-slate-500">por ${esc(log.username)}</span>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
+          </article>
+        `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
+      </div>
+    `
+  }));
 });
 
 // ===================== Utilizadores (admin) =====================
