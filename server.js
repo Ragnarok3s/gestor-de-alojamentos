@@ -1789,11 +1789,7 @@ app.get('/calendar', requireLogin, (req, res) => {
               if (!wasDragging) {
                 clearHighlight('calendar-cell--preview');
                 clearHighlight('calendar-cell--invalid');
-                const cell = document.querySelector('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"][data-date="' + dragCtx.anchorDate + '"]');
-                const el = document.elementFromPoint(e.clientX, e.clientY);
-                const maybeCell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
                 dragCtx = null;
-                showEntryActions(maybeCell || cell);
                 return;
               }
               clearHighlight('calendar-cell--preview');
@@ -1821,6 +1817,18 @@ app.get('/calendar', requireLogin, (req, res) => {
               });
               selectionCtx = null;
             }
+          }
+
+          function onDoubleClick(e) {
+            if (e.button !== 0) return;
+            const cell = e.target.closest('[data-calendar-cell]');
+            if (!cell) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            const entryId = cell.getAttribute('data-entry-id');
+            if (!entryId) return;
+            dragCtx = null;
+            hideAction();
+            showEntryActions(cell);
           }
 
           function onActionClick(e) {
@@ -1889,6 +1897,7 @@ app.get('/calendar', requireLogin, (req, res) => {
           root.addEventListener('pointerdown', onPointerDown);
           window.addEventListener('pointermove', onPointerMove);
           window.addEventListener('pointerup', onPointerUp);
+          root.addEventListener('dblclick', onDoubleClick);
           if (actionEl) actionEl.addEventListener('click', onActionClick);
           document.addEventListener('click', onDocumentClick);
           document.addEventListener('keydown', onKeyDown);
