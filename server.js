@@ -1,12 +1,22 @@
+const dayjs = require('dayjs');
+const minMax = require('dayjs/plugin/minMax');
+require('dayjs/locale/pt');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const fs = require('fs');
+const https = require('https');
+const multer = require('multer');
+const ExcelJS = require('exceljs');
+dayjs.extend(minMax);
+dayjs.locale('pt');
 const express = require('express');
 const cookieParser = require('cookie-parser');
-const https = require('https');
-const fs = require('fs');
+const Database = require('better-sqlite3');
 
 const { createContext } = require('./src/context');
 const registerFrontoffice = require('./src/frontoffice');
 const registerBackoffice = require('./src/backoffice');
-
+const path = require('path');
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
