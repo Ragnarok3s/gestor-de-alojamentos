@@ -832,23 +832,6 @@ app.get('/', (req, res) => {
           <li class="progress-step">2. Escolha o alojamento</li>
           <li class="progress-step">3. Confirme e relaxe</li>
         </ul>
-        <div class="reassurance-grid">
-          <article class="reassurance-card">
-            <span class="reassurance-icon">✓</span>
-            <div class="reassurance-title">Disponibilidade em tempo real</div>
-            <p class="reassurance-copy">Garantimos que as unidades apresentadas estão mesmo livres para as datas escolhidas.</p>
-          </article>
-          <article class="reassurance-card">
-            <span class="reassurance-icon">💬</span>
-            <div class="reassurance-title">Feedback imediato</div>
-            <p class="reassurance-copy">Alertas e confirmações visuais acontecem na hora, sem recarregar a página.</p>
-          </article>
-          <article class="reassurance-card">
-            <span class="reassurance-icon">📱</span>
-            <div class="reassurance-title">Pensado para mobile</div>
-            <p class="reassurance-copy">Tudo funciona no seu telemóvel: campos grandes, texto legível e poucos cliques.</p>
-          </article>
-        </div>
         <form action="/search" method="get" class="search-form" data-search-form>
           <div class="search-field">
             <label for="checkin">Datas</label>
