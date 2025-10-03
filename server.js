@@ -1326,6 +1326,13 @@ app.get('/calendar', requireLogin, (req, res) => {
           let selectionCtx = null;
           let toastTimer = null;
 
+          function isPrimaryPointer(e) {
+            if (e.pointerType === 'mouse') {
+              return typeof e.button === 'number' ? e.button === 0 : e.isPrimary !== false;
+            }
+            return true;
+          }
+
           function parseDate(str) {
             if (!str) return null;
             const parts = str.split('-').map(Number);
@@ -1532,6 +1539,7 @@ app.get('/calendar', requireLogin, (req, res) => {
             const entryId = cell.getAttribute('data-entry-id');
             if (!entryId) return;
             const entryKind = cell.getAttribute('data-entry-kind');
+            const status = cell.getAttribute('data-entry-status') || '';
             const guest = cell.getAttribute('data-entry-guest') || '';
             const label = cell.getAttribute('data-entry-label') || '';
             const start = cell.getAttribute('data-entry-start');
@@ -1551,7 +1559,11 @@ app.get('/calendar', requireLogin, (req, res) => {
               html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
             }
             html += '</div>';
-            html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+            if (entryKind === 'BOOKING' && status !== 'CONFIRMED') {
+              html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+            } else {
+              html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+            }
             html += '</div>';
             showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
             actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit') };
@@ -1585,15 +1597,20 @@ app.get('/calendar', requireLogin, (req, res) => {
           }
 
           function onPointerDown(e) {
+            if (!isPrimaryPointer(e)) return;
             const cell = e.target.closest('[data-calendar-cell]');
             if (!cell) return;
             if (cell.getAttribute('data-in-month') !== '1') return;
             hideAction();
             const entryId = cell.getAttribute('data-entry-id');
             if (entryId) {
+              const entryKind = cell.getAttribute('data-entry-kind');
+              const status = cell.getAttribute('data-entry-status') || '';
               dragCtx = {
                 entryId: entryId,
-                entryKind: cell.getAttribute('data-entry-kind'),
+                entryKind: entryKind,
+                status: status,
+                canReschedule: entryKind !== 'BOOKING' || status === 'CONFIRMED',
                 unitId: cell.getAttribute('data-unit'),
                 originStart: cell.getAttribute('data-entry-start'),
                 originEnd: cell.getAttribute('data-entry-end'),
@@ -1617,6 +1634,7 @@ app.get('/calendar', requireLogin, (req, res) => {
 
           function onPointerMove(e) {
             if (dragCtx) {
+              if (!dragCtx.canReschedule) return;
               if (!dragCtx.moved) {
                 const delta = Math.abs(e.clientX - dragCtx.pointerStart.x) + Math.abs(e.clientY - dragCtx.pointerStart.y);
                 if (delta > 5) dragCtx.moved = true;
