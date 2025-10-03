@@ -155,17 +155,17 @@ if (!hasBlocksUpdatedAt) {
 
 const rescheduleBookingUpdateStmt = db.prepare(
   hasBookingsUpdatedAt
-    ? 'UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime("now") WHERE id = ?'
+    ? "UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime('now') WHERE id = ?"
     : 'UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ? WHERE id = ?'
 );
 const rescheduleBlockUpdateStmt = db.prepare(
   hasBlocksUpdatedAt
-    ? 'UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime("now") WHERE id = ?'
+    ? "UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime('now') WHERE id = ?"
     : 'UPDATE blocks SET start_date = ?, end_date = ? WHERE id = ?'
 );
 const insertBlockStmt = db.prepare(
   hasBlocksUpdatedAt
-    ? 'INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))'
+    ? "INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime('now'))"
     : 'INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)'
 );
 const adminBookingUpdateStmt = db.prepare(
