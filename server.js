@@ -4956,6 +4956,9 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
   `;
   const rows = db.prepare(sql).all(...args);
 
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+
   res.send(layout({
     title: 'Reservas',
     user: req.user,
