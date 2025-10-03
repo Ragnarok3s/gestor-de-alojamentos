@@ -142,6 +142,47 @@ try {
   ensureColumn('blocks', 'updated_at', 'TEXT');
 } catch (_) {}
 
+const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
+const blockColumns = db.prepare('PRAGMA table_info(blocks)').all();
+const hasBookingsUpdatedAt = bookingColumns.some(col => col.name === 'updated_at');
+const hasBlocksUpdatedAt = blockColumns.some(col => col.name === 'updated_at');
+if (!hasBookingsUpdatedAt) {
+  console.warn('Aviso: bookings.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
+}
+if (!hasBlocksUpdatedAt) {
+  console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
+}
+
+const rescheduleBookingUpdateStmt = db.prepare(
+  hasBookingsUpdatedAt
+    ? 'UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime("now") WHERE id = ?'
+    : 'UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ? WHERE id = ?'
+);
+const rescheduleBlockUpdateStmt = db.prepare(
+  hasBlocksUpdatedAt
+    ? 'UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime("now") WHERE id = ?'
+    : 'UPDATE blocks SET start_date = ?, end_date = ? WHERE id = ?'
+);
+const insertBlockStmt = db.prepare(
+  hasBlocksUpdatedAt
+    ? 'INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))'
+    : 'INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)'
+);
+const adminBookingUpdateStmt = db.prepare(
+  (hasBookingsUpdatedAt
+    ? `
+    UPDATE bookings
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, updated_at = datetime('now')
+     WHERE id = ?
+  `
+    : `
+    UPDATE bookings
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
+     WHERE id = ?
+  `
+  ).trim()
+);
+
 function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
   try {
     db.prepare(
@@ -1804,8 +1845,7 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
   if (quote.nights < quote.minStayReq)
     return res.status(400).json({ ok: false, message: `Estadia mínima: ${quote.minStayReq} noites.` });
 
-  db.prepare('UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime("now") WHERE id = ?')
-    .run(checkin, checkout, quote.total_cents, booking.id);
+  rescheduleBookingUpdateStmt.run(checkin, checkout, quote.total_cents, booking.id);
 
   logChange(req.user.id, 'booking', booking.id, 'reschedule',
     { checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
@@ -1843,8 +1883,7 @@ app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
   `).get(block.unit_id, block.id, start, end);
   if (blockConflict) return res.status(409).json({ ok: false, message: 'Conflito com outro bloqueio.' });
 
-  db.prepare('UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime("now") WHERE id = ?')
-    .run(start, end, block.id);
+  rescheduleBlockUpdateStmt.run(start, end, block.id);
 
   logChange(req.user.id, 'block', block.id, 'reschedule',
     { start_date: block.start_date, end_date: block.end_date },
@@ -1881,8 +1920,7 @@ app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
   `).get(unitId, start, end);
   if (blockConflict) return res.status(409).json({ ok: false, message: 'Já existe um bloqueio neste período.' });
 
-  const inserted = db.prepare('INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))')
-    .run(unitId, start, end);
+  const inserted = insertBlockStmt.run(unitId, start, end);
 
   logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date: start, end_date: end, unit_id: unitId });
 
@@ -2721,8 +2759,7 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   if (conflicts.length)
     return res.status(409).send('As datas incluem reservas existentes');
 
-  const inserted = db.prepare('INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))')
-    .run(req.params.id, start_date, end_date);
+  const inserted = insertBlockStmt.run(req.params.id, start_date, end_date);
   logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date, end_date, unit_id: Number(req.params.id) });
   res.redirect(`/admin/units/${req.params.id}`);
 });
@@ -2998,11 +3035,21 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   const q = rateQuote(b.unit_id, checkin, checkout, b.base_price_cents);
   if (q.nights < q.minStayReq) return res.status(400).send(`Estadia mínima: ${q.minStayReq} noites`);
 
-  db.prepare(`
-    UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, updated_at = datetime('now')
-     WHERE id = ?
-  `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, internal_notes, status, q.total_cents, id);
+  adminBookingUpdateStmt.run(
+    checkin,
+    checkout,
+    adults,
+    children,
+    guest_name,
+    guest_email,
+    guest_phone,
+    guest_nationality,
+    agency,
+    internal_notes,
+    status,
+    q.total_cents,
+    id
+  );
 
   logChange(req.user.id, 'booking', Number(id), 'update',
     {
