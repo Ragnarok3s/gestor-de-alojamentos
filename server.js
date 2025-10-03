@@ -13,10 +13,17 @@ require('dayjs/locale/pt');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
+const fsp = fs.promises;
 const https = require('https');
 const multer = require('multer');
 const path = require('path');
 const ExcelJS = require('exceljs');
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (err) {
+  console.warn('Dependência opcional "sharp" não encontrada; as imagens não serão comprimidas automaticamente até ser instalada.');
+}
 dayjs.extend(minMax);
 dayjs.locale('pt');
 
@@ -147,6 +154,7 @@ try {
   ensureColumn('bookings', 'external_ref', 'TEXT');
   ensureColumn('bookings', 'updated_at', 'TEXT');
   ensureColumn('blocks', 'updated_at', 'TEXT');
+  ensureColumn('unit_images', 'is_primary', 'INTEGER NOT NULL DEFAULT 0');
 } catch (_) {}
 
 const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
@@ -927,6 +935,27 @@ const upload = multer({
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
 
+async function compressImage(filePath) {
+  if (!sharp) return;
+  try {
+    const metadata = await sharp(filePath).metadata();
+    let pipeline = sharp(filePath)
+      .rotate()
+      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true });
+    if (metadata.format === 'png') {
+      pipeline = pipeline.png({ compressionLevel: 9, adaptiveFiltering: true, palette: true });
+    } else if (metadata.format === 'webp') {
+      pipeline = pipeline.webp({ quality: 80, effort: 4 });
+    } else {
+      pipeline = pipeline.jpeg({ quality: 82, mozjpeg: true, chromaSubsampling: '4:4:4' });
+    }
+    const buffer = await pipeline.toBuffer();
+    await fsp.writeFile(filePath, buffer);
+  } catch (err) {
+    console.warn('Compressão de imagem falhou para', filePath, '-', err.message);
+  }
+}
+
 // ===================== Utils =====================
 const html = String.raw;
 const eur = (c) => (c / 100).toFixed(2);
@@ -938,6 +967,12 @@ const slugify = (value) =>
     .replace(/[^a-z0-9]+/gi, '-')
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
+
+function wantsJson(req) {
+  const accept = String(req.headers.accept || '').toLowerCase();
+  if ((req.headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest') return true;
+  return accept.includes('application/json') || accept === '*/*';
+}
 const esc = (str = '') => String(str)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -1305,6 +1340,29 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
         @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
+        .gallery-flash{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;font-size:.85rem;font-weight:500;background:#f1f5f9;color:#1e293b;box-shadow:0 6px 18px rgba(15,23,42,.08);}
+        .gallery-flash[data-variant="success"]{background:#ecfdf5;color:#047857;}
+        .gallery-flash[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
+        .gallery-flash[data-variant="danger"]{background:#fee2e2;color:#b91c1c;}
+        .gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));grid-auto-rows:140px;gap:14px;}
+        .gallery-tile{position:relative;overflow:hidden;border-radius:18px;background:#0f172a;color:#fff;cursor:grab;min-height:100%;box-shadow:0 10px 24px rgba(15,23,42,.16);transition:transform .18s ease,box-shadow .18s ease;}
+        .gallery-tile:hover{transform:translateY(-2px);box-shadow:0 18px 36px rgba(15,23,42,.22);}
+        .gallery-tile.dragging{opacity:.55;cursor:grabbing;box-shadow:0 20px 40px rgba(15,23,42,.28);}
+        .gallery-tile:nth-child(7n+1){grid-column:span 2;grid-row:span 2;}
+        .gallery-tile:nth-child(5n+3){grid-column:span 2;}
+        .gallery-tile:nth-child(9n+5){grid-row:span 2;}
+        .gallery-tile__img{width:100%;height:100%;object-fit:cover;display:block;}
+        .gallery-tile__badge{position:absolute;top:12px;left:12px;padding:6px 12px;border-radius:999px;background:rgba(15,23,42,.82);font-size:.7rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;opacity:0;transition:opacity .18s ease;}
+        .gallery-tile.is-primary .gallery-tile__badge{opacity:1;}
+        .gallery-tile__overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:16px;background:linear-gradient(180deg,rgba(15,23,42,.05) 0%,rgba(15,23,42,.65) 55%,rgba(15,23,42,.9) 100%);opacity:0;transition:opacity .18s ease;}
+        .gallery-tile:focus .gallery-tile__overlay,.gallery-tile:hover .gallery-tile__overlay{opacity:1;}
+        .gallery-tile__hint{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,240,.85);margin-bottom:6px;}
+        .gallery-tile__meta{font-size:.75rem;color:rgba(226,232,240,.75);margin-bottom:10px;}
+        .gallery-tile__actions{display:flex;flex-wrap:wrap;gap:8px;}
+        .gallery-tile__actions .btn{flex:1 1 auto;justify-content:center;padding:.45rem .6rem;font-size:.8rem;}
+        .gallery-empty{padding:18px;border-radius:14px;background:#f1f5f9;color:#475569;text-align:center;font-size:.9rem;}
+        @media (max-width:900px){.gallery-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));grid-auto-rows:120px;}}
+        @media (pointer:coarse){.gallery-tile__overlay{opacity:1;}.gallery-tile{cursor:default;}}
         .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
         .gallery-overlay.show{opacity:1;pointer-events:auto;}
         .gallery-overlay .gallery-inner{position:relative;width:100%;max-width:min(960px,90vw);}
@@ -1741,7 +1799,9 @@ app.get('/search', (req, res) => {
      ORDER BY p.name, u.name`
   ).all(property_id || null, property_id || null, Number(totalGuests));
 
-  const imageStmt = db.prepare('SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY position, id LIMIT 4');
+  const imageStmt = db.prepare(
+    'SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 4'
+  );
 
   const available = units
     .filter(u => unitAvailable(u.id, checkin, checkout))
@@ -3994,7 +4054,9 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
   const bookings = db.prepare('SELECT * FROM bookings WHERE unit_id = ? ORDER BY checkin').all(u.id);
   const blocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
   const rates = db.prepare('SELECT * FROM rates WHERE unit_id = ? ORDER BY start_date').all(u.id);
-  const images = db.prepare('SELECT * FROM unit_images WHERE unit_id = ? ORDER BY position, id').all(u.id);
+  const images = db.prepare(
+    'SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id'
+  ).all(u.id);
 
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
@@ -4132,20 +4194,208 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
           <form method="post" action="/admin/units/${u.id}/images" enctype="multipart/form-data" class="grid gap-2 bg-slate-50 p-3 rounded">
             <input type="hidden" name="unit_id" value="${u.id}"/>
             <input type="file" name="images" class="input" accept="image/*" multiple required />
+            <div class="text-xs text-slate-500">As imagens são comprimidas e redimensionadas automaticamente para otimizar o carregamento.</div>
             <button class="btn btn-primary">Carregar imagens</button>
           </form>
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-            ${images.map(img => `
-              <div class="relative border rounded overflow-hidden">
-                <img src="/uploads/units/${u.id}/${img.file}" alt="${esc(img.alt||'')}" class="w-full h-32 object-cover"/>
-                <form method="post" action="/admin/images/${img.id}/delete" onsubmit="return confirm('Remover imagem?');" class="absolute top-1 right-1">
-                  <button class="bg-rose-600 text-white text-xs px-2 py-1 rounded">X</button>
-                </form>
-              </div>
-            `).join('')}
+          <div class="mt-4 space-y-3" data-gallery-manager data-unit-id="${u.id}">
+            <div class="gallery-flash" data-gallery-flash hidden></div>
+            <div class="gallery-grid ${images.length ? '' : 'hidden'}" data-gallery-list>
+              ${images.map(img => `
+                <article class="gallery-tile${img.is_primary ? ' is-primary' : ''}" data-gallery-tile data-image-id="${img.id}" draggable="true" tabindex="0">
+                  <span class="gallery-tile__badge">Principal</span>
+                  <img src="/uploads/units/${u.id}/${encodeURIComponent(img.file)}" alt="${esc(img.alt||'')}" loading="lazy" class="gallery-tile__img"/>
+                  <div class="gallery-tile__overlay">
+                    <div class="gallery-tile__hint">Arraste para reordenar</div>
+                    <div class="gallery-tile__meta">
+                      <span>${dayjs(img.created_at).format('DD/MM/YYYY')}</span>
+                    </div>
+                    <div class="gallery-tile__actions">
+                      <button type="button" class="btn btn-light" data-gallery-action="primary" ${img.is_primary ? 'disabled' : ''}>${img.is_primary ? 'Em destaque' : 'Tornar destaque'}</button>
+                      <button type="button" class="btn btn-danger" data-gallery-action="delete">Remover</button>
+                    </div>
+                  </div>
+                </article>
+              `).join('')}
+            </div>
+            <div class="gallery-empty ${images.length ? 'hidden' : ''}" data-gallery-empty>
+              <p class="text-sm text-slate-500">Ainda não existem imagens carregadas para esta unidade.</p>
+            </div>
           </div>
         </section>
       </div>
+
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          const manager = document.querySelector('[data-gallery-manager]');
+          if (!manager) return;
+          const list = manager.querySelector('[data-gallery-list]');
+          const emptyState = manager.querySelector('[data-gallery-empty]');
+          const flash = manager.querySelector('[data-gallery-flash]');
+          const unitId = manager.getAttribute('data-unit-id');
+          let flashTimer = null;
+          let dragItem = null;
+          let lastOrderKey = list
+            ? JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId))
+            : '[]';
+
+          function showFlash(message, variant) {
+            if (!flash) return;
+            flash.textContent = message;
+            flash.setAttribute('data-variant', variant || 'info');
+            flash.hidden = false;
+            if (flashTimer) window.clearTimeout(flashTimer);
+            flashTimer = window.setTimeout(() => { flash.hidden = true; }, 2600);
+          }
+
+          function syncEmpty() {
+            if (!list || !emptyState) return;
+            const isEmpty = list.querySelectorAll('[data-gallery-tile]').length === 0;
+            list.classList.toggle('hidden', isEmpty);
+            emptyState.classList.toggle('hidden', !isEmpty);
+          }
+
+          function refreshOrderKey() {
+            if (!list) {
+              lastOrderKey = '[]';
+              return lastOrderKey;
+            }
+            lastOrderKey = JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId));
+            return lastOrderKey;
+          }
+
+          function updatePrimary(id) {
+            if (!list) return;
+            const tiles = list.querySelectorAll('[data-gallery-tile]');
+            tiles.forEach(tile => {
+              const btn = tile.querySelector('[data-gallery-action="primary"]');
+              const isPrimary = tile.dataset.imageId === String(id);
+              tile.classList.toggle('is-primary', isPrimary);
+              if (btn) {
+                btn.disabled = isPrimary;
+                btn.textContent = isPrimary ? 'Em destaque' : 'Tornar destaque';
+              }
+            });
+          }
+
+          function request(url, options) {
+            const baseHeaders = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+            const merged = Object.assign({}, options || {});
+            merged.headers = Object.assign({}, baseHeaders, merged.headers || {});
+            return fetch(url, merged).then(resp => {
+              if (!resp.ok) {
+                return resp.json().catch(() => ({})).then(data => {
+                  const message = data && data.message ? data.message : 'Ocorreu um erro inesperado.';
+                  throw new Error(message);
+                });
+              }
+              return resp.json().catch(() => ({}));
+            });
+          }
+
+          function persistOrder() {
+            if (!list) return;
+            const tiles = Array.from(list.querySelectorAll('[data-gallery-tile]'));
+            if (!tiles.length) {
+              refreshOrderKey();
+              return;
+            }
+            const payload = tiles.map((tile, index) => ({ id: Number(tile.dataset.imageId), position: index + 1 }));
+            const key = JSON.stringify(payload.map(item => item.id));
+            if (key === lastOrderKey) return;
+            lastOrderKey = key;
+            request('/admin/units/' + unitId + '/images/reorder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order: payload })
+            })
+              .then(data => {
+                refreshOrderKey();
+                showFlash(data && data.message ? data.message : 'Ordem atualizada.', 'success');
+                if (data && data.primaryId) updatePrimary(data.primaryId);
+              })
+              .catch(err => {
+                refreshOrderKey();
+                showFlash(err.message || 'Não foi possível atualizar a ordem.', 'danger');
+              });
+          }
+
+          if (list) {
+            list.addEventListener('dragstart', event => {
+              const tile = event.target.closest('[data-gallery-tile]');
+              if (!tile) return;
+              dragItem = tile;
+              tile.classList.add('dragging');
+              event.dataTransfer.effectAllowed = 'move';
+              try { event.dataTransfer.setData('text/plain', tile.dataset.imageId); } catch (_) {}
+            });
+
+            list.addEventListener('dragover', event => {
+              if (!dragItem) return;
+              event.preventDefault();
+              const target = event.target.closest('[data-gallery-tile]');
+              if (!target || target === dragItem) return;
+              const rect = target.getBoundingClientRect();
+              const after = (event.clientY - rect.top) > rect.height / 2 || (event.clientX - rect.left) > rect.width / 2;
+              if (after) {
+                target.after(dragItem);
+              } else {
+                target.before(dragItem);
+              }
+            });
+
+            list.addEventListener('drop', event => {
+              if (!dragItem) return;
+              event.preventDefault();
+            });
+
+            list.addEventListener('dragend', () => {
+              if (!dragItem) return;
+              dragItem.classList.remove('dragging');
+              dragItem = null;
+              syncEmpty();
+              persistOrder();
+            });
+          }
+
+          manager.addEventListener('click', event => {
+            const actionBtn = event.target.closest('[data-gallery-action]');
+            if (!actionBtn) return;
+            const tile = actionBtn.closest('[data-gallery-tile]');
+            if (!tile) return;
+            const imageId = tile.dataset.imageId;
+            const action = actionBtn.getAttribute('data-gallery-action');
+            if (action === 'delete') {
+              if (!window.confirm('Remover esta imagem da galeria?')) return;
+              actionBtn.disabled = true;
+              request('/admin/images/' + imageId + '/delete', { method: 'POST' })
+                .then(data => {
+                  tile.remove();
+                  syncEmpty();
+                  refreshOrderKey();
+                  showFlash(data && data.message ? data.message : 'Imagem removida.', 'info');
+                  if (data && data.primaryId) updatePrimary(data.primaryId);
+                })
+                .catch(err => {
+                  actionBtn.disabled = false;
+                  showFlash(err.message || 'Não foi possível remover a imagem.', 'danger');
+                });
+            } else if (action === 'primary') {
+              actionBtn.disabled = true;
+              request('/admin/images/' + imageId + '/primary', { method: 'POST' })
+                .then(data => {
+                  updatePrimary(imageId);
+                  showFlash(data && data.message ? data.message : 'Imagem definida como destaque.', 'success');
+                })
+                .catch(err => {
+                  actionBtn.disabled = false;
+                  showFlash(err.message || 'Não foi possível atualizar a imagem.', 'danger');
+                });
+            }
+          });
+
+          syncEmpty();
+        });
+      </script>
     `
   }));
 });
@@ -4213,21 +4463,142 @@ app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
 });
 
 // Imagens
-app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), (req,res)=>{
-  const unitId = req.params.id;
+app.post('/admin/units/:id/images', requireLogin, upload.array('images', 24), async (req, res) => {
+  const unitId = Number(req.params.id);
   const files = req.files || [];
+  if (!files.length) {
+    if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Nenhum ficheiro recebido.' });
+    return res.redirect(`/admin/units/${unitId}`);
+  }
+
   const insert = db.prepare('INSERT INTO unit_images(unit_id,file,alt,position) VALUES (?,?,?,?)');
   let pos = db.prepare('SELECT COALESCE(MAX(position),0) as p FROM unit_images WHERE unit_id = ?').get(unitId).p;
-  files.forEach(f => { insert.run(unitId, f.filename, null, ++pos); });
-  res.redirect(`/admin/units/${unitId}`);
+  const existingPrimary = db
+    .prepare('SELECT id FROM unit_images WHERE unit_id = ? AND is_primary = 1 LIMIT 1')
+    .get(unitId);
+  const insertedIds = [];
+
+  try {
+    for (const file of files) {
+      const filePath = path.join(UPLOAD_UNITS, String(unitId), file.filename);
+      await compressImage(filePath);
+      const inserted = insert.run(unitId, file.filename, null, ++pos);
+      insertedIds.push(inserted.lastInsertRowid);
+    }
+
+    if (!existingPrimary && insertedIds.length) {
+      const primaryId = insertedIds[0];
+      db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+        primaryId,
+        unitId
+      );
+    }
+
+    if (wantsJson(req)) {
+      const rows = db
+        .prepare('SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id')
+        .all(unitId);
+      return res.json({ ok: true, images: rows, primaryId: rows.find(img => img.is_primary)?.id || null });
+    }
+
+    res.redirect(`/admin/units/${unitId}`);
+  } catch (err) {
+    console.error('Falha ao processar upload de imagens', err);
+    if (wantsJson(req)) {
+      return res.status(500).json({ ok: false, message: 'Não foi possível guardar as imagens. Tente novamente.' });
+    }
+    res.status(500).send('Não foi possível guardar as imagens.');
+  }
 });
-app.post('/admin/images/:imageId/delete', requireLogin, (req,res)=>{
+
+app.post('/admin/images/:imageId/delete', requireLogin, (req, res) => {
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
-  if (!img) return res.status(404).send('Imagem não encontrada');
+  if (!img) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
+    return res.status(404).send('Imagem não encontrada');
+  }
+
   const filePath = path.join(UPLOAD_UNITS, String(img.unit_id), img.file);
   db.prepare('DELETE FROM unit_images WHERE id = ?').run(img.id);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  if (fs.existsSync(filePath)) {
+    try { fs.unlinkSync(filePath); } catch (err) { console.warn('Não foi possível remover ficheiro físico', err.message); }
+  }
+
+  let nextPrimaryId = null;
+  if (img.is_primary) {
+    const fallback = db
+      .prepare(
+        'SELECT id FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 1'
+      )
+      .get(img.unit_id);
+    if (fallback) {
+      db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+        fallback.id,
+        img.unit_id
+      );
+      nextPrimaryId = fallback.id;
+    }
+  }
+
+  if (wantsJson(req)) {
+    return res.json({ ok: true, message: 'Imagem removida.', primaryId: nextPrimaryId });
+  }
+
   res.redirect(`/admin/units/${img.unit_id}`);
+});
+
+app.post('/admin/images/:imageId/primary', requireLogin, (req, res) => {
+  const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
+  if (!img) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
+    return res.status(404).send('Imagem não encontrada');
+  }
+
+  db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+    img.id,
+    img.unit_id
+  );
+
+  if (wantsJson(req)) {
+    return res.json({ ok: true, primaryId: img.id, message: 'Imagem definida como destaque.' });
+  }
+
+  res.redirect(`/admin/units/${img.unit_id}`);
+});
+
+app.post('/admin/units/:id/images/reorder', requireLogin, (req, res) => {
+  const unitId = Number(req.params.id);
+  const order = Array.isArray(req.body.order) ? req.body.order : [];
+  const ids = order
+    .map(item => ({ id: Number(item.id), position: Number(item.position) }))
+    .filter(item => item.id && item.position);
+
+  if (!ids.length) {
+    return res.json({ ok: true, message: 'Nada para atualizar.', primaryId: null });
+  }
+
+  const existingIds = new Set(
+    db
+      .prepare('SELECT id FROM unit_images WHERE unit_id = ?')
+      .all(unitId)
+      .map(row => row.id)
+  );
+
+  const updates = ids.filter(item => existingIds.has(item.id));
+  const updateStmt = db.prepare('UPDATE unit_images SET position = ? WHERE id = ? AND unit_id = ?');
+  const runUpdates = db.transaction(items => {
+    items.forEach(item => {
+      updateStmt.run(item.position, item.id, unitId);
+    });
+  });
+
+  runUpdates(updates);
+
+  const primaryRow = db
+    .prepare('SELECT id FROM unit_images WHERE unit_id = ? AND is_primary = 1 LIMIT 1')
+    .get(unitId);
+
+  res.json({ ok: true, message: 'Ordem atualizada.', primaryId: primaryRow ? primaryRow.id : null });
 });
 
 // ===================== Booking Management (Admin) =====================
