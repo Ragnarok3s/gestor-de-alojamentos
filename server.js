@@ -4,9 +4,16 @@ require('dayjs/locale/pt');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
+const fsp = fs.promises;
 const https = require('https');
 const multer = require('multer');
 const ExcelJS = require('exceljs');
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (err) {
+  console.warn('Dependência opcional "sharp" não encontrada; as imagens não serão comprimidas automaticamente até ser instalada.');
+}
 dayjs.extend(minMax);
 dayjs.locale('pt');
 const express = require('express');
@@ -126,6 +133,33 @@ CREATE TABLE IF NOT EXISTS automation_state (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS session_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
+  meta_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS booking_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 db.exec(schema);
 
@@ -145,6 +179,7 @@ try {
   ensureColumn('bookings', 'external_ref', 'TEXT');
   ensureColumn('bookings', 'updated_at', 'TEXT');
   ensureColumn('blocks', 'updated_at', 'TEXT');
+  ensureColumn('unit_images', 'is_primary', 'INTEGER NOT NULL DEFAULT 0');
 } catch (_) {}
 
 const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
@@ -156,6 +191,110 @@ if (!hasBookingsUpdatedAt) {
 }
 if (!hasBlocksUpdatedAt) {
   console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
+}
+
+const MASTER_ROLE = 'dev';
+
+const ROLE_LABELS = {
+  [MASTER_ROLE]: 'Desenvolvedor',
+  rececao: 'Receção',
+  gestao: 'Gestão',
+  direcao: 'Direção'
+};
+
+const ROLE_PERMISSIONS = {
+  rececao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'automation.view'
+  ]),
+  gestao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'calendar.block.manage',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'properties.manage',
+    'rates.manage',
+    'gallery.manage',
+    'automation.view',
+    'automation.export',
+    'audit.view'
+  ]),
+  direcao: new Set([
+    'dashboard.view',
+    'calendar.view',
+    'calendar.reschedule',
+    'calendar.cancel',
+    'calendar.block.create',
+    'calendar.block.delete',
+    'calendar.block.manage',
+    'bookings.view',
+    'bookings.create',
+    'bookings.edit',
+    'bookings.cancel',
+    'bookings.notes',
+    'bookings.export',
+    'properties.manage',
+    'rates.manage',
+    'gallery.manage',
+    'automation.view',
+    'automation.export',
+    'audit.view',
+    'users.manage',
+    'logs.view'
+  ])
+};
+
+const ALL_PERMISSIONS = new Set();
+Object.values(ROLE_PERMISSIONS).forEach(set => {
+  if (set && set.forEach) set.forEach(perm => ALL_PERMISSIONS.add(perm));
+});
+ROLE_PERMISSIONS[MASTER_ROLE] = new Set(ALL_PERMISSIONS);
+
+function normalizeRole(role) {
+  const key = String(role || '').toLowerCase();
+  if (key === MASTER_ROLE || key === 'developer' || key === 'devmaster') return MASTER_ROLE;
+  if (key === 'admin' || key === 'direcao' || key === 'direção') return 'direcao';
+  if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
+  if (key === 'limpezas' || key === 'rececao' || key === 'receção' || key === 'recepcao' || key === 'recepção') return 'rececao';
+  return 'rececao';
+}
+
+function buildUserContext(sessRow) {
+  const role = normalizeRole(sessRow.role);
+  const permissions = new Set(ROLE_PERMISSIONS[role] || []);
+  return {
+    id: sessRow.user_id,
+    username: sessRow.username,
+    role,
+    role_label: ROLE_LABELS[role] || role,
+    permissions
+  };
+}
+
+function userCan(user, permission) {
+  if (!user) return false;
+  if (user.role === MASTER_ROLE) return true;
+  return !!(user.permissions && user.permissions.has(permission));
 }
 
 const rescheduleBookingUpdateStmt = db.prepare(
@@ -188,6 +327,26 @@ const adminBookingUpdateStmt = db.prepare(
   ).trim()
 );
 
+function logSessionEvent(userId, action, req) {
+  try {
+    db.prepare(
+      'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
+    ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
+  } catch (err) {
+    console.error('Erro ao registar sessão', err.message);
+  }
+}
+
+function logActivity(actorId, action, entityType, entityId, meta) {
+  try {
+    db.prepare(
+      'INSERT INTO activity_logs(user_id, action, entity_type, entity_id, meta_json) VALUES (?,?,?,?,?)'
+    ).run(actorId || null, action, entityType || null, entityId || null, meta ? JSON.stringify(meta) : null);
+  } catch (err) {
+    console.error('Erro ao registar atividade', err.message);
+  }
+}
+
 function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
   try {
     db.prepare(
@@ -200,6 +359,10 @@ function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
       afterObj ? JSON.stringify(afterObj) : null,
       actorId
     );
+    logActivity(actorId, `change:${entityType}:${action}`, entityType, entityId, {
+      before: beforeObj || null,
+      after: afterObj || null
+    });
   } catch (err) {
     console.error('Erro ao registar auditoria', err.message);
   }
@@ -238,6 +401,22 @@ const selectAutomationBookingOverlapStmt = db.prepare(
 );
 const selectAutomationCancellationsStmt = db.prepare(
   "SELECT id, entity_id, before_json, created_at FROM change_logs WHERE entity_type = 'booking' AND action = 'cancel' ORDER BY id DESC LIMIT 12"
+);
+const selectOperationalUnitsStmt = db.prepare(
+  `SELECT u.id, u.name, u.capacity, u.base_price_cents, u.features, u.property_id, p.name AS property_name
+     FROM units u
+     JOIN properties p ON p.id = u.property_id
+    ORDER BY p.name, u.name`
+);
+const selectOperationalBookingsStmt = db.prepare(
+  `SELECT b.id, b.unit_id, b.checkin, b.checkout, b.total_cents, b.status,
+          u.name AS unit_name, u.capacity, u.features, u.property_id, p.name AS property_name
+     FROM bookings b
+     JOIN units u ON u.id = b.unit_id
+     JOIN properties p ON p.id = u.property_id
+    WHERE b.status = 'CONFIRMED'
+      AND b.checkout > ?
+      AND b.checkin < ?`
 );
 
 function readAutomationState(key) {
@@ -696,6 +875,145 @@ function ensureAutomationFresh(maxAgeMinutes = 10) {
   return automationCache;
 }
 
+function parseOperationalFilters(input = {}) {
+  const filters = {};
+  const monthRaw = input.month ?? input.month_value;
+  if (typeof monthRaw === 'string' && /^\d{4}-\d{2}$/.test(monthRaw.trim())) {
+    filters.month = monthRaw.trim();
+  }
+  const propertyRaw = input.propertyId ?? input.property_id;
+  if (propertyRaw !== undefined && propertyRaw !== null && String(propertyRaw).trim() !== '') {
+    const parsed = Number(propertyRaw);
+    if (!Number.isNaN(parsed) && parsed > 0) filters.propertyId = parsed;
+  }
+  const typeRaw = input.unitType ?? input.unit_type;
+  if (typeof typeRaw === 'string' && typeRaw.trim()) {
+    filters.unitType = typeRaw.trim();
+  }
+  return filters;
+}
+
+function computeOperationalDashboard(rawFilters = {}) {
+  const filters = parseOperationalFilters(rawFilters);
+  const todayMonth = dayjs().format('YYYY-MM');
+  const monthValue = filters.month || todayMonth;
+  let monthStart = dayjs(`${monthValue}-01`);
+  if (!monthStart.isValid()) {
+    monthStart = dayjs().startOf('month');
+  }
+  const rangeStart = monthStart.startOf('month');
+  const rangeEnd = rangeStart.add(1, 'month');
+  const rangeNights = Math.max(1, rangeEnd.diff(rangeStart, 'day'));
+  const propertyId = filters.propertyId || null;
+  const unitTypeFilter = filters.unitType || null;
+
+  const unitsRaw = selectOperationalUnitsStmt.all();
+  const units = unitsRaw.map(u => ({ ...u, unit_type: deriveUnitType(u) }));
+  const filteredUnits = units.filter(u => {
+    if (propertyId && u.property_id !== propertyId) return false;
+    if (unitTypeFilter && u.unit_type !== unitTypeFilter) return false;
+    return true;
+  });
+
+  const summary = {
+    occupancyRate: 0,
+    revenueCents: 0,
+    averageNights: 0,
+    bookingsCount: 0,
+    occupiedNights: 0,
+    availableNights: filteredUnits.length * rangeNights,
+    totalUnits: filteredUnits.length
+  };
+
+  const response = {
+    month: rangeStart.format('YYYY-MM'),
+    monthLabel: capitalizeMonth(rangeStart.format('MMMM YYYY')),
+    range: {
+      start: rangeStart.format('YYYY-MM-DD'),
+      end: rangeEnd.format('YYYY-MM-DD'),
+      nights: rangeNights
+    },
+    summary,
+    topUnits: [],
+    filters: {
+      propertyId,
+      propertyLabel: null,
+      unitType: unitTypeFilter || null,
+      unitTypeLabel: unitTypeFilter || null
+    }
+  };
+
+  if (!filteredUnits.length) {
+    if (propertyId) {
+      const propertyUnit = units.find(u => u.property_id === propertyId);
+      if (propertyUnit) response.filters.propertyLabel = propertyUnit.property_name;
+    }
+    return response;
+  }
+
+  response.filters.propertyLabel = propertyId ? filteredUnits[0].property_name || null : null;
+
+  const unitIds = new Set(filteredUnits.map(u => u.id));
+  const statsByUnit = new Map(filteredUnits.map(u => [u.id, { unit: u, occupiedNights: 0, revenueCents: 0, bookings: 0 }]));
+  const bookings = selectOperationalBookingsStmt.all(rangeStart.format('YYYY-MM-DD'), rangeEnd.format('YYYY-MM-DD'));
+
+  let occupiedNightsTotal = 0;
+  let revenueCentsTotal = 0;
+  let nightsAccumulator = 0;
+  let bookingsCount = 0;
+
+  bookings.forEach(b => {
+    if (!unitIds.has(b.unit_id)) return;
+    const checkin = dayjs(b.checkin);
+    const checkout = dayjs(b.checkout);
+    const overlapStart = dayjs.max(checkin, rangeStart);
+    const overlapEnd = dayjs.min(checkout, rangeEnd);
+    const overlapNights = Math.max(0, overlapEnd.diff(overlapStart, 'day'));
+    if (overlapNights <= 0) return;
+    const totalNights = Math.max(1, checkout.diff(checkin, 'day'));
+    const revenueShare = Math.round((b.total_cents * overlapNights) / totalNights);
+
+    occupiedNightsTotal += overlapNights;
+    revenueCentsTotal += revenueShare;
+    nightsAccumulator += overlapNights;
+    bookingsCount += 1;
+
+    const stat = statsByUnit.get(b.unit_id);
+    if (stat) {
+      stat.occupiedNights += overlapNights;
+      stat.revenueCents += revenueShare;
+      stat.bookings += 1;
+    }
+  });
+
+  summary.occupiedNights = occupiedNightsTotal;
+  summary.revenueCents = revenueCentsTotal;
+  summary.bookingsCount = bookingsCount;
+  summary.averageNights = bookingsCount ? nightsAccumulator / bookingsCount : 0;
+  summary.occupancyRate = summary.availableNights > 0 ? occupiedNightsTotal / summary.availableNights : 0;
+
+  const sortedUnits = Array.from(statsByUnit.values())
+    .map(stat => ({
+      id: stat.unit.id,
+      unitName: stat.unit.name,
+      propertyName: stat.unit.property_name,
+      unitType: stat.unit.unit_type,
+      occupancyRate: rangeNights > 0 ? stat.occupiedNights / rangeNights : 0,
+      occupiedNights: stat.occupiedNights,
+      revenueCents: stat.revenueCents,
+      bookingsCount: stat.bookings
+    }))
+    .sort((a, b) => {
+      if (b.occupancyRate !== a.occupancyRate) return b.occupancyRate - a.occupancyRate;
+      if (b.bookingsCount !== a.bookingsCount) return b.bookingsCount - a.bookingsCount;
+      if (b.revenueCents !== a.revenueCents) return b.revenueCents - a.revenueCents;
+      return a.unitName.localeCompare(b.unitName, 'pt', { sensitivity: 'base' });
+    });
+
+  response.topUnits = sortedUnits.slice(0, 5);
+  return response;
+}
+
 try {
   runAutomationSweep('startup');
 } catch (err) {
@@ -736,8 +1054,15 @@ try {
 const usersCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'admin');
+  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
   console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
+}
+
+const masterUser = db.prepare('SELECT id FROM users WHERE username = ?').get('dev');
+if (!masterUser) {
+  const devHash = bcrypt.hashSync('dev123', 10);
+  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('dev', devHash, MASTER_ROLE);
+  console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
 }
 
 // ===================== Uploads =====================
@@ -770,10 +1095,44 @@ const upload = multer({
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
 
+async function compressImage(filePath) {
+  if (!sharp) return;
+  try {
+    const metadata = await sharp(filePath).metadata();
+    let pipeline = sharp(filePath)
+      .rotate()
+      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true });
+    if (metadata.format === 'png') {
+      pipeline = pipeline.png({ compressionLevel: 9, adaptiveFiltering: true, palette: true });
+    } else if (metadata.format === 'webp') {
+      pipeline = pipeline.webp({ quality: 80, effort: 4 });
+    } else {
+      pipeline = pipeline.jpeg({ quality: 82, mozjpeg: true, chromaSubsampling: '4:4:4' });
+    }
+    const buffer = await pipeline.toBuffer();
+    await fsp.writeFile(filePath, buffer);
+  } catch (err) {
+    console.warn('Compressão de imagem falhou para', filePath, '-', err.message);
+  }
+}
+
 // ===================== Utils =====================
 const html = String.raw;
 const eur = (c) => (c / 100).toFixed(2);
 const capitalizeMonth = (str) => str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+const slugify = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+function wantsJson(req) {
+  const accept = String(req.headers.accept || '').toLowerCase();
+  if ((req.headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest') return true;
+  return accept.includes('application/json') || accept === '*/*';
+}
 const esc = (str = '') => String(str)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -811,6 +1170,17 @@ function renderAuditDiff(beforeJson, afterJson) {
   return `<table class="w-full text-xs border-separate border-spacing-y-1">${rows}</table>`;
 }
 
+function formatJsonSnippet(json) {
+  if (!json) return '<span class="text-slate-400">—</span>';
+  try {
+    const parsed = JSON.parse(json);
+    const pretty = JSON.stringify(parsed, null, 2);
+    return `<pre class="text-xs whitespace-pre-wrap bg-slate-900/5 rounded p-2">${esc(pretty)}</pre>`;
+  } catch (_) {
+    return `<code class="text-xs">${esc(json)}</code>`;
+  }
+}
+
 const FEATURE_ICONS = {
   bed: 'Camas',
   kitchen: 'Kitchenette',
@@ -823,6 +1193,25 @@ const FEATURE_ICONS = {
   sun: 'Terraço'
 }
 const FEATURE_ICON_KEYS = Object.keys(FEATURE_ICONS);
+
+const UNIT_TYPE_ICON_HINTS = new Set([
+  'apartment',
+  'building',
+  'cabin',
+  'castle',
+  'condo',
+  'home',
+  'hotel',
+  'house',
+  'hut',
+  'key',
+  'loft',
+  'room',
+  'suite',
+  'tent',
+  'villa'
+]);
+const UNIT_TYPE_LABEL_REGEX = /(suite|suíte|apart|apartamento|quarto|room|t\d|studio|estúdio|villa|casa|loft|bungal|cabana|chalet|dúplex|duplex|penthouse|family|familiar)/i;
 
 function parseFeaturesInput(raw) {
   if (!raw) return [];
@@ -914,6 +1303,38 @@ function featureChipsHtml(features, opts = {}) {
   return `<div class="${className}">${parts.join("")}</div>`;
 }
 
+function titleizeWords(str) {
+  const raw = String(str || '').trim();
+  if (!raw) return raw;
+  return raw.replace(/\b([\p{L}])([\p{L}]*)/gu, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+}
+
+function deriveUnitType(unit = {}) {
+  const features = parseFeaturesStored(unit.features);
+  for (const feat of features) {
+    const icon = feat && feat.icon ? String(feat.icon).toLowerCase() : '';
+    const label = feat && feat.label ? String(feat.label).trim() : '';
+    if (icon && UNIT_TYPE_ICON_HINTS.has(icon)) {
+      if (label) return titleizeWords(label);
+      const fallback = FEATURE_ICONS[icon] || icon.replace(/[-_]/g, ' ');
+      return titleizeWords(fallback);
+    }
+    if (label && UNIT_TYPE_LABEL_REGEX.test(label)) {
+      return titleizeWords(label);
+    }
+  }
+
+  const unitName = unit && unit.name ? String(unit.name) : '';
+  const nameMatch = unitName.match(UNIT_TYPE_LABEL_REGEX);
+  if (nameMatch) return titleizeWords(nameMatch[0]);
+
+  const capacity = Number(unit && unit.capacity) || 0;
+  if (capacity <= 2) return 'Estúdio / Casal';
+  if (capacity <= 4) return 'Familiar';
+  if (capacity <= 6) return 'Grupo médio';
+  return 'Grupo grande';
+}
+
 const formatMonthYear = (dateLike) => capitalizeMonth(dayjs(dateLike).format('MMMM YYYY'));
 
 function dateRangeNights(ci, co) {
@@ -940,15 +1361,48 @@ function destroySession(token){ if (token) db.prepare('DELETE FROM sessions WHER
 function requireLogin(req,res,next){
   const sess = getSession(req.cookies.adm);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
-  req.user = { id: sess.user_id, username: sess.username, role: sess.role };
+  req.user = buildUserContext(sess);
   next();
 }
 function requireAdmin(req,res,next){
   const sess = getSession(req.cookies.adm);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
-  if (sess.role !== 'admin') return res.status(403).send('Sem permissão');
-  req.user = { id: sess.user_id, username: sess.username, role: sess.role };
+  const user = buildUserContext(sess);
+  req.user = user;
+  if (!userCan(user, 'users.manage')) {
+    return res.status(403).send('Sem permissão');
+  }
   next();
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    if (!req.user) {
+      const sess = getSession(req.cookies.adm);
+      if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+      req.user = buildUserContext(sess);
+    }
+    if (!userCan(req.user, permission)) {
+      if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+      return res.status(403).send('Sem permissão');
+    }
+    next();
+  };
+}
+
+function requireAnyPermission(permissions = []) {
+  return (req, res, next) => {
+    if (!req.user) {
+      const sess = getSession(req.cookies.adm);
+      if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+      req.user = buildUserContext(sess);
+    }
+    if (!permissions.some(perm => userCan(req.user, perm))) {
+      if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+      return res.status(403).send('Sem permissão');
+    }
+    next();
+  };
 }
 
 // Disponibilidade / Pricing
@@ -988,8 +1442,9 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 // ===================== Layout =====================
 function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
   const hasUser = !!user;
-  const isManager = !!(user && (user.role === 'admin' || user.role === 'gestor'));
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
+  const can = (perm) => userCan(user, perm);
+  const userPermissions = user ? Array.from(user.permissions || []) : [];
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -1090,6 +1545,29 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
         @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
+        .gallery-flash{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;font-size:.85rem;font-weight:500;background:#f1f5f9;color:#1e293b;box-shadow:0 6px 18px rgba(15,23,42,.08);}
+        .gallery-flash[data-variant="success"]{background:#ecfdf5;color:#047857;}
+        .gallery-flash[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
+        .gallery-flash[data-variant="danger"]{background:#fee2e2;color:#b91c1c;}
+        .gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));grid-auto-rows:140px;gap:14px;}
+        .gallery-tile{position:relative;overflow:hidden;border-radius:18px;background:#0f172a;color:#fff;cursor:grab;min-height:100%;box-shadow:0 10px 24px rgba(15,23,42,.16);transition:transform .18s ease,box-shadow .18s ease;}
+        .gallery-tile:hover{transform:translateY(-2px);box-shadow:0 18px 36px rgba(15,23,42,.22);}
+        .gallery-tile.dragging{opacity:.55;cursor:grabbing;box-shadow:0 20px 40px rgba(15,23,42,.28);}
+        .gallery-tile:nth-child(7n+1){grid-column:span 2;grid-row:span 2;}
+        .gallery-tile:nth-child(5n+3){grid-column:span 2;}
+        .gallery-tile:nth-child(9n+5){grid-row:span 2;}
+        .gallery-tile__img{width:100%;height:100%;object-fit:cover;display:block;}
+        .gallery-tile__badge{position:absolute;top:12px;left:12px;padding:6px 12px;border-radius:999px;background:rgba(15,23,42,.82);font-size:.7rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;opacity:0;transition:opacity .18s ease;}
+        .gallery-tile.is-primary .gallery-tile__badge{opacity:1;}
+        .gallery-tile__overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:16px;background:linear-gradient(180deg,rgba(15,23,42,.05) 0%,rgba(15,23,42,.65) 55%,rgba(15,23,42,.9) 100%);opacity:0;transition:opacity .18s ease;}
+        .gallery-tile:focus .gallery-tile__overlay,.gallery-tile:hover .gallery-tile__overlay{opacity:1;}
+        .gallery-tile__hint{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,240,.85);margin-bottom:6px;}
+        .gallery-tile__meta{font-size:.75rem;color:rgba(226,232,240,.75);margin-bottom:10px;}
+        .gallery-tile__actions{display:flex;flex-wrap:wrap;gap:8px;}
+        .gallery-tile__actions .btn{flex:1 1 auto;justify-content:center;padding:.45rem .6rem;font-size:.8rem;}
+        .gallery-empty{padding:18px;border-radius:14px;background:#f1f5f9;color:#475569;text-align:center;font-size:.9rem;}
+        @media (max-width:900px){.gallery-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));grid-auto-rows:120px;}}
+        @media (pointer:coarse){.gallery-tile__overlay{opacity:1;}.gallery-tile{cursor:default;}}
         .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
         .gallery-overlay.show{opacity:1;pointer-events:auto;}
         .gallery-overlay .gallery-inner{position:relative;width:100%;max-width:min(960px,90vw);}
@@ -1113,6 +1591,8 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       </style>
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
+        const USER_PERMISSIONS = new Set(${JSON.stringify(userPermissions)});
+        function userCanClient(perm){ return USER_PERMISSIONS.has(perm); }
         function refreshIcons(){
           if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
@@ -1400,15 +1880,16 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
-              ${isManager ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
-              ${isManager ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
-              ${isManager ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
-              ${isManager ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
-              ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
+              ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
+              ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
+              ${can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
               ${user
-                ? `<form method="post" action="/logout" class="logout-form">
+                ? `<div class="pill-indicator">${esc(user.username)} · ${esc(user.role_label)}</div>
+                   <form method="post" action="/logout" class="logout-form">
                      <button type="submit">Log-out</button>
                    </form>`
                 : `<a class="login-link" href="/login">Login</a>`}
@@ -1447,18 +1928,37 @@ app.post('/login', (req,res)=>{
   const { username, password, next: nxt } = req.body;
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!u || !bcrypt.compareSync(String(password), u.password_hash)) return res.redirect('/login?error=Credenciais inválidas');
+  const normalizedRole = normalizeRole(u.role);
+  if (normalizedRole !== u.role) {
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(normalizedRole, u.id);
+    u.role = normalizedRole;
+  }
   const token = createSession(u.id);
   const secure = !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
   res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
+  logSessionEvent(u.id, 'login', req);
+  logActivity(u.id, 'auth:login', null, null, {});
   res.redirect(nxt || '/admin');
 });
-app.post('/logout', (req,res)=>{ destroySession(req.cookies.adm); res.clearCookie('adm'); res.redirect('/'); });
+app.post('/logout', (req,res)=>{
+  const sess = getSession(req.cookies.adm);
+  if (sess) {
+    logSessionEvent(sess.user_id, 'logout', req);
+    logActivity(sess.user_id, 'auth:logout', null, null, {});
+  }
+  destroySession(req.cookies.adm);
+  res.clearCookie('adm');
+  res.redirect('/');
+});
 
 // ===================== Front Office =====================
 app.get('/', (req, res) => {
   const sess = getSession(req.cookies.adm);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
   const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+
   res.send(layout({
     title: 'Reservas',
     user,
@@ -1526,7 +2026,9 @@ app.get('/search', (req, res) => {
      ORDER BY p.name, u.name`
   ).all(property_id || null, property_id || null, Number(totalGuests));
 
-  const imageStmt = db.prepare('SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY position, id LIMIT 4');
+  const imageStmt = db.prepare(
+    'SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 4'
+  );
 
   const available = units
     .filter(u => unitAvailable(u.id, checkin, checkout))
@@ -1826,7 +2328,7 @@ app.get('/booking/:id', (req, res) => {
 });
 
 // ===================== Calendário (privado) =====================
-app.get('/calendar', requireLogin, (req, res) => {
+app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym; // YYYY-MM
   const base = ym ? dayjs(ym + '-01') : dayjs().startOf('month');
   const month = base.startOf('month');
@@ -1838,6 +2340,7 @@ app.get('/calendar', requireLogin, (req, res) => {
     'FROM units u JOIN properties p ON p.id = u.property_id ' +
     'ORDER BY p.name, u.name'
   ).all();
+  const canExportCalendar = userCan(req.user, 'bookings.export');
 
   res.send(layout({
     title: 'Mapa de Reservas',
@@ -1856,7 +2359,7 @@ app.get('/calendar', requireLogin, (req, res) => {
         <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
         <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
         <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
-        <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
+        ${canExportCalendar ? `<a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>` : ''}
       </div>
       <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
         ${units.map(u => unitCalendarCard(u, month)).join('')}
@@ -1876,6 +2379,12 @@ app.get('/calendar', requireLogin, (req, res) => {
           let dragCtx = null;
           let selectionCtx = null;
           let toastTimer = null;
+          const CAN_RESCHEDULE = userCanClient('calendar.reschedule');
+          const CAN_CANCEL_CALENDAR = userCanClient('calendar.cancel');
+          const CAN_CREATE_BLOCK = userCanClient('calendar.block.create');
+          const CAN_DELETE_BLOCK = userCanClient('calendar.block.delete');
+          const CAN_MANAGE_BLOCK = userCanClient('calendar.block.manage');
+          const CAN_VIEW_BOOKING = userCanClient('bookings.view');
 
           function isPrimaryPointer(e) {
             if (e.pointerType === 'mouse') {
@@ -2163,13 +2672,29 @@ app.get('/calendar', requireLogin, (req, res) => {
               if (label) {
                 html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
               }
+              const noteCount = Number(cell.getAttribute('data-entry-note-count') || '0');
+              const notePreview = cell.getAttribute('data-entry-note-preview') || '';
+              const noteMeta = cell.getAttribute('data-entry-note-meta') || '';
+              if (noteCount > 0 && notePreview) {
+                html += '<div class="text-xs text-slate-200 bg-slate-900/30 rounded-lg p-2 leading-relaxed">';
+                html += '<div class="font-semibold">Última nota (' + escapeHtml(noteMeta || noteCount + (noteCount === 1 ? ' nota' : ' notas')) + ')</div>';
+                html += '<div class="text-slate-100 whitespace-pre-line mt-1">' + escapeHtml(notePreview) + (notePreview.length >= 180 ? '…' : '') + '</div>';
+                if (noteCount > 1) {
+                  html += '<div class="mt-1 text-slate-400">' + noteCount + ' notas no total.</div>';
+                }
+                html += '</div>';
+              }
               html += '<div class="calendar-action__buttons">';
-              if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
-              html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              if (url && CAN_VIEW_BOOKING) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
+              if (CAN_CANCEL_CALENDAR) {
+                html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
+              }
               html += '</div>';
               html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
               if (status !== 'CONFIRMED') {
                 html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
+              } else if (!CAN_RESCHEDULE) {
+                html += '<p class="text-xs text-amber-200">Não tem permissões para reagendar arrastando.</p>';
               } else {
                 html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
               }
@@ -2181,9 +2706,15 @@ app.get('/calendar', requireLogin, (req, res) => {
               }
               html += '<div class="calendar-action__buttons">';
               html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
-              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              if (CAN_DELETE_BLOCK) {
+                html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+              }
               html += '</div>';
-              html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
+              if (CAN_MANAGE_BLOCK) {
+                html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
+              } else {
+                html += '<p class="text-xs text-amber-200">Não tem permissões para mover este bloqueio.</p>';
+              }
             }
             html += '</div>';
             showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
@@ -2206,12 +2737,17 @@ app.get('/calendar', requireLogin, (req, res) => {
             html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
             html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
             html += '<div class="calendar-action__buttons">';
-            html += '<button class="btn btn-primary" data-action="block-range"' + (ctx.conflict ? ' disabled' : '') + '>Bloquear estas datas</button>';
+            const disableBlock = ctx.conflict || !CAN_CREATE_BLOCK;
+            html += '<button class="btn btn-primary" data-action="block-range"' + (disableBlock ? ' disabled' : '') + '>Bloquear estas datas</button>';
             html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
             html += '</div>';
-            html += ctx.conflict
-              ? '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>'
-              : '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            if (ctx.conflict) {
+              html += '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>';
+            } else if (!CAN_CREATE_BLOCK) {
+              html += '<p class="text-xs text-amber-200">Não tem permissões para criar bloqueios.</p>';
+            } else {
+              html += '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            }
             html += '</div>';
             showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
             actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
@@ -2227,11 +2763,14 @@ app.get('/calendar', requireLogin, (req, res) => {
             if (entryId) {
               const entryKind = cell.getAttribute('data-entry-kind');
               const status = cell.getAttribute('data-entry-status') || '';
+              const reschedPermission = entryKind === 'BOOKING'
+                ? (CAN_RESCHEDULE && status === 'CONFIRMED')
+                : CAN_MANAGE_BLOCK;
               dragCtx = {
                 entryId: entryId,
                 entryKind: entryKind,
                 status: status,
-                canReschedule: entryKind !== 'BOOKING' || status === 'CONFIRMED',
+                canReschedule: reschedPermission,
                 unitId: cell.getAttribute('data-unit'),
                 originStart: cell.getAttribute('data-entry-start'),
                 originEnd: cell.getAttribute('data-entry-end'),
@@ -2242,6 +2781,7 @@ app.get('/calendar', requireLogin, (req, res) => {
                 conflict: false
               };
             } else {
+              if (!CAN_CREATE_BLOCK) return;
               selectionCtx = {
                 unitId: cell.getAttribute('data-unit'),
                 startDate: cell.getAttribute('data-date'),
@@ -2346,16 +2886,19 @@ app.get('/calendar', requireLogin, (req, res) => {
             if (!target || !actionCtx) return;
             const action = target.getAttribute('data-action');
             if (action === 'block-range' && actionCtx.type === 'selection') {
+              if (!CAN_CREATE_BLOCK) return;
               e.preventDefault();
               hideAction();
               submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
             }
             if (action === 'delete-block' && actionCtx.type === 'entry') {
+              if (!CAN_DELETE_BLOCK) return;
               e.preventDefault();
               hideAction();
               submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
             }
             if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
+              if (!CAN_CANCEL_CALENDAR) return;
               e.preventDefault();
               const proceed = window.confirm('Cancelar esta reserva?');
               if (!proceed) return;
@@ -2417,7 +2960,7 @@ app.get('/calendar', requireLogin, (req, res) => {
   }));
 });
 
-app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
+app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym;
   const month = (ym ? dayjs(ym + '-01') : dayjs().startOf('month')).startOf('month');
   const unit = db.prepare(`
@@ -2429,7 +2972,7 @@ app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
   res.send(unitCalendarCard(unit, month));
 });
 
-app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
+app.post('/calendar/booking/:id/reschedule', requireLogin, requirePermission('calendar.reschedule'), (req, res) => {
   const id = Number(req.params.id);
   const booking = db.prepare(`
     SELECT b.*, u.base_price_cents
@@ -2475,7 +3018,7 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
 });
 
-app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
+app.post('/calendar/booking/:id/cancel', requireLogin, requirePermission('calendar.cancel'), (req, res) => {
   const id = Number(req.params.id);
   const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
   if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
@@ -2492,7 +3035,7 @@ app.post('/calendar/booking/:id/cancel', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Reserva cancelada.', unit_id: booking.unit_id });
 });
 
-app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
+app.post('/calendar/block/:id/reschedule', requireLogin, requirePermission('calendar.block.manage'), (req, res) => {
   const id = Number(req.params.id);
   const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(id);
   if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
@@ -2530,7 +3073,7 @@ app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Bloqueio atualizado.', unit_id: block.unit_id });
 });
 
-app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
+app.post('/calendar/unit/:unitId/block', requireLogin, requirePermission('calendar.block.create'), (req, res) => {
   const unitId = Number(req.params.unitId);
   const unit = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
   if (!unit) return res.status(404).json({ ok: false, message: 'Unidade não encontrada.' });
@@ -2564,7 +3107,7 @@ app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
   res.json({ ok: true, message: 'Bloqueio criado.', unit_id: unitId });
 });
 
-app.delete('/calendar/block/:id', requireLogin, (req, res) => {
+app.delete('/calendar/block/:id', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
   const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(req.params.id);
   if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
   db.prepare('DELETE FROM blocks WHERE id = ?').run(block.id);
@@ -2578,7 +3121,7 @@ function unitCalendarCard(u, month) {
   const weekdayOfFirst = (monthStart.day() + 6) % 7;
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
-  const entries = db.prepare(
+  const rawEntries = db.prepare(
     `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
        FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
      UNION ALL
@@ -2590,6 +3133,53 @@ function unitCalendarCard(u, month) {
       ? 'Bloqueio de datas'
       : `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
   }));
+
+  const bookingIds = rawEntries.filter(row => row.kind === 'BOOKING').map(row => row.id);
+  const noteCounts = new Map();
+  const noteLatest = new Map();
+  if (bookingIds.length) {
+    const placeholders = bookingIds.map(() => '?').join(',');
+    const countsStmt = db.prepare(`SELECT booking_id, COUNT(*) AS c FROM booking_notes WHERE booking_id IN (${placeholders}) GROUP BY booking_id`);
+    countsStmt.all(...bookingIds).forEach(row => noteCounts.set(row.booking_id, row.c));
+    const latestStmt = db.prepare(`
+      SELECT bn.booking_id, bn.note, bn.created_at, u.username
+        FROM booking_notes bn
+        JOIN users u ON u.id = bn.user_id
+       WHERE bn.booking_id IN (${placeholders})
+       ORDER BY bn.booking_id, bn.created_at DESC
+    `);
+    latestStmt.all(...bookingIds).forEach(row => {
+      if (!noteLatest.has(row.booking_id)) {
+        noteLatest.set(row.booking_id, {
+          note: row.note,
+          username: row.username,
+          created_at: row.created_at
+        });
+      }
+    });
+  }
+
+  const entries = rawEntries.map(row => {
+    if (row.kind === 'BOOKING') {
+      const latest = noteLatest.get(row.id) || null;
+      const preview = latest && latest.note ? String(latest.note).slice(0, 180) : '';
+      const meta = latest ? `${latest.username} · ${dayjs(latest.created_at).format('DD/MM HH:mm')}` : '';
+      return {
+        ...row,
+        label: `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
+        note_count: noteCounts.get(row.id) || 0,
+        note_preview: preview,
+        note_meta: meta
+      };
+    }
+    return {
+      ...row,
+      label: 'Bloqueio de datas',
+      note_count: 0,
+      note_preview: '',
+      note_meta: ''
+    };
+  });
 
   const cells = [];
   for (let i = 0; i < totalCells; i++) {
@@ -2640,7 +3230,10 @@ function unitCalendarCard(u, month) {
           `data-entry-email="${esc(hit.guest_email || '')}"`,
           `data-entry-phone="${esc(hit.guest_phone || '')}"`,
           `data-entry-adults="${hit.adults || 0}"`,
-          `data-entry-children="${hit.children || 0}"`
+          `data-entry-children="${hit.children || 0}"`,
+          `data-entry-note-count="${hit.note_count || 0}"`,
+          `data-entry-note-preview="${esc(hit.note_preview || '')}"`,
+          `data-entry-note-meta="${esc(hit.note_meta || '')}"`
         );
       }
     }
@@ -2668,7 +3261,7 @@ function unitCalendarCard(u, month) {
 }
 
 // ===================== Export Excel (privado) =====================
-app.get('/admin/export', requireLogin, (req,res)=>{
+app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (req,res)=>{
   const ymDefault = dayjs().format('YYYY-MM');
   res.send(layout({
     title: 'Exportar Mapa (Excel)',
@@ -2694,7 +3287,7 @@ app.get('/admin/export', requireLogin, (req,res)=>{
 });
 
 // Excel estilo Gantt + tabela de detalhes
-app.get('/admin/export/download', requireLogin, async (req, res) => {
+app.get('/admin/export/download', requireLogin, requirePermission('bookings.export'), async (req, res) => {
   const ym = String(req.query.ym || '').trim();
   const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
   if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');
@@ -3013,6 +3606,7 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
       ? `mapa_${start.format('YYYY_MM')}.xlsx`
       : `mapa_${start.format('YYYY_MM')}_+${months - 1}m.xlsx`;
 
+  logActivity(req.user.id, 'export:calendar_excel', null, null, { ym, months });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   await wb.xlsx.write(res);
@@ -3020,14 +3614,15 @@ app.get('/admin/export/download', requireLogin, async (req, res) => {
 });
 
 // ===================== Backoffice (protegido) =====================
-app.get('/admin', requireLogin, (req, res) => {
+app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
   const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
-  const units = db.prepare(
+  const unitsRaw = db.prepare(
     `SELECT u.*, p.name as property_name
        FROM units u
        JOIN properties p ON p.id = u.property_id
       ORDER BY p.name, u.name`
   ).all();
+  const units = unitsRaw.map(u => ({ ...u, unit_type: deriveUnitType(u) }));
   const recentBookings = db.prepare(
     `SELECT b.*, u.name as unit_name, p.name as property_name
        FROM bookings b
@@ -3047,6 +3642,32 @@ app.get('/admin', requireLogin, (req, res) => {
   const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
   const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
   const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
+
+  const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, 'pt', { sensitivity: 'base' })
+  );
+  const monthOptions = [];
+  const monthBase = dayjs().startOf('month');
+  for (let i = 0; i < 12; i++) {
+    const m = monthBase.subtract(i, 'month');
+    monthOptions.push({ value: m.format('YYYY-MM'), label: capitalizeMonth(m.format('MMMM YYYY')) });
+  }
+  const defaultMonthValue = monthOptions.length ? monthOptions[0].value : dayjs().format('YYYY-MM');
+  const operationalDefault = computeOperationalDashboard({ month: defaultMonthValue });
+  const operationalConfig = {
+    filters: {
+      months: monthOptions,
+      properties: props.map(p => ({ id: p.id, name: p.name })),
+      unitTypes: unitTypeOptions
+    },
+    defaults: {
+      month: operationalDefault.month,
+      propertyId: operationalDefault.filters.propertyId ? String(operationalDefault.filters.propertyId) : '',
+      unitType: operationalDefault.filters.unitType || ''
+    },
+    initialData: operationalDefault
+  };
+  const operationalConfigJson = esc(JSON.stringify(operationalConfig));
 
   const notificationsHtml = automationNotifications.length
     ? `<ul class="space-y-3">${automationNotifications.map(n => {
@@ -3121,72 +3742,338 @@ app.get('/admin', requireLogin, (req, res) => {
     : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
 
   const automationCard = html`
-      <section class="card p-4 mb-6">
-        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <section class="card p-4 mb-6 space-y-6">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 class="text-lg font-semibold text-slate-800">Motor inteligente</h2>
-            <p class="text-sm text-slate-600">Bloqueios automáticos, alertas e insights de ocupação para agir rapidamente.</p>
+            <h2 class="text-lg font-semibold text-slate-800">Dashboard operacional</h2>
+            <p class="text-sm text-slate-600">Transforma os dados de ocupação em decisões imediatas.</p>
+            <div class="text-xs text-slate-400 mt-1">Última análise automática: ${automationLastRun}</div>
           </div>
-          <div class="grid grid-cols-2 gap-4 text-sm text-slate-600 md:text-right">
-            <div>
-              <div class="text-xs uppercase tracking-wide text-slate-400">Última execução</div>
-              <div class="font-semibold text-slate-900">${automationLastRun}</div>
-            </div>
-            <div>
-              <div class="text-xs uppercase tracking-wide text-slate-400">Check-ins 48h</div>
-              <div class="font-semibold text-slate-900">${automationMetrics.checkins48h || 0}</div>
-            </div>
-            <div>
-              <div class="text-xs uppercase tracking-wide text-slate-400">Receita próxima semana</div>
-              <div class="font-semibold text-slate-900">€ ${eur(automationRevenue7)}</div>
-            </div>
-            <div>
-              <div class="text-xs uppercase tracking-wide text-slate-400">Ocupação hoje</div>
-              <div class="font-semibold text-slate-900">${Math.round((automationMetrics.occupancyToday || 0) * 100)}%</div>
-            </div>
+          <form id="operational-filters" class="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
+            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
+              <span>Período</span>
+              <select name="month" id="operational-filter-month" class="input">
+                ${monthOptions.map(opt => `<option value="${opt.value}"${opt.value === operationalDefault.month ? ' selected' : ''}>${esc(opt.label)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
+              <span>Propriedade</span>
+              <select name="property_id" id="operational-filter-property" class="input">
+                <option value="">Todas</option>
+                ${props.map(p => {
+                  const selected = operationalDefault.filters.propertyId === p.id ? ' selected' : '';
+                  return `<option value="${p.id}"${selected}>${esc(p.name)}</option>`;
+                }).join('')}
+              </select>
+            </label>
+            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
+              <span>Tipo de unidade</span>
+              <select name="unit_type" id="operational-filter-type" class="input">
+                <option value="">Todos</option>
+                ${unitTypeOptions.map(type => {
+                  const selected = operationalDefault.filters.unitType === type ? ' selected' : '';
+                  return `<option value="${esc(type)}"${selected}>${esc(type)}</option>`;
+                }).join('')}
+              </select>
+            </label>
+          </form>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="operational-metrics">
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
+            <div class="text-xs uppercase tracking-wide text-slate-500">Ocupação atual</div>
+            <div class="text-2xl font-semibold text-slate-900" id="operational-occupancy">—</div>
+            <div class="text-xs text-slate-500">Noites ocupadas vs. disponíveis no período selecionado.</div>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
+            <div class="text-xs uppercase tracking-wide text-slate-500">Receita total</div>
+            <div class="text-2xl font-semibold text-slate-900" id="operational-revenue">—</div>
+            <div class="text-xs text-slate-500">Receita proporcional das reservas confirmadas.</div>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
+            <div class="text-xs uppercase tracking-wide text-slate-500">Média de noites</div>
+            <div class="text-2xl font-semibold text-slate-900" id="operational-average">—</div>
+            <div class="text-xs text-slate-500">Duração média das reservas incluídas.</div>
+          </div>
+          <div class="md:col-span-3 text-xs text-slate-500" id="operational-context">
+            <span id="operational-period-label">—</span>
+            <span id="operational-filters-label" class="ml-1"></span>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
-          <div>
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
-            ${notificationsHtml}
-          </div>
-          <div>
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
-            ${suggestionsHtml}
-          </div>
-          <div>
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
-            ${blockEventsHtml}
-          </div>
-        </div>
+        <div class="grid gap-6 lg:grid-cols-3">
+          <div class="lg:col-span-2 space-y-6">
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
+                <h3 class="font-semibold text-slate-800">Top unidades por ocupação</h3>
+                <a id="operational-export" class="btn btn-light border border-slate-200 text-sm" href="#" download>Exportar CSV</a>
+              </div>
+              <div id="top-units-wrapper" class="space-y-3">
+                <p class="text-sm text-slate-500" id="top-units-empty">Sem dados para os filtros atuais.</p>
+                <ol id="top-units-list" class="space-y-3 hidden"></ol>
+              </div>
+              <p class="text-xs text-slate-500 mt-3" id="operational-summary">—</p>
+            </section>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-          <div class="overflow-x-auto">
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo diário (7 dias)</h3>
-            <table class="w-full min-w-[420px] text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
-                </tr>
-              </thead>
-              <tbody>${dailyRows}</tbody>
-            </table>
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="font-semibold text-slate-800">Resumo diário (próximos 7 dias)</h3>
+                <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[420px] text-sm">
+                  <thead>
+                    <tr class="text-left text-slate-500">
+                      <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
+                    </tr>
+                  </thead>
+                  <tbody>${dailyRows}</tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="font-semibold text-slate-800">Resumo semanal</h3>
+                <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[320px] text-sm">
+                  <thead>
+                    <tr class="text-left text-slate-500">
+                      <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
+                    </tr>
+                  </thead>
+                  <tbody>${weeklyRows}</tbody>
+                </table>
+              </div>
+            </section>
           </div>
-          <div class="overflow-x-auto">
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Resumo semanal</h3>
-            <table class="w-full min-w-[320px] text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
-                </tr>
-              </thead>
-              <tbody>${weeklyRows}</tbody>
-            </table>
+
+          <div class="space-y-6">
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
+              ${notificationsHtml}
+            </section>
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
+              ${suggestionsHtml}
+            </section>
+            <section class="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
+              ${blockEventsHtml}
+            </section>
           </div>
         </div>
       </section>
+      <script type="application/json" id="operational-dashboard-data">${operationalConfigJson}</script>
+      <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          const configEl = document.getElementById('operational-dashboard-data');
+          if (!configEl) return;
+          let config;
+          try {
+            config = JSON.parse(configEl.textContent);
+          } catch (err) {
+            console.error('Dashboard operacional: configuração inválida', err);
+            return;
+          }
+          const form = document.getElementById('operational-filters');
+          if (form) form.addEventListener('submit', function (ev) { ev.preventDefault(); });
+          const monthSelect = document.getElementById('operational-filter-month');
+          const propertySelect = document.getElementById('operational-filter-property');
+          const typeSelect = document.getElementById('operational-filter-type');
+          const occupancyEl = document.getElementById('operational-occupancy');
+          const revenueEl = document.getElementById('operational-revenue');
+          const averageEl = document.getElementById('operational-average');
+          const periodLabelEl = document.getElementById('operational-period-label');
+          const filtersLabelEl = document.getElementById('operational-filters-label');
+          const summaryEl = document.getElementById('operational-summary');
+          const listEl = document.getElementById('top-units-list');
+          const emptyEl = document.getElementById('top-units-empty');
+          const wrapperEl = document.getElementById('top-units-wrapper');
+          const exportBtn = document.getElementById('operational-export');
+          const currencyFormatter = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' });
+          const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+          const nightsFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+          const dateFormatter = new Intl.DateTimeFormat('pt-PT', { day: '2-digit', month: '2-digit' });
+          let pendingController = null;
+
+          function escHtml(value) {
+            return String(value ?? '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#39;');
+          }
+
+          function slug(value) {
+            return String(value || '')
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^a-z0-9]+/gi, '-')
+              .replace(/^-+|-+$/g, '')
+              .toLowerCase();
+          }
+
+          function formatRange(range) {
+            if (!range || !range.start || !range.end) return '';
+            const startDate = new Date(range.start + 'T00:00:00');
+            const endDate = new Date(range.end + 'T00:00:00');
+            endDate.setDate(endDate.getDate() - 1);
+            return dateFormatter.format(startDate) + ' → ' + dateFormatter.format(endDate);
+          }
+
+          function describeFilters(data) {
+            if (!data || !data.filters) return '';
+            const labels = [];
+            if (data.filters.propertyLabel) labels.push(data.filters.propertyLabel);
+            if (data.filters.unitType) labels.push(data.filters.unitType);
+            return labels.join(' · ');
+          }
+
+          function renderTopUnits(units, totalNights) {
+            if (!Array.isArray(units) || !units.length) return '';
+            const nightsLabel = Math.max(1, Number(totalNights) || 0);
+            return units.map((unit, index) => {
+              const occPct = percentFormatter.format(unit.occupancyRate || 0);
+              const revenueLabel = currencyFormatter.format((unit.revenueCents || 0) / 100);
+              const bookingsText = unit.bookingsCount === 1 ? '1 reserva' : (unit.bookingsCount || 0) + ' reservas';
+              const nightsText = (unit.occupiedNights || 0) + ' / ' + nightsLabel + ' noites';
+              const typeLabel = unit.unitType ? ' · ' + unit.unitType : '';
+              return '<li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-slate-200 rounded-lg px-3 py-2">' +
+                '<div>' +
+                  '<div class="text-sm font-semibold text-slate-800">' + escHtml((index + 1) + '. ' + unit.propertyName + ' · ' + unit.unitName) + '</div>' +
+                  '<div class="text-xs text-slate-500">' + escHtml(bookingsText + ' · ' + nightsText + typeLabel) + '</div>' +
+                '</div>' +
+                '<div class="text-right space-y-1">' +
+                  '<div class="text-sm font-semibold text-slate-900">' + occPct + '</div>' +
+                  '<div class="text-xs text-slate-500">' + escHtml(revenueLabel) + '</div>' +
+                '</div>' +
+              '</li>';
+            }).join('');
+          }
+
+          function buildExportUrl(data) {
+            const params = new URLSearchParams();
+            const monthVal = data && data.month ? data.month : (monthSelect ? monthSelect.value : '');
+            if (monthVal) params.set('month', monthVal);
+            if (data && data.filters) {
+              if (data.filters.propertyId) params.set('property_id', data.filters.propertyId);
+              if (data.filters.unitType) params.set('unit_type', data.filters.unitType);
+            }
+            return '/admin/automation/export.csv?' + params.toString();
+          }
+
+          function buildExportFilename(data) {
+            const parts = ['dashboard', data.month || ''];
+            if (data.filters) {
+              if (data.filters.propertyLabel) {
+                parts.push('prop-' + slug(data.filters.propertyLabel));
+              } else if (data.filters.propertyId) {
+                parts.push('prop-' + data.filters.propertyId);
+              }
+              if (data.filters.unitType) {
+                parts.push('tipo-' + slug(data.filters.unitType));
+              }
+            }
+            return parts.filter(Boolean).join('_') + '.csv';
+          }
+
+          function setLoading(state) {
+            if (!wrapperEl) return;
+            wrapperEl.classList.toggle('opacity-50', state);
+          }
+
+          function applyData(data) {
+            if (!data) return;
+            setLoading(false);
+            const summary = data.summary || {};
+            if (summary.availableNights > 0) {
+              occupancyEl.textContent = percentFormatter.format(summary.occupancyRate || 0);
+            } else {
+              occupancyEl.textContent = '—';
+            }
+            revenueEl.textContent = currencyFormatter.format((summary.revenueCents || 0) / 100);
+            averageEl.textContent = summary.bookingsCount ? (nightsFormatter.format(summary.averageNights || 0) + ' noites') : '—';
+            periodLabelEl.textContent = data.monthLabel + ' · ' + formatRange(data.range);
+            const filtersDesc = describeFilters(data);
+            filtersLabelEl.textContent = filtersDesc ? 'Filtros: ' + filtersDesc : '';
+            const summaryParts = [];
+            const bookingsCount = summary.bookingsCount || 0;
+            summaryParts.push(bookingsCount === 1 ? '1 reserva confirmada' : bookingsCount + ' reservas confirmadas');
+            if (summary.availableNights > 0) {
+              summaryParts.push((summary.occupiedNights || 0) + '/' + summary.availableNights + ' noites ocupadas');
+            } else {
+              summaryParts.push('Sem unidades para o filtro selecionado');
+            }
+            if (filtersDesc) summaryParts.push(filtersDesc);
+            summaryEl.textContent = summaryParts.join(' · ');
+
+            const topUnitsHtml = renderTopUnits(data.topUnits || [], data.range ? data.range.nights : 0);
+            if (topUnitsHtml) {
+              listEl.innerHTML = topUnitsHtml;
+              listEl.classList.remove('hidden');
+              emptyEl.classList.add('hidden');
+            } else {
+              listEl.innerHTML = '';
+              listEl.classList.add('hidden');
+              emptyEl.classList.remove('hidden');
+            }
+
+            if (monthSelect && data.month) monthSelect.value = data.month;
+            if (propertySelect) propertySelect.value = data.filters && data.filters.propertyId ? String(data.filters.propertyId) : '';
+            if (typeSelect) typeSelect.value = data.filters && data.filters.unitType ? data.filters.unitType : '';
+
+            if (exportBtn) {
+              exportBtn.href = buildExportUrl(data);
+              exportBtn.setAttribute('download', buildExportFilename(data));
+            }
+          }
+
+          function requestData() {
+            if (!monthSelect) return;
+            const params = new URLSearchParams();
+            if (monthSelect.value) params.set('month', monthSelect.value);
+            if (propertySelect && propertySelect.value) params.set('property_id', propertySelect.value);
+            if (typeSelect && typeSelect.value) params.set('unit_type', typeSelect.value);
+            setLoading(true);
+            if (pendingController) pendingController.abort();
+            pendingController = new AbortController();
+            fetch('/admin/automation/operational.json?' + params.toString(), { signal: pendingController.signal })
+              .then(resp => {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.json();
+              })
+              .then(data => applyData(data))
+              .catch(err => {
+                if (err.name !== 'AbortError') {
+                  console.error('Dashboard operacional: falha ao carregar métricas', err);
+                  setLoading(false);
+                }
+              })
+              .finally(() => {
+                if (pendingController && pendingController.signal.aborted) return;
+                pendingController = null;
+              });
+          }
+
+          if (config && config.defaults) {
+            if (monthSelect && config.defaults.month) monthSelect.value = config.defaults.month;
+            if (propertySelect) propertySelect.value = config.defaults.propertyId || '';
+            if (typeSelect) typeSelect.value = config.defaults.unitType || '';
+          }
+          if (config && config.initialData) {
+            applyData(config.initialData);
+          }
+          [monthSelect, propertySelect, typeSelect].forEach(select => {
+            if (!select) return;
+            select.addEventListener('change', requestData);
+          });
+          configEl.textContent = '';
+        });
+      </script>
   `;
 
   res.send(layout({
@@ -3288,19 +4175,77 @@ kitchen|Kitchenette"></textarea>
   }));
 });
 
-app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
-  const data = ensureAutomationFresh(5) || automationCache;
-  const daily = (data.summaries && data.summaries.daily) || [];
-  const weekly = (data.summaries && data.summaries.weekly) || [];
+app.get('/admin/automation/operational.json', requireLogin, requirePermission('automation.view'), (req, res) => {
+  const data = computeOperationalDashboard(req.query || {});
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.send(JSON.stringify(data));
+});
+
+app.get('/admin/automation/export.csv', requireLogin, requirePermission('automation.export'), (req, res) => {
+  const filters = parseOperationalFilters(req.query || {});
+  const operational = computeOperationalDashboard(filters);
+  const automationData = ensureAutomationFresh(5) || automationCache;
+  const daily = (automationData.summaries && automationData.summaries.daily) || [];
+  const weekly = (automationData.summaries && automationData.summaries.weekly) || [];
 
   const rows = [];
   rows.push(['Secção', 'Referência', 'Valor']);
-  rows.push(['Execução', 'Última', data.lastRun ? dayjs(data.lastRun).format('YYYY-MM-DD HH:mm') : '-']);
-  rows.push(['Receita', 'Próximos 7 dias (€)', eur(data.revenue ? data.revenue.next7 || 0 : 0)]);
-  rows.push(['Receita', 'Próximos 30 dias (€)', eur(data.revenue ? data.revenue.next30 || 0 : 0)]);
-  rows.push(['Métrica', 'Check-ins 48h', (data.metrics && data.metrics.checkins48h) || 0]);
-  rows.push(['Métrica', 'Estadias longas', (data.metrics && data.metrics.longStays) || 0]);
-  rows.push(['Métrica', 'Ocupação hoje (%)', Math.round(((data.metrics && data.metrics.occupancyToday) || 0) * 100)]);
+  const rangeEnd = dayjs(operational.range.end).subtract(1, 'day');
+  const rangeLabel = `${operational.range.start} → ${rangeEnd.isValid() ? rangeEnd.format('YYYY-MM-DD') : operational.range.end}`;
+  rows.push(['Filtro', 'Período', `${operational.monthLabel} (${rangeLabel})`]);
+  if (operational.filters.propertyLabel) {
+    rows.push(['Filtro', 'Propriedade', operational.filters.propertyLabel]);
+  }
+  if (operational.filters.unitType) {
+    rows.push(['Filtro', 'Tipo de unidade', operational.filters.unitType]);
+  }
+  rows.push(['Métrica', 'Unidades analisadas', operational.summary.totalUnits]);
+  rows.push([
+    'Métrica',
+    'Ocupação período (%)',
+    Math.round((operational.summary.occupancyRate || 0) * 100)
+  ]);
+  rows.push(['Métrica', 'Reservas confirmadas', operational.summary.bookingsCount]);
+  rows.push([
+    'Métrica',
+    'Noites ocupadas',
+    operational.summary.availableNights
+      ? `${operational.summary.occupiedNights}/${operational.summary.availableNights}`
+      : 'Sem unidades'
+  ]);
+  rows.push([
+    'Métrica',
+    'Média noites/reserva',
+    operational.summary.bookingsCount ? operational.summary.averageNights.toFixed(2) : '0.00'
+  ]);
+  rows.push(['Financeiro', 'Receita período (€)', eur(operational.summary.revenueCents || 0)]);
+  if (operational.topUnits.length) {
+    operational.topUnits.forEach((unit, idx) => {
+      rows.push([
+        'Top unidades',
+        `${idx + 1}. ${unit.propertyName} · ${unit.unitName}`,
+        `${Math.round((unit.occupancyRate || 0) * 100)}% · ${unit.bookingsCount} reservas · € ${eur(unit.revenueCents || 0)}`
+      ]);
+    });
+  } else {
+    rows.push(['Top unidades', '—', 'Sem dados para os filtros selecionados.']);
+  }
+
+  rows.push(['', '', '']);
+  rows.push([
+    'Execução',
+    'Última automação',
+    automationData.lastRun ? dayjs(automationData.lastRun).format('YYYY-MM-DD HH:mm') : '-'
+  ]);
+  rows.push(['Receita', 'Próximos 7 dias (€)', eur(automationData.revenue ? automationData.revenue.next7 || 0 : 0)]);
+  rows.push(['Receita', 'Próximos 30 dias (€)', eur(automationData.revenue ? automationData.revenue.next30 || 0 : 0)]);
+  rows.push(['Métrica', 'Check-ins 48h', (automationData.metrics && automationData.metrics.checkins48h) || 0]);
+  rows.push(['Métrica', 'Estadias longas', (automationData.metrics && automationData.metrics.longStays) || 0]);
+  rows.push([
+    'Métrica',
+    'Ocupação hoje (%)',
+    Math.round(((automationData.metrics && automationData.metrics.occupancyToday) || 0) * 100)
+  ]);
 
   daily.forEach(d => {
     rows.push([
@@ -3323,18 +4268,34 @@ app.get('/admin/automation/export.csv', requireLogin, (req, res) => {
     .map(cols => cols.map(col => `"${String(col ?? '').replace(/"/g, '""')}"`).join(';'))
     .join('\n');
 
+  const filenameParts = [
+    'dashboard',
+    operational.month || dayjs().format('YYYY-MM')
+  ];
+  if (operational.filters.propertyLabel) {
+    filenameParts.push(`prop-${slugify(operational.filters.propertyLabel)}`);
+  } else if (operational.filters.propertyId) {
+    filenameParts.push(`prop-${operational.filters.propertyId}`);
+  }
+  if (operational.filters.unitType) {
+    filenameParts.push(`tipo-${slugify(operational.filters.unitType)}`);
+  }
+  const filenameBase = filenameParts.filter(Boolean).join('_') || 'dashboard';
+  const filename = `${filenameBase}.csv`;
+
+  logActivity(req.user.id, 'export:automation_csv', null, null, filters);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="resumo-automacao.csv"');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send('\ufeff' + csv);
 });
 
-app.post('/admin/properties/create', requireLogin, (req, res) => {
+app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const { name, location, description } = req.body;
   db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
   res.redirect('/admin');
 });
 
-app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
+app.post('/admin/properties/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const id = req.params.id;
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
   if (!property) return res.status(404).send('Propriedade não encontrada');
@@ -3342,7 +4303,7 @@ app.post('/admin/properties/:id/delete', requireLogin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.get('/admin/properties/:id', requireLogin, (req, res) => {
+app.get('/admin/properties/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Propriedade não encontrada');
 
@@ -3385,7 +4346,7 @@ app.get('/admin/properties/:id', requireLogin, (req, res) => {
   }));
 });
 
-app.post('/admin/units/create', requireLogin, (req, res) => {
+app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
@@ -3394,7 +4355,7 @@ app.post('/admin/units/create', requireLogin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.get('/admin/units/:id', requireLogin, (req, res) => {
+app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const u = db.prepare(
     `SELECT u.*, p.name as property_name
        FROM units u
@@ -3413,7 +4374,9 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
   const bookings = db.prepare('SELECT * FROM bookings WHERE unit_id = ? ORDER BY checkin').all(u.id);
   const blocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
   const rates = db.prepare('SELECT * FROM rates WHERE unit_id = ? ORDER BY start_date').all(u.id);
-  const images = db.prepare('SELECT * FROM unit_images WHERE unit_id = ? ORDER BY position, id').all(u.id);
+  const images = db.prepare(
+    'SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id'
+  ).all(u.id);
 
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
@@ -3551,25 +4514,213 @@ app.get('/admin/units/:id', requireLogin, (req, res) => {
           <form method="post" action="/admin/units/${u.id}/images" enctype="multipart/form-data" class="grid gap-2 bg-slate-50 p-3 rounded">
             <input type="hidden" name="unit_id" value="${u.id}"/>
             <input type="file" name="images" class="input" accept="image/*" multiple required />
+            <div class="text-xs text-slate-500">As imagens são comprimidas e redimensionadas automaticamente para otimizar o carregamento.</div>
             <button class="btn btn-primary">Carregar imagens</button>
           </form>
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-            ${images.map(img => `
-              <div class="relative border rounded overflow-hidden">
-                <img src="/uploads/units/${u.id}/${img.file}" alt="${esc(img.alt||'')}" class="w-full h-32 object-cover"/>
-                <form method="post" action="/admin/images/${img.id}/delete" onsubmit="return confirm('Remover imagem?');" class="absolute top-1 right-1">
-                  <button class="bg-rose-600 text-white text-xs px-2 py-1 rounded">X</button>
-                </form>
-              </div>
-            `).join('')}
+          <div class="mt-4 space-y-3" data-gallery-manager data-unit-id="${u.id}">
+            <div class="gallery-flash" data-gallery-flash hidden></div>
+            <div class="gallery-grid ${images.length ? '' : 'hidden'}" data-gallery-list>
+              ${images.map(img => `
+                <article class="gallery-tile${img.is_primary ? ' is-primary' : ''}" data-gallery-tile data-image-id="${img.id}" draggable="true" tabindex="0">
+                  <span class="gallery-tile__badge">Principal</span>
+                  <img src="/uploads/units/${u.id}/${encodeURIComponent(img.file)}" alt="${esc(img.alt||'')}" loading="lazy" class="gallery-tile__img"/>
+                  <div class="gallery-tile__overlay">
+                    <div class="gallery-tile__hint">Arraste para reordenar</div>
+                    <div class="gallery-tile__meta">
+                      <span>${dayjs(img.created_at).format('DD/MM/YYYY')}</span>
+                    </div>
+                    <div class="gallery-tile__actions">
+                      <button type="button" class="btn btn-light" data-gallery-action="primary" ${img.is_primary ? 'disabled' : ''}>${img.is_primary ? 'Em destaque' : 'Tornar destaque'}</button>
+                      <button type="button" class="btn btn-danger" data-gallery-action="delete">Remover</button>
+                    </div>
+                  </div>
+                </article>
+              `).join('')}
+            </div>
+            <div class="gallery-empty ${images.length ? 'hidden' : ''}" data-gallery-empty>
+              <p class="text-sm text-slate-500">Ainda não existem imagens carregadas para esta unidade.</p>
+            </div>
           </div>
         </section>
       </div>
+
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          const manager = document.querySelector('[data-gallery-manager]');
+          if (!manager) return;
+          const list = manager.querySelector('[data-gallery-list]');
+          const emptyState = manager.querySelector('[data-gallery-empty]');
+          const flash = manager.querySelector('[data-gallery-flash]');
+          const unitId = manager.getAttribute('data-unit-id');
+          let flashTimer = null;
+          let dragItem = null;
+          let lastOrderKey = list
+            ? JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId))
+            : '[]';
+
+          function showFlash(message, variant) {
+            if (!flash) return;
+            flash.textContent = message;
+            flash.setAttribute('data-variant', variant || 'info');
+            flash.hidden = false;
+            if (flashTimer) window.clearTimeout(flashTimer);
+            flashTimer = window.setTimeout(() => { flash.hidden = true; }, 2600);
+          }
+
+          function syncEmpty() {
+            if (!list || !emptyState) return;
+            const isEmpty = list.querySelectorAll('[data-gallery-tile]').length === 0;
+            list.classList.toggle('hidden', isEmpty);
+            emptyState.classList.toggle('hidden', !isEmpty);
+          }
+
+          function refreshOrderKey() {
+            if (!list) {
+              lastOrderKey = '[]';
+              return lastOrderKey;
+            }
+            lastOrderKey = JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId));
+            return lastOrderKey;
+          }
+
+          function updatePrimary(id) {
+            if (!list) return;
+            const tiles = list.querySelectorAll('[data-gallery-tile]');
+            tiles.forEach(tile => {
+              const btn = tile.querySelector('[data-gallery-action="primary"]');
+              const isPrimary = tile.dataset.imageId === String(id);
+              tile.classList.toggle('is-primary', isPrimary);
+              if (btn) {
+                btn.disabled = isPrimary;
+                btn.textContent = isPrimary ? 'Em destaque' : 'Tornar destaque';
+              }
+            });
+          }
+
+          function request(url, options) {
+            const baseHeaders = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+            const merged = Object.assign({}, options || {});
+            merged.headers = Object.assign({}, baseHeaders, merged.headers || {});
+            return fetch(url, merged).then(resp => {
+              if (!resp.ok) {
+                return resp.json().catch(() => ({})).then(data => {
+                  const message = data && data.message ? data.message : 'Ocorreu um erro inesperado.';
+                  throw new Error(message);
+                });
+              }
+              return resp.json().catch(() => ({}));
+            });
+          }
+
+          function persistOrder() {
+            if (!list) return;
+            const tiles = Array.from(list.querySelectorAll('[data-gallery-tile]'));
+            if (!tiles.length) {
+              refreshOrderKey();
+              return;
+            }
+            const payload = tiles.map((tile, index) => ({ id: Number(tile.dataset.imageId), position: index + 1 }));
+            const key = JSON.stringify(payload.map(item => item.id));
+            if (key === lastOrderKey) return;
+            lastOrderKey = key;
+            request('/admin/units/' + unitId + '/images/reorder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order: payload })
+            })
+              .then(data => {
+                refreshOrderKey();
+                showFlash(data && data.message ? data.message : 'Ordem atualizada.', 'success');
+                if (data && data.primaryId) updatePrimary(data.primaryId);
+              })
+              .catch(err => {
+                refreshOrderKey();
+                showFlash(err.message || 'Não foi possível atualizar a ordem.', 'danger');
+              });
+          }
+
+          if (list) {
+            list.addEventListener('dragstart', event => {
+              const tile = event.target.closest('[data-gallery-tile]');
+              if (!tile) return;
+              dragItem = tile;
+              tile.classList.add('dragging');
+              event.dataTransfer.effectAllowed = 'move';
+              try { event.dataTransfer.setData('text/plain', tile.dataset.imageId); } catch (_) {}
+            });
+
+            list.addEventListener('dragover', event => {
+              if (!dragItem) return;
+              event.preventDefault();
+              const target = event.target.closest('[data-gallery-tile]');
+              if (!target || target === dragItem) return;
+              const rect = target.getBoundingClientRect();
+              const after = (event.clientY - rect.top) > rect.height / 2 || (event.clientX - rect.left) > rect.width / 2;
+              if (after) {
+                target.after(dragItem);
+              } else {
+                target.before(dragItem);
+              }
+            });
+
+            list.addEventListener('drop', event => {
+              if (!dragItem) return;
+              event.preventDefault();
+            });
+
+            list.addEventListener('dragend', () => {
+              if (!dragItem) return;
+              dragItem.classList.remove('dragging');
+              dragItem = null;
+              syncEmpty();
+              persistOrder();
+            });
+          }
+
+          manager.addEventListener('click', event => {
+            const actionBtn = event.target.closest('[data-gallery-action]');
+            if (!actionBtn) return;
+            const tile = actionBtn.closest('[data-gallery-tile]');
+            if (!tile) return;
+            const imageId = tile.dataset.imageId;
+            const action = actionBtn.getAttribute('data-gallery-action');
+            if (action === 'delete') {
+              if (!window.confirm('Remover esta imagem da galeria?')) return;
+              actionBtn.disabled = true;
+              request('/admin/images/' + imageId + '/delete', { method: 'POST' })
+                .then(data => {
+                  tile.remove();
+                  syncEmpty();
+                  refreshOrderKey();
+                  showFlash(data && data.message ? data.message : 'Imagem removida.', 'info');
+                  if (data && data.primaryId) updatePrimary(data.primaryId);
+                })
+                .catch(err => {
+                  actionBtn.disabled = false;
+                  showFlash(err.message || 'Não foi possível remover a imagem.', 'danger');
+                });
+            } else if (action === 'primary') {
+              actionBtn.disabled = true;
+              request('/admin/images/' + imageId + '/primary', { method: 'POST' })
+                .then(data => {
+                  updatePrimary(imageId);
+                  showFlash(data && data.message ? data.message : 'Imagem definida como destaque.', 'success');
+                })
+                .catch(err => {
+                  actionBtn.disabled = false;
+                  showFlash(err.message || 'Não foi possível atualizar a imagem.', 'danger');
+                });
+            }
+          });
+
+          syncEmpty();
+        });
+      </script>
     `
   }));
 });
 
-app.post('/admin/units/:id/update', requireLogin, (req, res) => {
+app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const { name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
   const features = parseFeaturesInput(features_raw);
@@ -3578,12 +4729,12 @@ app.post('/admin/units/:id/update', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/units/:id/delete', requireLogin, (req, res) => {
+app.post('/admin/units/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
   db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
   res.redirect('/admin');
 });
 
-app.post('/admin/units/:id/block', requireLogin, (req, res) => {
+app.post('/admin/units/:id/block', requireLogin, requirePermission('calendar.block.create'), (req, res) => {
   const { start_date, end_date } = req.body;
   if (!dayjs(end_date).isAfter(dayjs(start_date)))
     return res.status(400).send('end_date deve ser > start_date');
@@ -3600,7 +4751,7 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
+app.post('/admin/blocks/:blockId/delete', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
   const block = db.prepare('SELECT unit_id, start_date, end_date FROM blocks WHERE id = ?').get(req.params.blockId);
   if (!block) return res.status(404).send('Bloqueio não encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
@@ -3612,7 +4763,7 @@ app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
-app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
+app.post('/admin/units/:id/rates/create', requireLogin, requirePermission('rates.manage'), (req, res) => {
   const { start_date, end_date, price_eur, min_stay } = req.body;
   if (!dayjs(end_date).isAfter(dayjs(start_date)))
     return res.status(400).send('end_date deve ser > start_date');
@@ -3624,7 +4775,7 @@ app.post('/admin/units/:id/rates/create', requireLogin, (req, res) => {
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
-app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
+app.post('/admin/rates/:rateId/delete', requireLogin, requirePermission('rates.manage'), (req, res) => {
   const r = db.prepare('SELECT unit_id FROM rates WHERE id = ?').get(req.params.rateId);
   if (!r) return res.status(404).send('Rate não encontrada');
   db.prepare('DELETE FROM rates WHERE id = ?').run(req.params.rateId);
@@ -3632,25 +4783,146 @@ app.post('/admin/rates/:rateId/delete', requireLogin, (req, res) => {
 });
 
 // Imagens
-app.post('/admin/units/:id/images', requireLogin, upload.array('images', 12), (req,res)=>{
-  const unitId = req.params.id;
+app.post('/admin/units/:id/images', requireLogin, requirePermission('gallery.manage'), upload.array('images', 24), async (req, res) => {
+  const unitId = Number(req.params.id);
   const files = req.files || [];
+  if (!files.length) {
+    if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Nenhum ficheiro recebido.' });
+    return res.redirect(`/admin/units/${unitId}`);
+  }
+
   const insert = db.prepare('INSERT INTO unit_images(unit_id,file,alt,position) VALUES (?,?,?,?)');
   let pos = db.prepare('SELECT COALESCE(MAX(position),0) as p FROM unit_images WHERE unit_id = ?').get(unitId).p;
-  files.forEach(f => { insert.run(unitId, f.filename, null, ++pos); });
-  res.redirect(`/admin/units/${unitId}`);
+  const existingPrimary = db
+    .prepare('SELECT id FROM unit_images WHERE unit_id = ? AND is_primary = 1 LIMIT 1')
+    .get(unitId);
+  const insertedIds = [];
+
+  try {
+    for (const file of files) {
+      const filePath = path.join(UPLOAD_UNITS, String(unitId), file.filename);
+      await compressImage(filePath);
+      const inserted = insert.run(unitId, file.filename, null, ++pos);
+      insertedIds.push(inserted.lastInsertRowid);
+    }
+
+    if (!existingPrimary && insertedIds.length) {
+      const primaryId = insertedIds[0];
+      db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+        primaryId,
+        unitId
+      );
+    }
+
+    if (wantsJson(req)) {
+      const rows = db
+        .prepare('SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id')
+        .all(unitId);
+      return res.json({ ok: true, images: rows, primaryId: rows.find(img => img.is_primary)?.id || null });
+    }
+
+    res.redirect(`/admin/units/${unitId}`);
+  } catch (err) {
+    console.error('Falha ao processar upload de imagens', err);
+    if (wantsJson(req)) {
+      return res.status(500).json({ ok: false, message: 'Não foi possível guardar as imagens. Tente novamente.' });
+    }
+    res.status(500).send('Não foi possível guardar as imagens.');
+  }
 });
-app.post('/admin/images/:imageId/delete', requireLogin, (req,res)=>{
+
+app.post('/admin/images/:imageId/delete', requireLogin, requirePermission('gallery.manage'), (req, res) => {
   const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
-  if (!img) return res.status(404).send('Imagem não encontrada');
+  if (!img) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
+    return res.status(404).send('Imagem não encontrada');
+  }
+
   const filePath = path.join(UPLOAD_UNITS, String(img.unit_id), img.file);
   db.prepare('DELETE FROM unit_images WHERE id = ?').run(img.id);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  if (fs.existsSync(filePath)) {
+    try { fs.unlinkSync(filePath); } catch (err) { console.warn('Não foi possível remover ficheiro físico', err.message); }
+  }
+
+  let nextPrimaryId = null;
+  if (img.is_primary) {
+    const fallback = db
+      .prepare(
+        'SELECT id FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 1'
+      )
+      .get(img.unit_id);
+    if (fallback) {
+      db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+        fallback.id,
+        img.unit_id
+      );
+      nextPrimaryId = fallback.id;
+    }
+  }
+
+  if (wantsJson(req)) {
+    return res.json({ ok: true, message: 'Imagem removida.', primaryId: nextPrimaryId });
+  }
+
   res.redirect(`/admin/units/${img.unit_id}`);
 });
 
+app.post('/admin/images/:imageId/primary', requireLogin, requirePermission('gallery.manage'), (req, res) => {
+  const img = db.prepare('SELECT * FROM unit_images WHERE id = ?').get(req.params.imageId);
+  if (!img) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Imagem não encontrada.' });
+    return res.status(404).send('Imagem não encontrada');
+  }
+
+  db.prepare('UPDATE unit_images SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE unit_id = ?').run(
+    img.id,
+    img.unit_id
+  );
+
+  if (wantsJson(req)) {
+    return res.json({ ok: true, primaryId: img.id, message: 'Imagem definida como destaque.' });
+  }
+
+  res.redirect(`/admin/units/${img.unit_id}`);
+});
+
+app.post('/admin/units/:id/images/reorder', requireLogin, requirePermission('gallery.manage'), (req, res) => {
+  const unitId = Number(req.params.id);
+  const order = Array.isArray(req.body.order) ? req.body.order : [];
+  const ids = order
+    .map(item => ({ id: Number(item.id), position: Number(item.position) }))
+    .filter(item => item.id && item.position);
+
+  if (!ids.length) {
+    return res.json({ ok: true, message: 'Nada para atualizar.', primaryId: null });
+  }
+
+  const existingIds = new Set(
+    db
+      .prepare('SELECT id FROM unit_images WHERE unit_id = ?')
+      .all(unitId)
+      .map(row => row.id)
+  );
+
+  const updates = ids.filter(item => existingIds.has(item.id));
+  const updateStmt = db.prepare('UPDATE unit_images SET position = ? WHERE id = ? AND unit_id = ?');
+  const runUpdates = db.transaction(items => {
+    items.forEach(item => {
+      updateStmt.run(item.position, item.id, unitId);
+    });
+  });
+
+  runUpdates(updates);
+
+  const primaryRow = db
+    .prepare('SELECT id FROM unit_images WHERE unit_id = ? AND is_primary = 1 LIMIT 1')
+    .get(unitId);
+
+  res.json({ ok: true, message: 'Ordem atualizada.', primaryId: primaryRow ? primaryRow.id : null });
+});
+
 // ===================== Booking Management (Admin) =====================
-app.get('/admin/bookings', requireLogin, (req, res) => {
+app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const q = String(req.query.q || '').trim();
   const status = String(req.query.status || '').trim(); // '', CONFIRMED, PENDING
   const ym = String(req.query.ym || '').trim();         // YYYY-MM opcional
@@ -3725,10 +4997,12 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
                   </span>
                 </td>
                 <td class="whitespace-nowrap">
-                  <a class="underline" href="/admin/bookings/${b.id}">Editar</a>
-                  <form method="post" action="/admin/bookings/${b.id}/cancel" style="display:inline" onsubmit="return confirm('Cancelar esta reserva?');">
-                    <button class="text-rose-600 ml-2">Cancelar</button>
-                  </form>
+                  <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
+                  ${canCancelBooking ? `
+                    <form method="post" action="/admin/bookings/${b.id}/cancel" style="display:inline" onsubmit="return confirm('Cancelar esta reserva?');">
+                      <button class="text-rose-600 ml-2">Cancelar</button>
+                    </form>
+                  ` : ''}
                 </td>
               </tr>
             `).join('')}
@@ -3740,7 +5014,7 @@ app.get('/admin/bookings', requireLogin, (req, res) => {
   }));
 });
 
-app.get('/admin/bookings/:id', requireLogin, (req, res) => {
+app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const b = db.prepare(`
     SELECT b.*, u.name as unit_name, u.capacity, u.base_price_cents, p.name as property_name
       FROM bookings b
@@ -3749,6 +5023,20 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
      WHERE b.id = ?
   `).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
+
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+  const canAddNote = userCan(req.user, 'bookings.notes');
+  const bookingNotes = db.prepare(`
+    SELECT bn.id, bn.note, bn.created_at, u.username
+      FROM booking_notes bn
+      JOIN users u ON u.id = bn.user_id
+     WHERE bn.booking_id = ?
+     ORDER BY bn.created_at DESC
+  `).all(b.id).map(n => ({
+    ...n,
+    created_human: dayjs(n.created_at).format('DD/MM/YYYY HH:mm')
+  }));
 
   res.send(layout({
     title: `Editar reserva #${b.id}`,
@@ -3775,64 +5063,88 @@ app.get('/admin/bookings/:id', requireLogin, (req, res) => {
           ` : ''}
         </div>
 
-        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3">
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="text-sm">Check-in</label>
-              <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
+        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3" id="booking-update-form">
+          <fieldset class="grid gap-3" ${canEditBooking ? '' : 'disabled'}>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Check-in</label>
+                <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
+              </div>
+              <div>
+                <label class="text-sm">Check-out</label>
+                <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
+              </div>
             </div>
-            <div>
-              <label class="text-sm">Check-out</label>
-              <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Adultos</label>
+                <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
+              </div>
+              <div>
+                <label class="text-sm">Crianças</label>
+                <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
+              </div>
             </div>
-          </div>
 
-          <div class="grid grid-cols-2 gap-2">
+            <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
+            <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
+            <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
+            <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
             <div>
-              <label class="text-sm">Adultos</label>
-              <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
+              <label class="text-sm">Agência</label>
+              <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
             </div>
+            <div class="grid gap-1">
+              <label class="text-sm">Anotações internas</label>
+              <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
+              <p class="text-xs text-slate-500">Não aparece para o hóspede.</p>
+            </div>
+
             <div>
-              <label class="text-sm">Crianças</label>
-              <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
+              <label class="text-sm">Estado</label>
+              <select name="status" class="input">
+                <option value="CONFIRMED" ${b.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
+                <option value="PENDING" ${b.status==='PENDING'?'selected':''}>PENDING</option>
+              </select>
             </div>
-          </div>
 
-          <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
-          <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
-          <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
-          <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
-          <div>
-            <label class="text-sm">Agência</label>
-            <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
-          </div>
-          <div class="grid gap-1">
-            <label class="text-sm">Anotacoes internas</label>
-            <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
-            <p class="text-xs text-slate-500">Nao aparece para o hospede.</p>
-          </div>
-
-          <div>
-            <label class="text-sm">Estado</label>
-            <select name="status" class="input">
-              <option value="CONFIRMED" ${b.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-              <option value="PENDING" ${b.status==='PENDING'?'selected':''}>PENDING</option>
-            </select>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <button class="btn btn-primary">Guardar alterações</button>
-            <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-              <button class="btn" style="background:#e11d48;color:#fff;">Cancelar</button>
-            </form>
-          </div>
+            <button class="btn btn-primary justify-self-start">Guardar alterações</button>
+          </fieldset>
+          ${canEditBooking ? '' : '<p class="text-xs text-slate-500">Sem permissões para editar esta reserva.</p>'}
         </form>
+        ${canCancelBooking ? `
+          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');" class="self-end">
+            <button class="btn btn-danger mt-2">Cancelar reserva</button>
+          </form>
+        ` : ''}
+        <section class="md:col-span-2 card p-4" id="notes">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="font-semibold">Notas internas</h2>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${bookingNotes.length} nota${bookingNotes.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="mt-3 space-y-3">
+            ${bookingNotes.length ? bookingNotes.map(n => `
+              <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div class="text-xs text-slate-500 mb-1">${esc(n.username)} &middot; ${esc(n.created_human)}</div>
+                <div class="text-sm text-slate-700 whitespace-pre-line">${esc(n.note)}</div>
+              </article>
+            `).join('') : '<p class="text-sm text-slate-500">Sem notas adicionadas pela equipa.</p>'}
+          </div>
+          ${canAddNote ? `
+            <form method="post" action="/admin/bookings/${b.id}/notes" class="mt-4 grid gap-2">
+              <label class="text-sm" for="note">Adicionar nova nota</label>
+              <textarea class="input" id="note" name="note" rows="3" placeholder="Partilhe contexto para a equipa" required></textarea>
+              <button class="btn btn-primary justify-self-start">Gravar nota</button>
+            </form>
+          ` : '<p class="text-xs text-slate-500 mt-4">Sem permissões para adicionar novas notas.</p>'}
+        </section>
       </div>
     `
   }));
 });
 
-app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
+app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const id = req.params.id;
   const b = db.prepare(`
     SELECT b.*, u.capacity, u.base_price_cents
@@ -3902,7 +5214,18 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
   res.redirect(`/admin/bookings/${id}`);
 });
 
-app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
+app.post('/admin/bookings/:id/notes', requireLogin, requirePermission('bookings.notes'), (req, res) => {
+  const bookingId = Number(req.params.id);
+  const exists = db.prepare('SELECT id FROM bookings WHERE id = ?').get(bookingId);
+  if (!exists) return res.status(404).send('Reserva não encontrada');
+  const noteRaw = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+  if (!noteRaw) return res.status(400).send('Nota obrigatória.');
+  db.prepare('INSERT INTO booking_notes(booking_id, user_id, note) VALUES (?,?,?)').run(bookingId, req.user.id, noteRaw);
+  logActivity(req.user.id, 'booking:note_add', 'booking', bookingId, { snippet: noteRaw.slice(0, 200) });
+  res.redirect(`/admin/bookings/${bookingId}#notes`);
+});
+
+app.post('/admin/bookings/:id/cancel', requireLogin, requirePermission('bookings.cancel'), (req, res) => {
   const id = req.params.id;
   const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
   if (!existing) return res.status(404).send('Reserva não encontrada');
@@ -3933,70 +5256,165 @@ app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
   res.redirect('/admin/bookings');
 });
 
-app.get('/admin/auditoria', requireLogin, (req, res) => {
+app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'logs.view']), (req, res) => {
   const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
   const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
-  const filters = [];
-  const params = [];
-  if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
-  const idNumber = Number(idRaw);
-  if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  const logs = db.prepare(`
-    SELECT cl.*, u.username
-      FROM change_logs cl
-      JOIN users u ON u.id = cl.actor_id
-     ${where}
-     ORDER BY cl.created_at DESC
-     LIMIT 200
-  `).all(...params);
+  const canViewAudit = userCan(req.user, 'audit.view');
+  const canViewLogs = userCan(req.user, 'logs.view');
+
+  let changeLogs = [];
+  if (canViewAudit) {
+    const filters = [];
+    const params = [];
+    if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
+    const idNumber = Number(idRaw);
+    if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    changeLogs = db.prepare(`
+      SELECT cl.*, u.username
+        FROM change_logs cl
+        JOIN users u ON u.id = cl.actor_id
+       ${where}
+       ORDER BY cl.created_at DESC
+       LIMIT 200
+    `).all(...params);
+  }
+
+  const sessionLogs = canViewLogs
+    ? db.prepare(`
+        SELECT sl.*, u.username
+          FROM session_logs sl
+          LEFT JOIN users u ON u.id = sl.user_id
+         ORDER BY sl.created_at DESC
+         LIMIT 120
+      `).all()
+    : [];
+
+  const activityLogs = canViewLogs
+    ? db.prepare(`
+        SELECT al.*, u.username
+          FROM activity_logs al
+          LEFT JOIN users u ON u.id = al.user_id
+         ORDER BY al.created_at DESC
+         LIMIT 200
+      `).all()
+    : [];
 
   res.send(layout({
     title: 'Auditoria',
     user: req.user,
     activeNav: 'audit',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Histórico de alterações</h1>
-      <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
-        <div class="grid gap-1">
-          <label class="text-sm text-slate-600">Entidade</label>
-          <select class="input" name="entity">
-            <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
-            <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
-            <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
-          </select>
-        </div>
-        <div class="grid gap-1">
-          <label class="text-sm text-slate-600">ID</label>
-          <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
-        </div>
-        <div class="self-end">
-          <button class="btn btn-primary w-full">Filtrar</button>
-        </div>
-      </form>
+      <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
+      ${canViewAudit ? `
+        <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">Entidade</label>
+            <select class="input" name="entity">
+              <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+              <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+              <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+            </select>
+          </div>
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">ID</label>
+            <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+          </div>
+          <div class="self-end">
+            <button class="btn btn-primary w-full">Filtrar</button>
+          </div>
+        </form>
 
-      <div class="space-y-4">
-        ${logs.length ? logs.map(log => html`
-          <article class="card p-4 grid gap-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
-              <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
-            </div>
-            <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-              <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
-              <span class="text-slate-500">por ${esc(log.username)}</span>
-            </div>
-            <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
-          </article>
-        `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
-      </div>
+        <div class="space-y-4">
+          ${changeLogs.length ? changeLogs.map(log => html`
+            <article class="card p-4 grid gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
+                <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
+              </div>
+              <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+                <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
+                <span class="text-slate-500">por ${esc(log.username)}</span>
+              </div>
+              <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
+            </article>
+          `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
+        </div>
+      ` : `<div class="card p-4 text-sm text-slate-500">Sem permissões para consultar o histórico de alterações.</div>`}
+
+      ${canViewLogs ? `
+        <section class="mt-8 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Logs de sessão</h2>
+            <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
+          </div>
+          <div class="card p-0 overflow-x-auto">
+            <table class="w-full min-w-[720px] text-sm">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="text-left px-4 py-2">Quando</th>
+                  <th class="text-left px-4 py-2">Utilizador</th>
+                  <th class="text-left px-4 py-2">Ação</th>
+                  <th class="text-left px-4 py-2">IP</th>
+                  <th class="text-left px-4 py-2">User-Agent</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sessionLogs.length ? sessionLogs.map(row => `
+                  <tr class="border-t">
+                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
+                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
+                    <td class="px-4 py-2">${esc(row.action)}</td>
+                    <td class="px-4 py-2">${esc(row.ip || '')}</td>
+                    <td class="px-4 py-2 text-slate-500">${esc((row.user_agent || '').slice(0, 120))}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade de sessão registada.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="mt-8 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Atividade da aplicação</h2>
+            <span class="text-xs text-slate-500">Últimos ${activityLogs.length} eventos</span>
+          </div>
+          <div class="card p-0 overflow-x-auto">
+            <table class="w-full min-w-[820px] text-sm">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="text-left px-4 py-2">Quando</th>
+                  <th class="text-left px-4 py-2">Utilizador</th>
+                  <th class="text-left px-4 py-2">Ação</th>
+                  <th class="text-left px-4 py-2">Entidade</th>
+                  <th class="text-left px-4 py-2">Detalhes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${activityLogs.length ? activityLogs.map(row => `
+                  <tr class="border-t align-top">
+                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
+                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
+                    <td class="px-4 py-2">${esc(row.action)}</td>
+                    <td class="px-4 py-2">${row.entity_type ? esc(row.entity_type) + (row.entity_id ? ' #' + row.entity_id : '') : '—'}</td>
+                    <td class="px-4 py-2">${formatJsonSnippet(row.meta_json)}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade registada.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ` : ''}
     `
   }));
 });
 
 // ===================== Utilizadores (admin) =====================
 app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
-  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all();
+  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all().map(u => ({
+    ...u,
+    role_key: normalizeRole(u.role)
+  }));
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
@@ -4009,9 +5427,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
           <select name="role" class="input">
-            <option value="admin">admin</option>
-            <option value="gestor">gestor</option>
-            <option value="limpezas">limpezas</option>
+            <option value="rececao">Receção</option>
+            <option value="gestao">Gestão</option>
+            <option value="direcao">Direção</option>
           </select>
           <button class="btn btn-primary">Criar</button>
         </form>
@@ -4022,7 +5440,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <form method="post" action="/admin/users/password" class="grid gap-2">
           <label class="text-sm">Selecionar utilizador</label>
           <select required name="user_id" class="input">
-            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${u.role})</option>`).join('')}
+            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`).join('')}
           </select>
           <input required type="password" name="new_password" class="input" placeholder="Nova password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
@@ -4041,7 +5459,9 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
   if (exists) return res.status(400).send('Utilizador já existe.');
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, role || 'gestor');
+  const roleKey = normalizeRole(role);
+  const result = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, roleKey);
+  logActivity(req.user.id, 'user:create', 'user', result.lastInsertRowid, { username, role: roleKey });
   res.redirect('/admin/utilizadores');
 });
 
@@ -4054,6 +5474,7 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
+  logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
 });
 registerFrontoffice(app, context);
