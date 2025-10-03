@@ -195,7 +195,10 @@ if (!hasBlocksUpdatedAt) {
   console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
 }
 
+const MASTER_ROLE = 'dev';
+
 const ROLE_LABELS = {
+  [MASTER_ROLE]: 'Desenvolvedor',
   rececao: 'Receção',
   gestao: 'Gestão',
   direcao: 'Direção'
@@ -263,8 +266,15 @@ const ROLE_PERMISSIONS = {
   ])
 };
 
+const ALL_PERMISSIONS = new Set();
+Object.values(ROLE_PERMISSIONS).forEach(set => {
+  if (set && set.forEach) set.forEach(perm => ALL_PERMISSIONS.add(perm));
+});
+ROLE_PERMISSIONS[MASTER_ROLE] = new Set(ALL_PERMISSIONS);
+
 function normalizeRole(role) {
   const key = String(role || '').toLowerCase();
+  if (key === MASTER_ROLE || key === 'developer' || key === 'devmaster') return MASTER_ROLE;
   if (key === 'admin' || key === 'direcao' || key === 'direção') return 'direcao';
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
   if (key === 'limpezas' || key === 'rececao' || key === 'receção' || key === 'recepcao' || key === 'recepção') return 'rececao';
@@ -284,7 +294,9 @@ function buildUserContext(sessRow) {
 }
 
 function userCan(user, permission) {
-  return !!(user && user.permissions && user.permissions.has(permission));
+  if (!user) return false;
+  if (user.role === MASTER_ROLE) return true;
+  return !!(user.permissions && user.permissions.has(permission));
 }
 
 const rescheduleBookingUpdateStmt = db.prepare(
@@ -1046,6 +1058,13 @@ if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
   db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
   console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
+}
+
+const masterUser = db.prepare('SELECT id FROM users WHERE username = ?').get('dev');
+if (!masterUser) {
+  const devHash = bcrypt.hashSync('dev123', 10);
+  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('dev', devHash, MASTER_ROLE);
+  console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
 }
 
 // ===================== Uploads =====================
