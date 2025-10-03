@@ -110,6 +110,17 @@ CREATE TABLE IF NOT EXISTS unit_images (
   position INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS change_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT,
+  actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 db.exec(schema);
 
@@ -127,7 +138,26 @@ try {
   ensureColumn('bookings', 'internal_notes', 'TEXT');
   ensureColumn('units', 'features', 'TEXT');
   ensureColumn('bookings', 'external_ref', 'TEXT');
+  ensureColumn('bookings', 'updated_at', 'TEXT');
+  ensureColumn('blocks', 'updated_at', 'TEXT');
 } catch (_) {}
+
+function logChange(actorId, entityType, entityId, action, beforeObj, afterObj) {
+  try {
+    db.prepare(
+      'INSERT INTO change_logs(entity_type, entity_id, action, before_json, after_json, actor_id) VALUES (?,?,?,?,?,?)'
+    ).run(
+      entityType,
+      entityId,
+      action,
+      beforeObj ? JSON.stringify(beforeObj) : null,
+      afterObj ? JSON.stringify(afterObj) : null,
+      actorId
+    );
+  } catch (err) {
+    console.error('Erro ao registar auditoria', err.message);
+  }
+}
 
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
@@ -198,6 +228,37 @@ const esc = (str = '') => String(str)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
+
+function formatAuditValue(val) {
+  if (val === undefined || val === null || val === '') return '<span class="text-slate-400">—</span>';
+  if (typeof val === 'object') return `<code>${esc(JSON.stringify(val))}</code>`;
+  return esc(String(val));
+}
+
+function renderAuditDiff(beforeJson, afterJson) {
+  let beforeObj = null;
+  let afterObj = null;
+  try { beforeObj = beforeJson ? JSON.parse(beforeJson) : null; } catch (_) {}
+  try { afterObj = afterJson ? JSON.parse(afterJson) : null; } catch (_) {}
+  const keys = Array.from(new Set([
+    ...(beforeObj ? Object.keys(beforeObj) : []),
+    ...(afterObj ? Object.keys(afterObj) : [])
+  ])).sort();
+  if (!keys.length) return '<div class="text-xs text-slate-500">Sem detalhes</div>';
+  const rows = keys.map(key => {
+    const beforeVal = beforeObj ? beforeObj[key] : undefined;
+    const afterVal = afterObj ? afterObj[key] : undefined;
+    const changed = JSON.stringify(beforeVal) !== JSON.stringify(afterVal);
+    const cls = changed ? 'text-emerald-700' : 'text-slate-600';
+    return `<tr class="${cls}">
+      <td class="font-semibold pr-2 align-top">${esc(key)}</td>
+      <td class="pr-2 align-top">${formatAuditValue(beforeVal)}</td>
+      <td class="pr-2 align-top">→</td>
+      <td class="align-top">${formatAuditValue(afterVal)}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="w-full text-xs border-separate border-spacing-y-1">${rows}</table>`;
+}
 
 const FEATURE_ICONS = {
   bed: 'Camas',
@@ -393,6 +454,9 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .btn  { display:inline-block; padding:.5rem .75rem; border-radius:.5rem; }
         .btn-primary{ background:#0f172a; color:#fff; }
         .btn-muted{ background:#e2e8f0; }
+        .btn-light{ background:#f8fafc; color:#0f172a; font-weight:600; }
+        .btn-danger{ background:#f43f5e; color:#fff; }
+        .btn[disabled]{opacity:.5;cursor:not-allowed;}
         .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
         body.app-body{margin:0;background:#fafafa;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
@@ -448,6 +512,31 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .pill-indicator{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:.75rem;font-weight:500;color:#475569;text-transform:uppercase;letter-spacing:.08em;}
         .result-header{display:flex;flex-direction:column;gap:12px;margin-bottom:24px;}
         .result-header .progress-steps{justify-content:flex-start;}
+        .calendar-card{position:relative;}
+        .calendar-card[data-loading="true"]::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(15,23,42,.08);backdrop-filter:blur(1px);}
+        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:#0f172a;animation:spin .9s linear infinite;}
+        .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+        .calendar-cell{position:relative;height:3rem;display:flex;align-items:center;justify-content:center;border-radius:.6rem;font-size:.75rem;user-select:none;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;}
+        @media (min-width:640px){.calendar-cell{height:3.5rem;font-size:.85rem;}}
+        .calendar-cell:hover{transform:translateY(-1px);box-shadow:0 8px 14px rgba(15,23,42,.12);}
+        .calendar-cell[data-in-month="0"]{cursor:default;}
+        .calendar-cell--selection{outline:2px solid rgba(59,130,246,.6);outline-offset:2px;box-shadow:0 0 0 3px rgba(59,130,246,.25);}
+        .calendar-cell--preview{outline:2px dashed rgba(16,185,129,.75);outline-offset:2px;}
+        .calendar-cell--invalid{outline:2px solid rgba(239,68,68,.75);outline-offset:2px;}
+        .calendar-action{position:fixed;z-index:60;transform:translate(-50%,-100%);min-width:260px;}
+        .calendar-action[hidden]{display:none;}
+        .calendar-action__card{background:#0f172a;color:#fff;padding:18px 20px;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,.3);display:grid;gap:12px;}
+        .calendar-action__title{font-weight:600;font-size:.95rem;}
+        .calendar-action__buttons{display:flex;flex-wrap:wrap;gap:10px;}
+        .calendar-action__buttons .btn{flex:1 1 auto;justify-content:center;}
+        .calendar-toast{position:fixed;z-index:70;bottom:24px;right:24px;padding:14px 18px;border-radius:16px;font-size:.9rem;font-weight:500;display:flex;align-items:center;gap:12px;box-shadow:0 16px 30px rgba(15,23,42,.18);}
+        .calendar-toast[hidden]{display:none;}
+        .calendar-toast[data-variant="success"]{background:#ecfdf5;color:#065f46;}
+        .calendar-toast[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
+        .calendar-toast[data-variant="danger"]{background:#fee2e2;color:#b91c1c;}
+        .calendar-toast__dot{width:10px;height:10px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(255,255,255,.6);}
+        .calendar-dialog{border:none;border-radius:20px;padding:0;max-width:420px;width:92vw;}
+        .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
         @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
         .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
@@ -763,6 +852,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               ${isManager ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
               ${isManager ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
               ${isManager ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${isManager ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
               ${user && user.role === 'admin' ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
@@ -1217,11 +1307,576 @@ app.get('/calendar', requireLogin, (req, res) => {
         <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
         <a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>
       </div>
-      <div class="space-y-6">
+      <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
         ${units.map(u => unitCalendarCard(u, month)).join('')}
       </div>
+      <div class="calendar-action" data-calendar-action hidden></div>
+      <div class="calendar-toast" data-calendar-toast hidden><span class="calendar-toast__dot"></span><span data-calendar-toast-message></span></div>
+      <script>
+        (function(){
+          const root = document.querySelector('[data-calendar]');
+          if (!root) return;
+          const actionEl = document.querySelector('[data-calendar-action]');
+          const toastEl = document.querySelector('[data-calendar-toast]');
+          const toastMessage = toastEl ? toastEl.querySelector('[data-calendar-toast-message]') : null;
+          const fetchTemplate = root.getAttribute('data-calendar-fetch');
+          const month = root.getAttribute('data-month');
+          let actionCtx = null;
+          let dragCtx = null;
+          let selectionCtx = null;
+          let toastTimer = null;
+
+          function parseDate(str) {
+            if (!str) return null;
+            const parts = str.split('-').map(Number);
+            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+            return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+          }
+
+          function toISO(date) {
+            return date.toISOString().slice(0, 10);
+          }
+
+          function shiftDate(str, delta) {
+            const base = parseDate(str);
+            if (!base) return null;
+            base.setUTCDate(base.getUTCDate() + delta);
+            return toISO(base);
+          }
+
+          function diffDays(start, end) {
+            const a = parseDate(start);
+            const b = parseDate(end);
+            if (!a || !b) return 0;
+            return Math.round((b - a) / 86400000);
+          }
+
+          function formatHuman(str) {
+            const date = parseDate(str);
+            if (!date) return str;
+            return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+          }
+
+          function clearHighlight(className) {
+            root.querySelectorAll('.' + className).forEach(function(cell){
+              cell.classList.remove(className);
+            });
+          }
+
+          function highlightRange(unitId, start, endExclusive, className) {
+            clearHighlight(className);
+            if (!start || !endExclusive) return;
+            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
+            cells.forEach(function(cell){
+              const date = cell.getAttribute('data-date');
+              if (date && date >= start && date < endExclusive) {
+                cell.classList.add(className);
+              }
+            });
+          }
+
+          function rangeHasConflicts(unitId, start, endExclusive, currentId, currentKind) {
+            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
+            return cells.some(function(cell){
+              const date = cell.getAttribute('data-date');
+              if (!date || date < start || date >= endExclusive) return false;
+              const otherId = cell.getAttribute('data-entry-id');
+              if (!otherId) return false;
+              const otherKind = cell.getAttribute('data-entry-kind');
+              if (otherId === currentId && otherKind === currentKind) return false;
+              return true;
+            });
+          }
+
+          function showToast(message, variant) {
+            if (!toastEl || !toastMessage) return;
+            toastEl.setAttribute('data-variant', variant || 'success');
+            toastMessage.textContent = message;
+            toastEl.hidden = false;
+            if (toastTimer) window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(function(){ toastEl.hidden = true; }, 3200);
+          }
+
+          function hideAction() {
+            if (!actionEl) return;
+            actionEl.hidden = true;
+            actionEl.innerHTML = '';
+            actionCtx = null;
+          }
+
+          function showAction(config) {
+            if (!actionEl) return;
+            actionCtx = config;
+            actionEl.style.left = config.clientX + 'px';
+            actionEl.style.top = (config.clientY - 12) + 'px';
+            actionEl.innerHTML = config.html;
+            actionEl.hidden = false;
+          }
+
+          function refreshUnitCard(unitId) {
+            const card = root.querySelector('[data-unit-card="' + unitId + '"]');
+            if (!card || !fetchTemplate) return;
+            card.setAttribute('data-loading', 'true');
+            const url = fetchTemplate.replace(':id', unitId) + '?ym=' + month;
+            fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+              .then(function(res){ return res.text(); })
+              .then(function(html){
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = html.trim();
+                const nextCard = wrapper.firstElementChild;
+                if (nextCard) {
+                  card.replaceWith(nextCard);
+                } else {
+                  card.removeAttribute('data-loading');
+                }
+                hideAction();
+              })
+              .catch(function(){
+                card.removeAttribute('data-loading');
+                showToast('Não foi possível atualizar o calendário.', 'danger');
+                hideAction();
+              });
+          }
+
+          function submitReschedule(ctx, range) {
+            let url;
+            let payload;
+            if (ctx.entryKind === 'BOOKING') {
+              url = '/calendar/booking/' + ctx.entryId + '/reschedule';
+              payload = { checkin: range.start, checkout: range.end };
+            } else {
+              url = '/calendar/block/' + ctx.entryId + '/reschedule';
+              payload = { start_date: range.start, end_date: range.end };
+            }
+            fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Atualizado com sucesso', 'success');
+                  refreshUnitCard(result.data.unit_id || ctx.unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível reagendar.', 'danger');
+                  refreshUnitCard(ctx.unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro de rede ao guardar.', 'danger');
+                refreshUnitCard(ctx.unitId);
+              });
+          }
+
+          function submitBlock(unitId, start, endExclusive) {
+            fetch('/calendar/unit/' + unitId + '/block', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ start_date: start, end_date: endExclusive })
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Bloqueio criado.', 'success');
+                  refreshUnitCard(unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível bloquear estas datas.', 'danger');
+                  refreshUnitCard(unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro de rede ao bloquear datas.', 'danger');
+                refreshUnitCard(unitId);
+              });
+          }
+
+          function submitBlockRemoval(blockId, unitId) {
+            fetch('/calendar/block/' + blockId, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  showToast(result.data.message || 'Bloqueio removido.', 'success');
+                  refreshUnitCard(unitId);
+                } else {
+                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível remover o bloqueio.', 'danger');
+                  refreshUnitCard(unitId);
+                }
+              })
+              .catch(function(){
+                showToast('Erro ao remover bloqueio.', 'danger');
+                refreshUnitCard(unitId);
+              });
+          }
+
+          function showEntryActions(cell) {
+            if (!cell) return;
+            const entryId = cell.getAttribute('data-entry-id');
+            if (!entryId) return;
+            const entryKind = cell.getAttribute('data-entry-kind');
+            const guest = cell.getAttribute('data-entry-guest') || '';
+            const label = cell.getAttribute('data-entry-label') || '';
+            const start = cell.getAttribute('data-entry-start');
+            const end = cell.getAttribute('data-entry-end');
+            const url = cell.getAttribute('data-entry-url');
+            const historyUrl = '/admin/auditoria?entity=' + encodeURIComponent(entryKind === 'BOOKING' ? 'booking' : 'block') + '&id=' + encodeURIComponent(entryId);
+            const rect = cell.getBoundingClientRect();
+            let html = '<div class="calendar-action__card">';
+            html += '<div class="calendar-action__title">' + (entryKind === 'BOOKING' ? 'Reserva' : 'Bloqueio') + '</div>';
+            if (guest) html += '<div class="text-xs text-slate-200 uppercase tracking-wide">' + guest + '</div>';
+            html += '<div class="text-sm text-slate-200">' + label + '</div>';
+            html += '<div class="text-xs text-slate-400">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
+            html += '<div class="calendar-action__buttons">';
+            if (url) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
+            html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
+            if (entryKind === 'BLOCK') {
+              html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
+            }
+            html += '</div>';
+            html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
+            html += '</div>';
+            showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
+            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit') };
+          }
+
+          function normalizeRange(a, b) {
+            if (!a || !b) return { start: a, endExclusive: shiftDate(a, 1), end: b };
+            if (a <= b) {
+              return { start: a, endExclusive: shiftDate(b, 1), end: b };
+            }
+            return { start: b, endExclusive: shiftDate(a, 1), end: a };
+          }
+
+          function showSelectionActions(ctx) {
+            const humanStart = formatHuman(ctx.start);
+            const humanEnd = formatHuman(shiftDate(ctx.end, -1));
+            const nights = diffDays(ctx.start, ctx.end);
+            let html = '<div class="calendar-action__card">';
+            html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
+            html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
+            html += '<div class="calendar-action__buttons">';
+            html += '<button class="btn btn-primary" data-action="block-range"' + (ctx.conflict ? ' disabled' : '') + '>Bloquear estas datas</button>';
+            html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
+            html += '</div>';
+            html += ctx.conflict
+              ? '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>'
+              : '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
+            html += '</div>';
+            showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
+            actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
+          }
+
+          function onPointerDown(e) {
+            const cell = e.target.closest('[data-calendar-cell]');
+            if (!cell) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            hideAction();
+            const entryId = cell.getAttribute('data-entry-id');
+            if (entryId) {
+              dragCtx = {
+                entryId: entryId,
+                entryKind: cell.getAttribute('data-entry-kind'),
+                unitId: cell.getAttribute('data-unit'),
+                originStart: cell.getAttribute('data-entry-start'),
+                originEnd: cell.getAttribute('data-entry-end'),
+                anchorDate: cell.getAttribute('data-date'),
+                pointerStart: { x: e.clientX, y: e.clientY },
+                moved: false,
+                preview: null,
+                conflict: false
+              };
+            } else {
+              selectionCtx = {
+                unitId: cell.getAttribute('data-unit'),
+                startDate: cell.getAttribute('data-date'),
+                endDate: cell.getAttribute('data-date'),
+                pointerStart: { x: e.clientX, y: e.clientY },
+                active: true
+              };
+              highlightRange(selectionCtx.unitId, selectionCtx.startDate, shiftDate(selectionCtx.startDate, 1), 'calendar-cell--selection');
+            }
+          }
+
+          function onPointerMove(e) {
+            if (dragCtx) {
+              if (!dragCtx.moved) {
+                const delta = Math.abs(e.clientX - dragCtx.pointerStart.x) + Math.abs(e.clientY - dragCtx.pointerStart.y);
+                if (delta > 5) dragCtx.moved = true;
+              }
+              if (!dragCtx.moved) return;
+              const el = document.elementFromPoint(e.clientX, e.clientY);
+              const cell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
+              if (!cell) return;
+              const hoverDate = cell.getAttribute('data-date');
+              if (!hoverDate) return;
+              const anchorOffset = diffDays(dragCtx.originStart, dragCtx.anchorDate);
+              const duration = diffDays(dragCtx.originStart, dragCtx.originEnd);
+              const newStart = shiftDate(hoverDate, -anchorOffset);
+              const newEnd = shiftDate(newStart, duration);
+              dragCtx.preview = { start: newStart, end: newEnd };
+              dragCtx.conflict = rangeHasConflicts(dragCtx.unitId, newStart, newEnd, dragCtx.entryId, dragCtx.entryKind);
+              highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--preview');
+              if (dragCtx.conflict) {
+                highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--invalid');
+              } else {
+                clearHighlight('calendar-cell--invalid');
+              }
+              e.preventDefault();
+            } else if (selectionCtx && selectionCtx.active) {
+              const targetEl = document.elementFromPoint(e.clientX, e.clientY);
+              const targetCell = targetEl && targetEl.closest('[data-calendar-cell][data-unit="' + selectionCtx.unitId + '"]');
+              if (!targetCell) return;
+              const targetDate = targetCell.getAttribute('data-date');
+              if (!targetDate || targetDate === selectionCtx.endDate) return;
+              selectionCtx.endDate = targetDate;
+              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
+              highlightRange(selectionCtx.unitId, range.start, range.endExclusive, 'calendar-cell--selection');
+            }
+          }
+
+          function onPointerUp(e) {
+            if (dragCtx) {
+              const preview = dragCtx.preview;
+              const wasDragging = dragCtx.moved;
+              const conflict = dragCtx.conflict;
+              if (!wasDragging) {
+                clearHighlight('calendar-cell--preview');
+                clearHighlight('calendar-cell--invalid');
+                const cell = document.querySelector('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"][data-date="' + dragCtx.anchorDate + '"]');
+                const el = document.elementFromPoint(e.clientX, e.clientY);
+                const maybeCell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
+                dragCtx = null;
+                showEntryActions(maybeCell || cell);
+                return;
+              }
+              clearHighlight('calendar-cell--preview');
+              clearHighlight('calendar-cell--invalid');
+              const changed = preview && (preview.start !== dragCtx.originStart || preview.end !== dragCtx.originEnd);
+              const ctxCopy = dragCtx;
+              dragCtx = null;
+              if (preview && !conflict && changed) {
+                submitReschedule(ctxCopy, preview);
+              } else if (conflict) {
+                showToast('As novas datas entram em conflito com outra ocupação.', 'danger');
+                refreshUnitCard(ctxCopy.unitId);
+              }
+            } else if (selectionCtx && selectionCtx.active) {
+              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
+              clearHighlight('calendar-cell--selection');
+              const conflict = rangeHasConflicts(selectionCtx.unitId, range.start, range.endExclusive);
+              showSelectionActions({
+                unitId: selectionCtx.unitId,
+                start: range.start,
+                end: range.endExclusive,
+                conflict: conflict,
+                clientX: e.clientX,
+                clientY: e.clientY
+              });
+              selectionCtx = null;
+            }
+          }
+
+          function onActionClick(e) {
+            const target = e.target.closest('[data-action]');
+            if (!target || !actionCtx) return;
+            const action = target.getAttribute('data-action');
+            if (action === 'block-range' && actionCtx.type === 'selection') {
+              e.preventDefault();
+              hideAction();
+              submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
+            }
+            if (action === 'delete-block' && actionCtx.type === 'entry') {
+              e.preventDefault();
+              hideAction();
+              submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
+            }
+          }
+
+          function onDocumentClick(e) {
+            if (!actionEl || actionEl.hidden) return;
+            if (!actionEl.contains(e.target)) hideAction();
+          }
+
+          function onKeyDown(e) {
+            if (e.key === 'Escape') {
+              clearHighlight('calendar-cell--selection');
+              clearHighlight('calendar-cell--preview');
+              clearHighlight('calendar-cell--invalid');
+              hideAction();
+              dragCtx = null;
+              selectionCtx = null;
+            }
+          }
+
+          root.addEventListener('pointerdown', onPointerDown);
+          window.addEventListener('pointermove', onPointerMove);
+          window.addEventListener('pointerup', onPointerUp);
+          if (actionEl) actionEl.addEventListener('click', onActionClick);
+          document.addEventListener('click', onDocumentClick);
+          document.addEventListener('keydown', onKeyDown);
+        })();
+      </script>
     `
   }));
+});
+
+app.get('/calendar/unit/:id/card', requireLogin, (req, res) => {
+  const ym = req.query.ym;
+  const month = (ym ? dayjs(ym + '-01') : dayjs().startOf('month')).startOf('month');
+  const unit = db.prepare(`
+    SELECT u.*, p.name as property_name
+      FROM units u JOIN properties p ON p.id = u.property_id
+     WHERE u.id = ?
+  `).get(req.params.id);
+  if (!unit) return res.status(404).send('');
+  res.send(unitCalendarCard(unit, month));
+});
+
+app.post('/calendar/booking/:id/reschedule', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const booking = db.prepare(`
+    SELECT b.*, u.base_price_cents
+      FROM bookings b JOIN units u ON u.id = b.unit_id
+     WHERE b.id = ?
+  `).get(id);
+  if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
+
+  const checkin = req.body && req.body.checkin;
+  const checkout = req.body && req.body.checkout;
+  if (!checkin || !checkout) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(checkout).isAfter(dayjs(checkin))) return res.status(400).json({ ok: false, message: 'checkout deve ser > checkin' });
+
+  const conflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND id <> ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, booking.id, checkin, checkout);
+  if (conflict) return res.status(409).json({ ok: false, message: 'Conflito com outra reserva.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, checkin, checkout);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'As novas datas estão bloqueadas.' });
+
+  const quote = rateQuote(booking.unit_id, checkin, checkout, booking.base_price_cents);
+  if (quote.nights < quote.minStayReq)
+    return res.status(400).json({ ok: false, message: `Estadia mínima: ${quote.minStayReq} noites.` });
+
+  db.prepare('UPDATE bookings SET checkin = ?, checkout = ?, total_cents = ?, updated_at = datetime("now") WHERE id = ?')
+    .run(checkin, checkout, quote.total_cents, booking.id);
+
+  logChange(req.user.id, 'booking', booking.id, 'reschedule',
+    { checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
+    { checkin, checkout, total_cents: quote.total_cents }
+  );
+
+  res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
+});
+
+app.post('/calendar/block/:id/reschedule', requireLogin, (req, res) => {
+  const id = Number(req.params.id);
+  const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(id);
+  if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+
+  const start = req.body && req.body.start_date;
+  const end = req.body && req.body.end_date;
+  if (!start || !end) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(end).isAfter(dayjs(start))) return res.status(400).json({ ok: false, message: 'end_date deve ser > start_date' });
+
+  const bookingConflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(block.unit_id, start, end);
+  if (bookingConflict) return res.status(409).json({ ok: false, message: 'Existem reservas neste período.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND id <> ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(block.unit_id, block.id, start, end);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'Conflito com outro bloqueio.' });
+
+  db.prepare('UPDATE blocks SET start_date = ?, end_date = ?, updated_at = datetime("now") WHERE id = ?')
+    .run(start, end, block.id);
+
+  logChange(req.user.id, 'block', block.id, 'reschedule',
+    { start_date: block.start_date, end_date: block.end_date },
+    { start_date: start, end_date: end }
+  );
+
+  res.json({ ok: true, message: 'Bloqueio atualizado.', unit_id: block.unit_id });
+});
+
+app.post('/calendar/unit/:unitId/block', requireLogin, (req, res) => {
+  const unitId = Number(req.params.unitId);
+  const unit = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
+  if (!unit) return res.status(404).json({ ok: false, message: 'Unidade não encontrada.' });
+
+  const start = req.body && req.body.start_date;
+  const end = req.body && req.body.end_date;
+  if (!start || !end) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
+  if (!dayjs(end).isAfter(dayjs(start))) return res.status(400).json({ ok: false, message: 'end_date deve ser > start_date' });
+
+  const bookingConflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(unitId, start, end);
+  if (bookingConflict) return res.status(409).json({ ok: false, message: 'Existem reservas nestas datas.' });
+
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(unitId, start, end);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'Já existe um bloqueio neste período.' });
+
+  const inserted = db.prepare('INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))')
+    .run(unitId, start, end);
+
+  logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date: start, end_date: end, unit_id: unitId });
+
+  res.json({ ok: true, message: 'Bloqueio criado.', unit_id: unitId });
+});
+
+app.delete('/calendar/block/:id', requireLogin, (req, res) => {
+  const block = db.prepare('SELECT * FROM blocks WHERE id = ?').get(req.params.id);
+  if (!block) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+  db.prepare('DELETE FROM blocks WHERE id = ?').run(block.id);
+  logChange(req.user.id, 'block', block.id, 'delete', { start_date: block.start_date, end_date: block.end_date }, null);
+  res.json({ ok: true, message: 'Bloqueio removido.', unit_id: block.unit_id });
 });
 
 function unitCalendarCard(u, month) {
@@ -1231,12 +1886,17 @@ function unitCalendarCard(u, month) {
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
   const entries = db.prepare(
-    `SELECT 'B' as t, checkin as s, checkout as e, (guest_name || ' (' || adults || 'A+' || children || 'C)') as label, status
+    `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, status, adults, children, total_cents, agency
        FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
      UNION ALL
-     SELECT 'X' as t, start_date as s, end_date as e, 'BLOQUEADO' as label, 'BLOCK' as status
+     SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
        FROM blocks WHERE unit_id = ?`
-  ).all(u.id, u.id);
+  ).all(u.id, u.id).map(row => ({
+    ...row,
+    label: row.kind === 'BLOCK'
+      ? 'Bloqueio de datas'
+      : `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
+  }));
 
   const cells = [];
   for (let i = 0; i < totalCells; i++) {
@@ -1248,22 +1908,54 @@ function unitCalendarCard(u, month) {
     const nextDate = d.add(1, 'day').format('YYYY-MM-DD');
 
     const hit = entries.find(en => overlaps(en.s, en.e, date, nextDate));
-    let cls = !inMonth ? 'bg-slate-100 text-slate-400' : 'bg-emerald-500 text-white'; // livre
+    const classNames = ['calendar-cell'];
+    if (!inMonth) {
+      classNames.push('bg-slate-100', 'text-slate-400');
+    } else if (!hit) {
+      classNames.push('bg-emerald-500', 'text-white');
+    } else if (hit.status === 'BLOCK') {
+      classNames.push('bg-red-600', 'text-white');
+    } else if (hit.status === 'PENDING') {
+      classNames.push('bg-amber-400', 'text-black');
+    } else {
+      classNames.push('bg-rose-500', 'text-white');
+    }
+
+    const dataAttrs = [
+      'data-calendar-cell',
+      `data-unit="${u.id}"`,
+      `data-date="${date}"`,
+      `data-in-month="${inMonth ? 1 : 0}"`,
+    ];
+
     if (hit) {
-      if (hit.status === 'BLOCK') cls = 'bg-red-600 text-white';
-      else if (hit.status === 'PENDING') cls = 'bg-amber-400 text-black';
-      else cls = 'bg-rose-500 text-white'; // CONFIRMED
+      dataAttrs.push(
+        `data-entry-id="${hit.id}"`,
+        `data-entry-kind="${hit.kind}"`,
+        `data-entry-start="${hit.s}"`,
+        `data-entry-end="${hit.e}"`,
+        `data-entry-status="${hit.status}"`,
+        `data-entry-label="${esc(hit.label)}"`
+      );
+      if (hit.kind === 'BOOKING') {
+        dataAttrs.push(
+          `data-entry-url="/admin/bookings/${hit.id}"`,
+          `data-entry-agency="${esc(hit.agency || '')}"`,
+          `data-entry-total="${hit.total_cents || 0}"`,
+          `data-entry-guest="${esc(hit.guest_name || '')}"`
+        );
+      }
     }
 
     const title = hit ? ` title="${(hit.label || '').replace(/"/g, "'")}"` : '';
-    cells.push(`<div class="h-12 sm:h-14 flex items-center justify-center rounded ${cls} text-xs sm:text-sm"${title}>${d.date()}</div>`);
+    cells.push(`<div class="${classNames.join(' ')}" ${dataAttrs.join(' ')}${title}>${d.date()}</div>`);
   }
 
   const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
     .map(w => `<div class="text-center text-xs text-slate-500 py-1">${w}</div>`)
     .join('');
   return `
-    <div class="card p-4">
+    <div class="card p-4 calendar-card" data-unit-card="${u.id}" data-unit-name="${esc(u.name)}">
       <div class="flex items-center justify-between mb-2">
         <div>
           <div class="text-sm text-slate-500">${u.property_name}</div>
@@ -1271,8 +1963,8 @@ function unitCalendarCard(u, month) {
         </div>
         <a class="text-slate-600 hover:text-slate-900" href="/admin/units/${u.id}">Gerir</a>
       </div>
-      <div class="grid grid-cols-7 gap-1 mb-1">${weekdayHeader}</div>
-      <div class="grid grid-cols-7 gap-1">${cells.join('')}</div>
+      <div class="calendar-grid mb-1">${weekdayHeader}</div>
+      <div class="calendar-grid" data-calendar-unit="${u.id}">${cells.join('')}</div>
     </div>
   `;
 }
@@ -2011,14 +2703,21 @@ app.post('/admin/units/:id/block', requireLogin, (req, res) => {
   if (conflicts.length)
     return res.status(409).send('As datas incluem reservas existentes');
 
-  db.prepare('INSERT INTO blocks(unit_id, start_date, end_date) VALUES (?, ?, ?)').run(req.params.id, start_date, end_date);
+  const inserted = db.prepare('INSERT INTO blocks(unit_id, start_date, end_date, updated_at) VALUES (?, ?, ?, datetime("now"))')
+    .run(req.params.id, start_date, end_date);
+  logChange(req.user.id, 'block', inserted.lastInsertRowid, 'create', null, { start_date, end_date, unit_id: Number(req.params.id) });
   res.redirect(`/admin/units/${req.params.id}`);
 });
 
 app.post('/admin/blocks/:blockId/delete', requireLogin, (req, res) => {
-  const block = db.prepare('SELECT unit_id FROM blocks WHERE id = ?').get(req.params.blockId);
+  const block = db.prepare('SELECT unit_id, start_date, end_date FROM blocks WHERE id = ?').get(req.params.blockId);
   if (!block) return res.status(404).send('Bloqueio não encontrado');
   db.prepare('DELETE FROM blocks WHERE id = ?').run(req.params.blockId);
+  logChange(req.user.id, 'block', Number(req.params.blockId), 'delete', {
+    unit_id: block.unit_id,
+    start_date: block.start_date,
+    end_date: block.end_date
+  }, null);
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
@@ -2283,26 +2982,115 @@ app.post('/admin/bookings/:id/update', requireLogin, (req, res) => {
 
   db.prepare(`
     UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, updated_at = datetime('now')
      WHERE id = ?
   `).run(checkin, checkout, adults, children, guest_name, guest_email, guest_phone, guest_nationality, agency, internal_notes, status, q.total_cents, id);
+
+  logChange(req.user.id, 'booking', Number(id), 'update',
+    {
+      checkin: b.checkin,
+      checkout: b.checkout,
+      adults: b.adults,
+      children: b.children,
+      status: b.status,
+      total_cents: b.total_cents
+    },
+    { checkin, checkout, adults, children, status, total_cents: q.total_cents }
+  );
 
   res.redirect(`/admin/bookings/${id}`);
 });
 
 app.post('/admin/bookings/:id/cancel', requireLogin, (req, res) => {
   const id = req.params.id;
-  const exists = db.prepare('SELECT 1 FROM bookings WHERE id = ?').get(id);
-  if (!exists) return res.status(404).send('Reserva não encontrada');
+  const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!existing) return res.status(404).send('Reserva não encontrada');
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  logChange(req.user.id, 'booking', Number(id), 'cancel', {
+    checkin: existing.checkin,
+    checkout: existing.checkout,
+    guest_name: existing.guest_name,
+    status: existing.status,
+    unit_id: existing.unit_id
+  }, null);
   const back = req.get('referer') || '/admin/bookings';
   res.redirect(back);
 });
 
 // (Opcional) Apagar definitivamente
 app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
-  db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+  const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
+  if (existing) {
+    db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+    logChange(req.user.id, 'booking', Number(req.params.id), 'delete', {
+      checkin: existing.checkin,
+      checkout: existing.checkout,
+      unit_id: existing.unit_id,
+      guest_name: existing.guest_name
+    }, null);
+  }
   res.redirect('/admin/bookings');
+});
+
+app.get('/admin/auditoria', requireLogin, (req, res) => {
+  const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
+  const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  const filters = [];
+  const params = [];
+  if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
+  const idNumber = Number(idRaw);
+  if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const logs = db.prepare(`
+    SELECT cl.*, u.username
+      FROM change_logs cl
+      JOIN users u ON u.id = cl.actor_id
+     ${where}
+     ORDER BY cl.created_at DESC
+     LIMIT 200
+  `).all(...params);
+
+  res.send(layout({
+    title: 'Auditoria',
+    user: req.user,
+    activeNav: 'audit',
+    body: html`
+      <h1 class="text-2xl font-semibold mb-4">Histórico de alterações</h1>
+      <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+        <div class="grid gap-1">
+          <label class="text-sm text-slate-600">Entidade</label>
+          <select class="input" name="entity">
+            <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+            <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+            <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+          </select>
+        </div>
+        <div class="grid gap-1">
+          <label class="text-sm text-slate-600">ID</label>
+          <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+        </div>
+        <div class="self-end">
+          <button class="btn btn-primary w-full">Filtrar</button>
+        </div>
+      </form>
+
+      <div class="space-y-4">
+        ${logs.length ? logs.map(log => html`
+          <article class="card p-4 grid gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
+              <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+              <span class="pill-indicator">${esc(log.entity_type)} #${log.entity_id}</span>
+              <span class="text-slate-500">por ${esc(log.username)}</span>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
+          </article>
+        `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
+      </div>
+    `
+  }));
 });
 
 // ===================== Utilizadores (admin) =====================
