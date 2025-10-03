@@ -416,6 +416,15 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
         .search-hero{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:32px;text-align:center;}
         .search-title{font-size:2.25rem;font-weight:600;color:#5a5c68;margin:0;}
+        .search-intro{color:#5f616d;font-size:1.05rem;line-height:1.7;margin:0 auto;max-width:720px;}
+        .reassurance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-top:8px;}
+        .reassurance-card{background:rgba(255,255,255,.85);border-radius:18px;padding:18px 20px;border:1px solid rgba(148,163,184,.35);display:flex;flex-direction:column;gap:6px;box-shadow:0 18px 32px rgba(148,163,184,.14);}
+        .reassurance-icon{width:32px;height:32px;border-radius:999px;background:linear-gradient(130deg,#34d399,#0ea5e9);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;align-self:flex-start;}
+        .reassurance-title{font-size:.95rem;font-weight:600;color:#374151;}
+        .reassurance-copy{font-size:.85rem;color:#64748b;margin:0;line-height:1.5;}
+        .progress-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:0;padding:0;list-style:none;color:#475569;font-size:.95rem;}
+        .progress-step{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:999px;background:#f1f5f9;border:1px solid rgba(148,163,184,.35);font-weight:500;}
+        .progress-step.is-active{background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;box-shadow:0 12px 22px rgba(255,107,0,.25);}
         .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:#f7f6f9;border-radius:28px;padding:32px;border:1px solid rgba(255,166,67,.4);box-shadow:0 24px 42px rgba(15,23,42,.08);}
         .search-field{display:flex;flex-direction:column;gap:10px;text-align:left;}
         .search-field label{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:#9b9ca6;}
@@ -425,8 +434,22 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .search-submit{display:flex;justify-content:flex-end;}
         .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
         .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(255,107,0,.25);}
+        .search-button[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none;transform:none;}
+        .search-button[data-loading="true"]{position:relative;color:transparent;}
+        .search-button[data-loading="true"]::after{content:'A procurar...';color:#fff;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;}
+        .inline-feedback{border-radius:18px;padding:14px 18px;text-align:left;font-size:.9rem;display:flex;gap:12px;align-items:flex-start;line-height:1.5;}
+        .inline-feedback[data-variant="info"]{background:#ecfeff;border:1px solid #67e8f9;color:#155e75;}
+        .inline-feedback[data-variant="success"]{background:#ecfdf3;border:1px solid #4ade80;color:#166534;}
+        .inline-feedback[data-variant="warning"]{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;}
+        .inline-feedback[data-variant="danger"]{background:#fee2e2;border:1px solid #f87171;color:#991b1b;}
+        .inline-feedback strong{font-weight:600;}
+        .inline-feedback-icon{width:26px;height:26px;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;box-shadow:0 10px 20px rgba(15,23,42,.08);}
+        .pill-indicator{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:.75rem;font-weight:500;color:#475569;text-transform:uppercase;letter-spacing:.08em;}
+        .result-header{display:flex;flex-direction:column;gap:12px;margin-bottom:24px;}
+        .result-header .progress-steps{justify-content:flex-start;}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
-        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
         .gallery-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);padding:2rem;z-index:9999;opacity:0;pointer-events:none;transition:opacity .2s ease;}
         .gallery-overlay.show{opacity:1;pointer-events:auto;}
         .gallery-overlay .gallery-inner{position:relative;width:100%;max-width:min(960px,90vw);}
@@ -438,6 +461,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .gallery-overlay .gallery-prev{left:-1.5rem;}
         .gallery-overlay .gallery-next{right:-1.5rem;}
         .gallery-overlay .gallery-counter{font-weight:600;}
+        @keyframes spin{to{transform:rotate(360deg);}}
         @media (max-width:640px){
           .gallery-overlay{padding:1rem;}
           .gallery-overlay .gallery-close{top:.5rem;right:.5rem;}
@@ -466,6 +490,129 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           if (co && co.value && co.value <= ci) { co.value = ci; }
           if (co) co.min = ci;
         }
+        const FEEDBACK_ICONS = { info: 'ℹ', success: '✓', warning: '!', danger: '!' };
+        function renderFeedback(el, variant, headline, detail){
+          if (!el) return;
+          el.dataset.variant = variant;
+          const icon = FEEDBACK_ICONS[variant] || FEEDBACK_ICONS.info;
+          const headlineHtml = '<strong>' + headline + '</strong>';
+          const message = detail
+            ? '<div>' + headlineHtml + '<br/>' + detail + '</div>'
+            : '<div>' + headlineHtml + '</div>';
+          el.innerHTML = '<span class="inline-feedback-icon">' + icon + '</span>' + message;
+        }
+        function enhanceSearchForm(){
+          const form = document.querySelector('[data-search-form]');
+          if (!form || form.dataset.enhanced === 'true') return;
+          form.dataset.enhanced = 'true';
+          const checkin = form.querySelector('[name="checkin"]');
+          const checkout = form.querySelector('[name="checkout"]');
+          const adults = form.querySelector('[name="adults"]');
+          const children = form.querySelector('[name="children"]');
+          const property = form.querySelector('[name="property_id"]');
+          const submit = form.querySelector('[data-submit]');
+          const feedback = form.querySelector('[data-feedback]');
+          const update = () => {
+            let variant = 'info';
+            let headline = 'Comece por escolher as datas.';
+            let detail = 'Escolha check-in e check-out válidos para ver disponibilidade instantânea.';
+            let disabled = true;
+            if (checkin && checkin.value && (!checkout || !checkout.value)) {
+              variant = 'warning';
+              headline = 'Falta indicar a data de saída.';
+              detail = 'Escolha uma data de check-out posterior ao check-in para avançar.';
+            }
+            if (checkin && checkout && checkin.value && checkout.value) {
+              const ci = new Date(checkin.value);
+              const co = new Date(checkout.value);
+              if (co <= ci) {
+                variant = 'danger';
+                headline = 'Verifique as datas selecionadas.';
+                detail = 'O check-out deve ser posterior ao check-in. Ajuste as datas para continuar.';
+              } else {
+                const diff = Math.round((co - ci) / (1000 * 60 * 60 * 24));
+                const guestCount = (() => {
+                  const ad = adults ? Math.max(1, Number(adults.value || 1)) : 1;
+                  const ch = children ? Math.max(0, Number(children.value || 0)) : 0;
+                  let label = ad + ' adulto' + (ad > 1 ? 's' : '');
+                  if (ch > 0) {
+                    label += ' · ' + ch + ' criança' + (ch > 1 ? 's' : '');
+                  }
+                  return label;
+                })();
+                variant = 'success';
+                headline = 'Perfeito! Disponibilidade pronta a pesquisar.';
+                detail = diff + ' noite' + (diff > 1 ? 's' : '') + ' · ' + guestCount + (property && property.value ? ' · ' + property.options[property.selectedIndex].text : '');
+                disabled = false;
+              }
+            }
+            if (submit) {
+              submit.disabled = disabled;
+              if (disabled) submit.removeAttribute('data-loading');
+            }
+            renderFeedback(feedback, variant, headline, detail);
+          };
+          [checkin, checkout, adults, children, property]
+            .filter(Boolean)
+            .forEach(field => {
+              field.addEventListener('input', update);
+              field.addEventListener('change', update);
+            });
+          form.addEventListener('submit', () => {
+            if (submit) {
+              submit.setAttribute('data-loading', 'true');
+            }
+          });
+          update();
+        }
+        function enhanceBookingForm(){
+          const form = document.querySelector('[data-booking-form]');
+          if (!form || form.dataset.enhanced === 'true') return;
+          form.dataset.enhanced = 'true';
+          const feedback = form.querySelector('[data-booking-feedback]');
+          const adults = form.querySelector('input[name="adults"]');
+          const children = form.querySelector('input[name="children"]');
+          const required = Array.from(form.querySelectorAll('[data-required]'));
+          const occupancy = form.querySelector('[data-occupancy-summary]');
+          const update = () => {
+            const missing = required.filter(field => !String(field.value || '').trim());
+            if (occupancy) {
+              const ad = adults ? Math.max(0, Number(adults.value || 0)) : 0;
+              const ch = children ? Math.max(0, Number(children.value || 0)) : 0;
+              let summary = ad + ' adulto' + (ad !== 1 ? 's' : '');
+              if (ch > 0) summary += ' · ' + ch + ' criança' + (ch !== 1 ? 's' : '');
+              occupancy.textContent = summary;
+            }
+            if (missing.length > 0) {
+              const first = missing[0];
+              const label = first.getAttribute('placeholder') || first.getAttribute('aria-label') || (first.previousElementSibling ? first.previousElementSibling.textContent.trim() : 'campo obrigatório');
+              renderFeedback(feedback, 'warning', 'Ainda falta completar os dados.', 'Preencha ' + label.toLowerCase() + ' para finalizar com segurança.');
+            } else {
+              renderFeedback(feedback, 'success', 'Tudo pronto para confirmar!', 'Revise os dados e confirme para bloquear imediatamente a estadia.');
+            }
+          };
+          required.forEach(field => {
+            field.addEventListener('input', update);
+            field.addEventListener('change', update);
+          });
+          [adults, children]
+            .filter(Boolean)
+            .forEach(field => {
+              field.addEventListener('input', update);
+              field.addEventListener('change', update);
+            });
+          update();
+        }
+        function initFrontOffice(){
+          enhanceSearchForm();
+          enhanceBookingForm();
+        }
+        if (document.readyState !== 'loading') {
+          initFrontOffice();
+        } else {
+          document.addEventListener('DOMContentLoaded', initFrontOffice);
+        }
+        document.addEventListener('htmx:afterSwap', initFrontOffice);
         if (HAS_USER) {
           window.addEventListener('keydown', (e) => {
             if (e.key.toLowerCase() === 'm' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
@@ -677,8 +824,32 @@ app.get('/', (req, res) => {
     activeNav: 'search',
     body: html`
       <section class="search-hero">
-        <h1 class="search-title">Reservar a Casa</h1>
-        <form action="/search" method="get" class="search-form">
+        <span class="pill-indicator">Passo 1 de 3</span>
+        <h1 class="search-title">Reservar connosco é simples e seguro</h1>
+        <p class="search-intro">Escolha as datas ideais e veja em segundos as unidades disponíveis. Apostamos em clareza total: preços transparentes, mensagens imediatas e confirmações instantâneas.</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step is-active">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step">3. Confirme e relaxe</li>
+        </ul>
+        <div class="reassurance-grid">
+          <article class="reassurance-card">
+            <span class="reassurance-icon">✓</span>
+            <div class="reassurance-title">Disponibilidade em tempo real</div>
+            <p class="reassurance-copy">Garantimos que as unidades apresentadas estão mesmo livres para as datas escolhidas.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">💬</span>
+            <div class="reassurance-title">Feedback imediato</div>
+            <p class="reassurance-copy">Alertas e confirmações visuais acontecem na hora, sem recarregar a página.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">📱</span>
+            <div class="reassurance-title">Pensado para mobile</div>
+            <p class="reassurance-copy">Tudo funciona no seu telemóvel: campos grandes, texto legível e poucos cliques.</p>
+          </article>
+        </div>
+        <form action="/search" method="get" class="search-form" data-search-form>
           <div class="search-field">
             <label for="checkin">Datas</label>
             <div class="search-dates">
@@ -702,7 +873,11 @@ app.get('/', (req, res) => {
             </select>
           </div>
           <div class="search-submit">
-            <button class="search-button" type="submit">Procurar</button>
+            <button class="search-button" type="submit" data-submit>Procurar</button>
+          </div>
+          <div class="inline-feedback" data-feedback data-variant="info" aria-live="polite" role="status">
+            <span class="inline-feedback-icon">ℹ</span>
+            <div><strong>Comece por escolher as datas.</strong><br/>Escolha check-in e check-out válidos para ver disponibilidade instantânea.</div>
           </div>
         </form>
       </section>
@@ -752,11 +927,23 @@ app.get('/search', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Alojamentos disponíveis</h1>
-      <p class="mb-4 text-slate-600">
-        ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
-        · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
-      </p>
+      <div class="result-header">
+        <span class="pill-indicator">Passo 2 de 3</span>
+        <h1 class="text-2xl font-semibold">Alojamentos disponíveis</h1>
+        <p class="text-slate-600">
+          ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
+          · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
+        </p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step is-active">2. Escolha o alojamento</li>
+          <li class="progress-step">3. Confirme e relaxe</li>
+        </ul>
+        <div class="inline-feedback" data-variant="info" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">💡</span>
+          <div><strong>Selecione a unidade perfeita.</strong><br/>Clique em "Reservar" para confirmar em apenas mais um passo.</div>
+        </div>
+      </div>
       <div class="grid md:grid-cols-2 gap-4">
         ${available.map(u => {
           const galleryData = esc(JSON.stringify(u.images.map(img => ({ url: img.url, alt: img.alt }))));
@@ -839,7 +1026,16 @@ app.get('/book/:unitId', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">${u.property_name} – ${u.name}</h1>
+      <div class="result-header">
+        <span class="pill-indicator">Passo 3 de 3</span>
+        <h1 class="text-2xl font-semibold">${u.property_name} – ${u.name}</h1>
+        <p class="text-slate-600">Último passo antes de garantir a estadia.</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step is-active">3. Confirme e relaxe</li>
+        </ul>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="card p-4">
           <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
@@ -847,14 +1043,15 @@ app.get('/book/:unitId', (req, res) => {
             <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
             <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
             <li>Noites: <strong>${quote.nights}</strong></li>
-            <li>Hóspedes: <strong>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
+            <li>Hóspedes: <strong data-occupancy-summary>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
             <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
             <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
           </ul>
           ${unitFeaturesBooking}
         </div>
-        <form class="card p-4" method="post" action="/book">
+        <form class="card p-4" method="post" action="/book" data-booking-form>
           <h2 class="font-semibold mb-3">Dados do hóspede</h2>
+          <p class="text-sm text-slate-500 mb-3">Confirmamos a reserva assim que estes dados forem submetidos. Usamos esta informação apenas para contacto com o hóspede.</p>
           <input type="hidden" name="unit_id" value="${u.id}" />
           <input type="hidden" name="checkin" value="${checkin}" />
           <input type="hidden" name="checkout" value="${checkout}" />
@@ -868,15 +1065,19 @@ app.get('/book/:unitId', (req, res) => {
               <input required type="number" min="0" name="children" value="${children}" class="input"/>
             </div>
           </div>
+          <div class="inline-feedback mt-4" data-booking-feedback data-variant="info" aria-live="polite" role="status">
+            <span class="inline-feedback-icon">ℹ</span>
+            <div><strong>Preencha os dados do hóspede.</strong><br/>Os campos abaixo permitem-nos enviar a confirmação personalizada.</div>
+          </div>
           <div class="grid gap-3 mt-2">
-            <input required name="guest_name" class="input" placeholder="Nome completo" />
-            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" />
-            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" />
-            <input required type="email" name="guest_email" class="input" placeholder="Email" />
+            <input required name="guest_name" class="input" placeholder="Nome completo" data-required />
+            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" data-required />
+            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" data-required />
+            <input required type="email" name="guest_email" class="input" placeholder="Email" data-required />
             ${user ? `
               <div>
                 <label class="text-sm">Agencia</label>
-                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required />
+                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required data-required />
               </div>
             ` : ''}
             <button class="btn btn-primary">Confirmar Reserva</button>
@@ -962,9 +1163,21 @@ app.get('/booking/:id', (req, res) => {
     user,
     activeNav: 'search',
     body: html`
-      <div class="card p-6">
-        <h1 class="text-2xl font-semibold mb-2">Reserva confirmada</h1>
-        <p class="text-slate-600 mb-6">Obrigado, ${b.guest_name}. Enviámos um email de confirmação para ${b.guest_email} (mock).</p>
+      <div class="result-header">
+        <span class="pill-indicator">Reserva finalizada</span>
+        <h1 class="text-2xl font-semibold">Reserva confirmada</h1>
+        <p class="text-slate-600">Enviámos a confirmação para ${b.guest_email}. Obrigado por reservar connosco!</p>
+        <ul class="progress-steps" aria-label="Passos da reserva">
+          <li class="progress-step">1. Defina datas</li>
+          <li class="progress-step">2. Escolha o alojamento</li>
+          <li class="progress-step is-active">3. Confirme e relaxe</li>
+        </ul>
+      </div>
+      <div class="card p-6 space-y-6">
+        <div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">✓</span>
+          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
+        </div>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
             <div class="font-semibold">${b.property_name} – ${b.unit_name}</div>
@@ -982,7 +1195,7 @@ app.get('/booking/:id', (req, res) => {
             <div class="text-xs text-slate-500">Status: ${b.status}</div>
           </div>
         </div>
-        <div class="mt-6"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
+        <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
       </div>
     `
   }));
