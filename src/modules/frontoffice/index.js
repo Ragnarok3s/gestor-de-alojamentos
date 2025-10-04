@@ -474,6 +474,16 @@ app.get('/booking/:id', (req, res) => {
   const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
   rememberActiveBrandingProperty(res, b.property_id);
 
+  const safeGuestName = esc(b.guest_name || '');
+  const safeGuestEmail = esc(b.guest_email || '');
+  const safeGuestPhone = b.guest_phone ? esc(b.guest_phone) : '-';
+  const guestNationalityHtml = b.guest_nationality
+    ? `<span class="text-slate-500">(${esc(b.guest_nationality)})</span>`
+    : '';
+  const agencyHtml = b.agency ? `<div>Agencia: <strong>${esc(b.agency)}</strong></div>` : '';
+  const safePropertyName = esc(b.property_name || '');
+  const safeUnitName = esc(b.unit_name || '');
+
   res.send(layout({
     title: 'Reserva Confirmada',
     user,
@@ -483,7 +493,7 @@ app.get('/booking/:id', (req, res) => {
       <div class="result-header">
         <span class="pill-indicator">Reserva finalizada</span>
         <h1 class="text-2xl font-semibold">Reserva confirmada</h1>
-        <p class="text-slate-600">Enviámos a confirmação para ${b.guest_email}. Obrigado por reservar connosco!</p>
+        <p class="text-slate-600">Enviámos a confirmação para ${safeGuestEmail}. Obrigado por reservar connosco!</p>
         <ul class="progress-steps" aria-label="Passos da reserva">
           <li class="progress-step">1. Defina datas</li>
           <li class="progress-step">2. Escolha o alojamento</li>
@@ -497,11 +507,11 @@ app.get('/booking/:id', (req, res) => {
         </div>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
-            <div class="font-semibold">${b.property_name} – ${b.unit_name}</div>
-            <div>Hóspede: <strong>${b.guest_name}</strong> ${b.guest_nationality?`<span class="text-slate-500">(${b.guest_nationality})</span>`:''}</div>
-            <div>Contacto: <strong>${b.guest_phone || '-'}</strong> &middot; <strong>${b.guest_email}</strong></div>
+            <div class="font-semibold">${safePropertyName} – ${safeUnitName}</div>
+            <div>Hóspede: <strong>${safeGuestName}</strong> ${guestNationalityHtml}</div>
+            <div>Contacto: <strong>${safeGuestPhone}</strong> &middot; <strong>${safeGuestEmail}</strong></div>
             <div>Ocupação: <strong>${b.adults} adulto(s)${b.children?` + ${b.children} criança(s)`:''}</strong></div>
-            ${b.agency ? `<div>Agencia: <strong>${b.agency}</strong></div>` : ''}
+            ${agencyHtml}
             <div>Check-in: <strong>${dayjs(b.checkin).format('DD/MM/YYYY')}</strong></div>
             <div>Check-out: <strong>${dayjs(b.checkout).format('DD/MM/YYYY')}</strong></div>
             <div>Noites: ${dateRangeNights(b.checkin, b.checkout).length}</div>
