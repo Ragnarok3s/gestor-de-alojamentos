@@ -74,7 +74,11 @@ module.exports = function registerBackoffice(app, context) {
     compressImage,
     cloneBrandingStoreState,
     computeBrandingTheme,
-    isSafeRedirectTarget
+    isSafeRedirectTarget,
+    insertBlockStmt,
+    adminBookingUpdateStmt,
+    rescheduleBookingUpdateStmt,
+    rescheduleBlockUpdateStmt
   } = context;
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
