@@ -1847,6 +1847,20 @@ function requireAdmin(req,res,next){
   next();
 }
 
+function requireBackofficeAccess(req, res, next) {
+  if (!req.user) {
+    const sess = getSession(req.cookies.adm);
+    if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+    req.user = buildUserContext(sess);
+  }
+
+  const role = req.user && req.user.role;
+  if (role === MASTER_ROLE || role === 'gestao' || role === 'direcao') return next();
+
+  if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+  return res.status(403).send('Sem permissão');
+}
+
 function requirePermission(permission) {
   return (req, res, next) => {
     if (!req.user) {
@@ -2543,6 +2557,7 @@ const context = {
   getSession,
   destroySession,
   requireLogin,
+  requireBackofficeAccess,
   requirePermission,
   requireAnyPermission,
   requireAdmin,
