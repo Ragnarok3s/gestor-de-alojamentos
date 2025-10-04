@@ -27,6 +27,7 @@ module.exports = function registerBackoffice(app, context) {
     automationCache,
     automationSeverityStyle,
     formatDateRangeShort,
+    capitalizeMonth,
     safeJsonParse,
     wantsJson,
     parseOperationalFilters,
@@ -59,7 +60,10 @@ module.exports = function registerBackoffice(app, context) {
     writeAutomationState,
     AUTO_CHAIN_THRESHOLD,
     AUTO_CHAIN_CLEANUP_NIGHTS,
-    HOT_DEMAND_THRESHOLD
+    HOT_DEMAND_THRESHOLD,
+    formatJsonSnippet,
+    parsePropertyId,
+    slugify
   } = context;
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};

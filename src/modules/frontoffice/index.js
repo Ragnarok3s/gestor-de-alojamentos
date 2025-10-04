@@ -10,6 +10,7 @@ module.exports = function registerFrontoffice(app, context) {
     buildUserContext,
     resolveBrandingForRequest,
     parsePropertyId,
+    formatMonthYear,
     rememberActiveBrandingProperty,
     userCan,
     selectPropertyById,
