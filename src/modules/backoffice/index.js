@@ -3621,6 +3621,16 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     ...u,
     role_key: normalizeRole(u.role)
   }));
+  const isDevOperator = req.user && req.user.role === MASTER_ROLE;
+  const roleOptions = [
+    { key: 'rececao', label: ROLE_LABELS.rececao },
+    { key: 'gestao', label: ROLE_LABELS.gestao },
+    { key: 'direcao', label: ROLE_LABELS.direcao },
+    { key: 'limpeza', label: ROLE_LABELS.limpeza }
+  ];
+  if (isDevOperator) {
+    roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
+  }
   const theme = resolveBrandingForRequest(req);
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
@@ -3656,7 +3666,158 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </form>
         <p class="text-sm text-slate-500 mt-2">Ao alterar, as sessões desse utilizador são terminadas.</p>
       </section>
+
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Atualizar privilégios</h2>
+        <form method="post" action="/admin/users/role" class="grid gap-2">
+          <label class="text-sm" for="user-role-user">Selecionar utilizador</label>
+          <select id="user-role-user" required name="user_id" class="input">
+            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`).join('')}
+          </select>
+          <label class="text-sm" for="user-role-role">Novo perfil</label>
+          <select id="user-role-role" name="role" class="input">
+            ${roleOptions.map(opt => `<option value="${opt.key}">${esc(opt.label)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary">Atualizar privilégios</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">As sessões ativas serão terminadas ao atualizar as permissões.</p>
+      </section>
     </div>
+
+    <section class="card p-4 mt-6">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h2 class="font-semibold">Utilizadores registados</h2>
+        ${isDevOperator ? '<span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Acesso total do desenvolvedor</span>' : ''}
+      </div>
+      <p class="text-sm text-slate-500 mb-4">
+        ${isDevOperator
+          ? 'As passwords são guardadas encriptadas. Para ver o hash de uma conta precisa de confirmar a sua password.'
+          : 'Contacte a direção ou desenvolvimento para obter suporte adicional.'}
+      </p>
+      <div class="responsive-table">
+        <table class="w-full text-sm">
+          <thead>
+            <tr>
+              <th class="text-left px-4 py-2">Utilizador</th>
+              <th class="text-left px-4 py-2">Perfil</th>
+              <th class="text-left px-4 py-2">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${users.length ? users.map(u => `
+              <tr>
+                <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(u.username)}</span></td>
+                <td class="px-4 py-2" data-label="Perfil"><span class="table-cell-value">${esc(ROLE_LABELS[u.role_key] || u.role_key)}</span></td>
+                <td class="px-4 py-2" data-label="Ações">
+                  ${isDevOperator
+                    ? `<button type="button" class="btn btn-light btn-xs js-reveal-password" data-user-id="${u.id}" data-username="${esc(u.username)}">Ver password</button>`
+                    : '<span class="text-xs text-slate-400">—</span>'}
+                </td>
+              </tr>
+            `).join('') : '<tr><td class="px-4 py-3 text-slate-500" colspan="3">Sem utilizadores registados.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    ${isDevOperator ? html`
+      <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">
+        <div class="modal-card">
+          <h2 id="reveal-password-title" class="text-lg font-semibold mb-2">Confirmar identidade</h2>
+          <p class="text-sm text-slate-600 mb-4">Volte a introduzir a sua password para ver o hash da conta <strong id="reveal-password-target"></strong>.</p>
+          <form id="reveal-password-form" class="grid gap-3">
+            <input type="hidden" name="user_id" />
+            <label class="grid gap-1 text-sm">
+              <span>Password do desenvolvedor</span>
+              <input name="confirm_password" type="password" class="input" required autocomplete="current-password" />
+            </label>
+            <div id="reveal-password-error" class="text-sm text-rose-600 hidden"></div>
+            <pre id="reveal-password-result" class="hidden bg-slate-100 rounded p-3 text-xs overflow-x-auto"></pre>
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" class="btn btn-muted" data-modal-close>Cancelar</button>
+              <button type="submit" class="btn btn-primary">Ver hash</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <style>
+        .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,0.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:1rem;}
+        .modal-card{background:#fff;border-radius:0.75rem;max-width:26rem;width:100%;box-shadow:0 25px 50px -12px rgba(15,23,42,0.45);padding:1.5rem;}
+        .modal-hidden{display:none;}
+      </style>
+      <script>
+        (function(){
+          const modal = document.getElementById('reveal-password-modal');
+          if(!modal) return;
+          const form = document.getElementById('reveal-password-form');
+          const targetNameEl = document.getElementById('reveal-password-target');
+          const errorEl = document.getElementById('reveal-password-error');
+          const resultEl = document.getElementById('reveal-password-result');
+          const passwordInput = form.querySelector('input[name="confirm_password"]');
+          function closeModal(){
+            modal.classList.add('modal-hidden');
+            form.reset();
+            errorEl.classList.add('hidden');
+            resultEl.classList.add('hidden');
+            resultEl.textContent='';
+          }
+          document.querySelectorAll('.js-reveal-password').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const userId = btn.getAttribute('data-user-id');
+              const username = btn.getAttribute('data-username');
+              form.user_id.value = userId;
+              targetNameEl.textContent = username;
+              errorEl.classList.add('hidden');
+              errorEl.textContent='';
+              resultEl.classList.add('hidden');
+              resultEl.textContent='';
+              modal.classList.remove('modal-hidden');
+              setTimeout(() => passwordInput.focus(), 50);
+            });
+          });
+          modal.addEventListener('click', evt => {
+            if(evt.target === modal){
+              closeModal();
+            }
+          });
+          document.querySelectorAll('[data-modal-close]').forEach(btn => btn.addEventListener('click', closeModal));
+          document.addEventListener('keydown', evt => {
+            if(evt.key === 'Escape' && !modal.classList.contains('modal-hidden')){
+              closeModal();
+            }
+          });
+          form.addEventListener('submit', async evt => {
+            evt.preventDefault();
+            errorEl.classList.add('hidden');
+            resultEl.classList.add('hidden');
+            resultEl.textContent='';
+            const payload = {
+              user_id: form.user_id.value,
+              confirm_password: passwordInput.value
+            };
+            try{
+              const response = await fetch('/admin/users/reveal-password', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+              });
+              const data = await response.json();
+              if(!response.ok){
+                throw new Error(data && data.error ? data.error : 'Não foi possível validar as credenciais.');
+              }
+              resultEl.textContent = data.password_hash || 'Hash indisponível.';
+              resultEl.classList.remove('hidden');
+            } catch(err){
+              errorEl.textContent = err.message || 'Falha ao confirmar identidade.';
+              errorEl.classList.remove('hidden');
+            }
+          });
+        })();
+      </script>
+    ` : ''}
   `}));
 });
 
@@ -3684,5 +3845,51 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
   logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/role', requireAdmin, (req,res)=>{
+  const { user_id, role } = req.body;
+  if (!user_id || !role) return res.status(400).send('Dados inválidos');
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(user_id);
+  if (!target) return res.status(404).send('Utilizador não encontrado');
+  const newRole = normalizeRole(role);
+  const currentRole = normalizeRole(target.role);
+  const actorIsDev = req.user && req.user.role === MASTER_ROLE;
+  if ((currentRole === MASTER_ROLE || newRole === MASTER_ROLE) && !actorIsDev) {
+    return res.status(403).send('Apenas o desenvolvedor pode gerir contas de desenvolvimento.');
+  }
+  if (newRole === currentRole) {
+    return res.redirect('/admin/utilizadores');
+  }
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+  logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
+  logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
+  res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{
+  if (!req.user || req.user.role !== MASTER_ROLE) {
+    return res.status(403).json({ error: 'Sem permissão para consultar esta informação.' });
+  }
+  const { user_id, confirm_password } = req.body || {};
+  if (!user_id || !confirm_password) {
+    return res.status(400).json({ error: 'É necessário indicar o utilizador e confirmar a password.' });
+  }
+  const self = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (!self || !bcrypt.compareSync(confirm_password, self.password_hash)) {
+    logActivity(req.user.id, 'user:password_reveal_denied', 'user', Number(user_id), {});
+    return res.status(401).json({ error: 'Password inválida.' });
+  }
+  const target = db.prepare('SELECT id, username, password_hash FROM users WHERE id = ?').get(user_id);
+  if (!target) {
+    return res.status(404).json({ error: 'Utilizador não encontrado.' });
+  }
+  logActivity(req.user.id, 'user:password_reveal', 'user', Number(target.id), { username: target.username });
+  res.json({
+    user_id: target.id,
+    username: target.username,
+    password_hash: target.password_hash
+  });
 });
 };
