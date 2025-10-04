@@ -8,6 +8,7 @@ module.exports = function registerAuthRoutes(app, context) {
     normalizeRole,
     buildUserContext,
     userCan,
+    userHasBackofficeAccess,
     createSession,
     logSessionEvent,
     logActivity,
@@ -64,9 +65,10 @@ module.exports = function registerAuthRoutes(app, context) {
     logActivity(user.id, 'auth:login', null, null, {});
 
     const safeNext = typeof nxt === 'string' && isSafeRedirectTarget(nxt) ? nxt : null;
-    const defaultRedirect = userCan(userContext, 'dashboard.view')
-      ? '/admin'
-      : userCan(userContext, 'housekeeping.view')
+    const defaultRedirect =
+      userHasBackofficeAccess(userContext) && userCan(userContext, 'dashboard.view')
+        ? '/admin'
+        : userCan(userContext, 'housekeeping.view')
       ? '/limpeza/tarefas'
       : userCan(userContext, 'calendar.view')
       ? '/calendar'
