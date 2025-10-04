@@ -7,6 +7,7 @@ module.exports = function registerBackoffice(app, context) {
     esc,
     eur,
     bcrypt,
+    crypto,
     fs,
     fsp,
     path,
@@ -58,12 +59,19 @@ module.exports = function registerBackoffice(app, context) {
     runAutomationSweep,
     readAutomationState,
     writeAutomationState,
+    persistBrandingStore,
     AUTO_CHAIN_THRESHOLD,
     AUTO_CHAIN_CLEANUP_NIGHTS,
     HOT_DEMAND_THRESHOLD,
     formatJsonSnippet,
     parsePropertyId,
-    slugify
+    slugify,
+    sanitizeBrandingTheme,
+    extractBrandingSubmission,
+    removeBrandingLogo,
+    compressImage,
+    cloneBrandingStoreState,
+    computeBrandingTheme
   } = context;
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
@@ -1760,8 +1768,9 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
   const theme = resolveBrandingForRequest(req, { propertyId, propertyName: propertyRow ? propertyRow.name : null });
   if (propertyQuery !== null) rememberActiveBrandingProperty(res, propertyId);
 
-  const globalThemeRaw = brandingStore.global || {};
-  const propertyThemeRaw = propertyId ? (brandingStore.properties[propertyId] || {}) : {};
+  const store = cloneBrandingStoreState();
+  const globalThemeRaw = store.global || {};
+  const propertyThemeRaw = propertyId ? (store.properties[propertyId] || {}) : {};
   const formMode = propertyThemeRaw.mode || globalThemeRaw.mode || 'quick';
   const formCorner = propertyThemeRaw.cornerStyle || globalThemeRaw.cornerStyle || 'rounded';
   const formBrandName = propertyThemeRaw.brandName ?? globalThemeRaw.brandName ?? theme.brandName;
@@ -1787,7 +1796,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
       default: return '';
     }
   })();
-  const savedThemes = brandingStore.savedThemes || [];
+  const savedThemes = store.savedThemes || [];
   const propertyLabel = propertyRow ? propertyRow.name : 'tema global';
 
   res.send(layout({
@@ -2147,7 +2156,7 @@ app.post('/admin/identidade-visual', requireAdmin, (req, res) => {
     const actionRaw = typeof (req.body && req.body.action) === 'string' ? req.body.action.toLowerCase() : 'save';
     const action = ['save','reset','save_template','apply_template','delete_template','remove_logo'].includes(actionRaw) ? actionRaw : 'save';
     const store = cloneBrandingStoreState();
-    const previousScope = propertyId ? (brandingStore.properties[propertyId] || {}) : (brandingStore.global || {});
+    const previousScope = propertyId ? (store.properties[propertyId] || {}) : (store.global || {});
     let previousLogo = previousScope.logoFile || null;
 
     try {
@@ -2178,8 +2187,9 @@ app.post('/admin/identidade-visual', requireAdmin, (req, res) => {
         persistBrandingStore(store);
         if (propertyId) rememberActiveBrandingProperty(res, propertyId);
         await cleanupUpload();
-        const oldLogo = propertyId ? (brandingStore.properties[propertyId]?.logoFile || null) : (brandingStore.global.logoFile || null);
-        if (oldLogo && (!appliedTheme.logoFile || appliedTheme.logoFile !== oldLogo)) await removeBrandingLogo(oldLogo);
+        if (previousLogo && (!appliedTheme.logoFile || appliedTheme.logoFile !== previousLogo)) {
+          await removeBrandingLogo(previousLogo);
+        }
         return res.redirect(redirectWith('success', 'applied'));
       }
 
