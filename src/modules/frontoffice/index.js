@@ -4,6 +4,7 @@ module.exports = function registerFrontoffice(app, context) {
     html,
     layout,
     esc,
+    crypto,
     dayjs,
     eur,
     getSession,
@@ -400,6 +401,7 @@ app.post('/book', (req, res) => {
   if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
 
   const trx = db.transaction(() => {
+    const confirmationToken = crypto.randomBytes(16).toString('hex');
     const conflicts = db.prepare(
       `SELECT 1 FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)
        UNION ALL
@@ -412,17 +414,31 @@ app.post('/book', (req, res) => {
     const total = quote.total_cents;
 
     const stmt = db.prepare(
-      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref, confirmation_token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    const r = stmt.run(unit_id, guest_name, guest_email, guest_nationality || null, guest_phone || null,
-                       agencyValue, adults, children, checkin, checkout, total, 'CONFIRMED', null);
-    return r.lastInsertRowid;
+    const r = stmt.run(
+      unit_id,
+      guest_name,
+      guest_email,
+      guest_nationality || null,
+      guest_phone || null,
+      agencyValue,
+      adults,
+      children,
+      checkin,
+      checkout,
+      total,
+      'CONFIRMED',
+      null,
+      confirmationToken
+    );
+    return { id: r.lastInsertRowid, confirmationToken };
   });
 
   try {
-    const id = trx();
-    res.redirect(`/booking/${id}`);
+    const { id, confirmationToken } = trx();
+    res.redirect(`/booking/${id}?token=${confirmationToken}`);
   } catch (e) {
     if (e.message === 'conflict') return res.status(409).send('Datas indisponíveis. Tente novamente.');
     if (e.message && e.message.startsWith('minstay:')) return res.status(400).send('Estadia mínima: ' + e.message.split(':')[1] + ' noites');
@@ -433,7 +449,9 @@ app.post('/book', (req, res) => {
 
 app.get('/booking/:id', (req, res) => {
   const sess = getSession(req.cookies.adm);
-  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+  const viewer = sess ? buildUserContext(sess) : undefined;
+  const user = viewer;
+  const requestedToken = typeof req.query.token === 'string' ? req.query.token.trim() : '';
 
   const b = db.prepare(
     `SELECT b.*, u.name as unit_name, u.property_id, p.name as property_name
@@ -443,6 +461,15 @@ app.get('/booking/:id', (req, res) => {
      WHERE b.id = ?`
   ).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
+
+  const viewerCanSeeBooking = viewer && userCan(viewer, 'bookings.view');
+  if (requestedToken) {
+    if (requestedToken !== b.confirmation_token) {
+      return res.status(403).send('Pedido não autorizado');
+    }
+  } else if (!viewerCanSeeBooking) {
+    return res.status(403).send('Pedido não autorizado');
+  }
 
   const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
   rememberActiveBrandingProperty(res, b.property_id);
