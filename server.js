@@ -1068,9 +1068,11 @@ if (!masterUser) {
 // ===================== Uploads =====================
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
+const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
+ensureDir(UPLOAD_BRANDING);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1090,6 +1092,26 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype || '');
+    cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
+  }
+});
+
+const brandingStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    ensureDir(UPLOAD_BRANDING);
+    cb(null, UPLOAD_BRANDING);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname || '') || '.png').toLowerCase();
+    cb(null, crypto.randomBytes(8).toString('hex') + ext);
+  }
+});
+
+const uploadBrandingAsset = multer({
+  storage: brandingStorage,
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /image\/(png|jpe?g|webp|gif|svg\+xml)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
   }
 });
@@ -1114,6 +1136,158 @@ async function compressImage(filePath) {
   } catch (err) {
     console.warn('Compressão de imagem falhou para', filePath, '-', err.message);
   }
+}
+
+function normalizeHexColor(value, fallback = null) {
+  if (!value) return fallback;
+  const str = String(value).trim();
+  const match = str.match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return fallback;
+  return `#${match[1].toLowerCase()}`;
+}
+
+function hexToRgb(hex) {
+  const clean = String(hex || '').replace('#', '');
+  if (clean.length !== 6) return null;
+  return {
+    r: parseInt(clean.slice(0, 2), 16),
+    g: parseInt(clean.slice(2, 4), 16),
+    b: parseInt(clean.slice(4, 6), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  return `#${clamp(r).toString(16).padStart(2, '0')}${clamp(g).toString(16).padStart(2, '0')}${clamp(b).toString(16).padStart(2, '0')}`;
+}
+
+function mixColors(hexA, hexB, ratio) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return hexA;
+  const t = Math.max(0, Math.min(1, Number(ratio))); 
+  return rgbToHex({
+    r: a.r * (1 - t) + b.r * t,
+    g: a.g * (1 - t) + b.g * t,
+    b: a.b * (1 - t) + b.b * t
+  });
+}
+
+function contrastColor(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#ffffff';
+  const luminance = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  return luminance > 0.6 ? '#0f172a' : '#ffffff';
+}
+
+function sanitizeBrandingStore(raw) {
+  const cleaned = {};
+  if (!raw || typeof raw !== 'object') return cleaned;
+
+  if (raw.brandName !== undefined) {
+    const val = String(raw.brandName || '').trim();
+    if (val) cleaned.brandName = val.slice(0, 80);
+  }
+  if (raw.brandInitials !== undefined) {
+    const letters = String(raw.brandInitials || '')
+      .replace(/[^\p{L}0-9]/gu, '')
+      .toUpperCase()
+      .slice(0, 3);
+    if (letters) cleaned.brandInitials = letters;
+  }
+  if (raw.tagline !== undefined) {
+    const tagline = String(raw.tagline || '').trim();
+    if (tagline) cleaned.tagline = tagline.slice(0, 140);
+  }
+  if (raw.accentColor !== undefined) {
+    const accent = normalizeHexColor(raw.accentColor, null);
+    if (accent) cleaned.accentColor = accent;
+  }
+  if (raw.gradientFrom !== undefined) {
+    const from = normalizeHexColor(raw.gradientFrom, null);
+    if (from) cleaned.gradientFrom = from;
+  }
+  if (raw.gradientTo !== undefined) {
+    const to = normalizeHexColor(raw.gradientTo, null);
+    if (to) cleaned.gradientTo = to;
+  }
+  if (raw.logoFile !== undefined) {
+    const file = String(raw.logoFile || '').trim();
+    if (/^[a-f0-9]{16}\.[a-z0-9]+$/i.test(file)) cleaned.logoFile = file;
+  }
+  if (raw.logoAlt !== undefined) {
+    const alt = String(raw.logoAlt || '').trim();
+    if (alt) cleaned.logoAlt = alt.slice(0, 140);
+  }
+
+  return cleaned;
+}
+
+const BRANDING_DEFAULTS = {
+  brandName: 'Gestor de Alojamentos',
+  brandInitials: 'GA',
+  tagline: 'Reservas com confiança e profissionalismo.',
+  accentColor: '#0f172a',
+  gradientFrom: '#ff5a91',
+  gradientTo: '#ffb347'
+};
+
+let brandingStore = sanitizeBrandingStore(readAutomationState('branding'));
+
+function computeBranding(state) {
+  const store = sanitizeBrandingStore(state);
+  const brandName = store.brandName || BRANDING_DEFAULTS.brandName;
+  const accentColor = store.accentColor || BRANDING_DEFAULTS.accentColor;
+  const gradientFrom = store.gradientFrom || BRANDING_DEFAULTS.gradientFrom;
+  const gradientTo = store.gradientTo || BRANDING_DEFAULTS.gradientTo;
+  const fallbackInitials = brandName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase())
+    .join('')
+    .slice(0, 3) || BRANDING_DEFAULTS.brandInitials;
+  const brandInitials = store.brandInitials || fallbackInitials;
+  const accentContrast = contrastColor(accentColor);
+  const softBorder = mixColors(gradientFrom, '#ffffff', 0.65);
+  const softBg = mixColors(gradientFrom, '#ffffff', 0.9);
+  const softRing = mixColors(gradientFrom, '#ffffff', 0.8);
+  const calloutBg = mixColors(accentColor, '#ffffff', 0.92);
+  const logoFile = store.logoFile || null;
+  const logoAlt = store.logoAlt || brandName;
+  const logoPath = logoFile ? `/uploads/branding/${logoFile}` : null;
+  return {
+    brandName,
+    brandInitials,
+    tagline: store.tagline || BRANDING_DEFAULTS.tagline,
+    accentColor,
+    gradientFrom,
+    gradientTo,
+    accentContrast,
+    softBorder,
+    softBg,
+    softRing,
+    calloutBg,
+    logoFile,
+    logoAlt,
+    logoPath
+  };
+}
+
+function persistBrandingStore(nextStore) {
+  brandingStore = sanitizeBrandingStore(nextStore);
+  writeAutomationState('branding', brandingStore);
+}
+
+function getBranding() {
+  return computeBranding(brandingStore);
+}
+
+async function removeBrandingLogo(fileName) {
+  if (!fileName) return;
+  const target = path.join(UPLOAD_BRANDING, fileName);
+  try {
+    await fsp.unlink(target);
+  } catch (_) {}
 }
 
 // ===================== Utils =====================
@@ -1440,25 +1614,42 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 }
 
 // ===================== Layout =====================
-function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
+function layout({ title, body, user, activeNav = '' }) {
+  const branding = getBranding();
+  const pageTitle = title ? `${title} · ${branding.brandName}` : branding.brandName;
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
   const can = (perm) => userCan(user, perm);
   const userPermissions = user ? Array.from(user.permissions || []) : [];
+  const brandLogoClass = branding.logoPath ? 'brand-logo has-image' : 'brand-logo';
+  const brandLogoContent = branding.logoPath
+    ? `<img src="${esc(branding.logoPath)}" alt="${esc(branding.logoAlt)}" class="brand-logo-img" />`
+    : `<span class="brand-logo-text">${esc(branding.brandInitials)}</span>`;
+  const brandTagline = branding.tagline ? `<span class="brand-tagline">${esc(branding.tagline)}</span>` : '';
   return html`<!doctype html>
   <html lang="pt">
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>${title}</title>
+      <title>${pageTitle}</title>
       <script src="https://unpkg.com/htmx.org@2.0.3"></script>
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest"></script>
       <style>
+        :root{
+          --brand-accent:${branding.accentColor};
+          --brand-accent-contrast:${branding.accentContrast};
+          --brand-gradient-from:${branding.gradientFrom};
+          --brand-gradient-to:${branding.gradientTo};
+          --brand-soft-border:${branding.softBorder};
+          --brand-soft-bg:${branding.softBg};
+          --brand-soft-ring:${branding.softRing};
+          --brand-callout-bg:${branding.calloutBg};
+        }
         .input { box-sizing:border-box; width:100%; min-width:0; display:block; padding:.5rem .75rem; border-radius:.5rem; border:1px solid #cbd5e1; background:#fff; line-height:1.25rem; }
         .btn  { display:inline-block; padding:.5rem .75rem; border-radius:.5rem; }
-        .btn-primary{ background:#0f172a; color:#fff; }
+        .btn-primary{ background:var(--brand-accent); color:var(--brand-accent-contrast); }
         .btn-muted{ background:#e2e8f0; }
         .btn-light{ background:#f8fafc; color:#0f172a; font-weight:600; }
         .btn-danger{ background:#f43f5e; color:#fff; }
@@ -1469,18 +1660,22 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .topbar{background:#f7f6f9;border-bottom:1px solid #e2e1e8;box-shadow:0 1px 0 rgba(15,23,42,.04);}
         .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
         .brand{display:flex;align-items:center;gap:12px;color:#5f616d;font-weight:600;text-decoration:none;font-size:1.125rem;}
-        .brand-logo{width:40px;height:40px;border-radius:14px;background:linear-gradient(130deg,#ffb347,#ff5a91);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;box-shadow:0 10px 20px rgba(255,90,145,.25);}
+        .brand-logo{width:40px;height:40px;border-radius:14px;background:linear-gradient(130deg,var(--brand-gradient-to),var(--brand-gradient-from));display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--brand-accent-contrast);box-shadow:0 10px 20px rgba(15,23,42,.18);overflow:hidden;}
+        .brand-logo.has-image{box-shadow:none;background:none;padding:0;}
+        .brand-logo-img{width:100%;height:100%;object-fit:cover;display:block;}
+        .brand-logo-text{display:inline-flex;align-items:center;justify-content:center;width:100%;height:100%;}
         .brand-name{letter-spacing:.02em;}
+        .brand-tagline{display:block;font-size:.75rem;color:#7a7b88;font-weight:500;margin-top:-6px;}
         .nav-links{display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
         .nav-link{position:relative;color:#7a7b88;font-weight:500;text-decoration:none;padding-bottom:6px;transition:color .2s ease;}
         .nav-link:hover{color:#424556;}
         .nav-link.active{color:#2f3140;}
-        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,#ff5a91,#ffb347);}
+        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,var(--brand-gradient-from),var(--brand-gradient-to));}
         .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
         .logout-form{margin:0;}
         .logout-form button,.login-link{background:none;border:none;color:#7a7b88;font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
         .logout-form button:hover,.login-link:hover{color:#2f3140;}
-        .nav-accent-bar{height:3px;background:linear-gradient(90deg,#ff5a91,#ffb347);opacity:.55;}
+        .nav-accent-bar{height:3px;background:linear-gradient(90deg,var(--brand-gradient-from),var(--brand-gradient-to));opacity:.55;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
         .footer{background:#f7f6f9;border-top:1px solid #e2e1e8;color:#8c8d97;font-size:.875rem;}
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
@@ -1492,22 +1687,46 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .reassurance-icon{width:32px;height:32px;border-radius:999px;background:linear-gradient(130deg,#34d399,#0ea5e9);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;align-self:flex-start;}
         .reassurance-title{font-size:.95rem;font-weight:600;color:#374151;}
         .reassurance-copy{font-size:.85rem;color:#64748b;margin:0;line-height:1.5;}
+        .confidence-section{max-width:980px;margin:48px auto 0;display:flex;flex-direction:column;gap:16px;text-align:center;}
+        .section-title{font-size:1.75rem;font-weight:600;color:#374151;margin:0;}
+        .section-title--left{text-align:left;}
+        .section-lead{font-size:1rem;color:#4b5563;margin:0 auto;max-width:720px;}
+        .branding-section{margin:48px auto 0;max-width:980px;padding:32px;border-radius:28px;background:var(--brand-soft-bg);border:1px solid var(--brand-soft-border);display:grid;gap:24px;text-align:left;}
+        .branding-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+        .branding-highlight{background:#fff;border-radius:18px;padding:18px;border:1px solid rgba(148,163,184,.25);box-shadow:0 10px 24px rgba(15,23,42,.08);}
+        .branding-highlight h3{margin:0 0 8px;font-size:1rem;color:#1f2937;}
+        .branding-highlight p{margin:0;font-size:.9rem;color:#475569;line-height:1.5;}
+        .branding-actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;}
+        .branding-preview{display:flex;align-items:center;gap:18px;padding:18px;border-radius:18px;border:1px solid rgba(148,163,184,.25);background:#fff;}
+        .branding-preview-logo{width:52px;height:52px;border-radius:16px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:linear-gradient(130deg,var(--brand-gradient-to),var(--brand-gradient-from));color:var(--brand-accent-contrast);font-weight:700;box-shadow:0 10px 20px rgba(15,23,42,.12);}
+        .branding-preview-logo img{width:100%;height:100%;object-fit:cover;display:block;}
+        .branding-preview-meta{display:flex;flex-direction:column;gap:4px;}
+        .branding-tips{margin:0;padding-left:20px;color:#475569;font-size:.9rem;}
+        .branding-tips li{margin-bottom:6px;}
+        .onboarding-section{max-width:980px;margin:48px auto 0;padding:0 16px;}
+        .onboarding-steps{counter-reset:onboarding;list-style:none;padding:0;margin:0;display:grid;gap:16px;}
+        .onboarding-steps li{position:relative;padding:18px 20px 18px 54px;border-radius:18px;background:var(--brand-callout-bg);border:1px solid var(--brand-soft-border);}
+        .onboarding-steps li::before{counter-increment:onboarding;content:counter(onboarding);position:absolute;left:18px;top:18px;width:28px;height:28px;border-radius:999px;background:var(--brand-accent);color:var(--brand-accent-contrast);display:flex;align-items:center;justify-content:center;font-weight:600;}
+        .onboarding-steps strong{display:block;font-size:1rem;color:#1f2937;margin-bottom:6px;}
+        .onboarding-steps p{margin:0;color:#475569;font-size:.9rem;line-height:1.55;}
+        .onboarding-card{background:#fff;border-radius:24px;padding:24px;border:1px solid rgba(148,163,184,.25);box-shadow:0 16px 32px rgba(15,23,42,.08);}
+        .brand-info{display:flex;flex-direction:column;}
         .progress-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:0;padding:0;list-style:none;color:#475569;font-size:.95rem;}
         .progress-step{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:999px;background:#f1f5f9;border:1px solid rgba(148,163,184,.35);font-weight:500;}
         .progress-step.is-active{background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;box-shadow:0 12px 22px rgba(255,107,0,.25);}
-        .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:#f7f6f9;border-radius:28px;padding:32px;border:1px solid rgba(255,166,67,.4);box-shadow:0 24px 42px rgba(15,23,42,.08);}
+        .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:var(--brand-soft-bg);border-radius:28px;padding:32px;border:1px solid var(--brand-soft-border);box-shadow:0 24px 42px rgba(15,23,42,.08);}
         .search-field{display:flex;flex-direction:column;gap:10px;text-align:left;}
         .search-field label{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:#9b9ca6;}
         .search-dates{display:flex;gap:14px;flex-wrap:wrap;}
-        .search-input{width:100%;border-radius:16px;border:2px solid rgba(255,166,67,.6);padding:14px 16px;background:#fff;font-size:1rem;color:#44454f;transition:border-color .2s ease,box-shadow .2s ease;}
-        .search-input:focus{border-color:#ff8c00;outline:none;box-shadow:0 0 0 4px rgba(255,166,67,.2);}
+        .search-input{width:100%;border-radius:16px;border:2px solid var(--brand-soft-border);padding:14px 16px;background:#fff;font-size:1rem;color:#44454f;transition:border-color .2s ease,box-shadow .2s ease;}
+        .search-input:focus{border-color:var(--brand-gradient-from);outline:none;box-shadow:0 0 0 4px var(--brand-soft-ring);}
         .search-submit{display:flex;justify-content:flex-end;}
-        .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
-        .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(255,107,0,.25);}
+        .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,var(--brand-gradient-to),var(--brand-gradient-from));color:var(--brand-accent-contrast);font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
+        .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(15,23,42,.18);}
         .search-button[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none;transform:none;}
         .search-button[data-loading="true"]{position:relative;color:transparent;}
-        .search-button[data-loading="true"]::after{content:'A procurar...';color:#fff;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
-        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;}
+        .search-button[data-loading="true"]::after{content:'A procurar...';color:var(--brand-accent-contrast);position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:var(--brand-accent-contrast);animation:spin .8s linear infinite;}
         .inline-feedback{border-radius:18px;padding:14px 18px;text-align:left;font-size:.9rem;display:flex;gap:12px;align-items:flex-start;line-height:1.5;}
         .inline-feedback[data-variant="info"]{background:#ecfeff;border:1px solid #67e8f9;color:#155e75;}
         .inline-feedback[data-variant="success"]{background:#ecfdf3;border:1px solid #4ade80;color:#166534;}
@@ -1520,7 +1739,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .result-header .progress-steps{justify-content:flex-start;}
         .calendar-card{position:relative;}
         .calendar-card[data-loading="true"]::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(15,23,42,.08);backdrop-filter:blur(1px);}
-        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:#0f172a;animation:spin .9s linear infinite;}
+        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:var(--brand-accent);animation:spin .9s linear infinite;}
         .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
         .calendar-cell{position:relative;height:3rem;display:flex;align-items:center;justify-content:center;border-radius:.6rem;font-size:.75rem;user-select:none;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;}
         @media (min-width:640px){.calendar-cell{height:3.5rem;font-size:.85rem;}}
@@ -1544,7 +1763,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .calendar-dialog{border:none;border-radius:20px;padding:0;max-width:420px;width:92vw;}
         .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
-        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}.branding-section{padding:28px;}.confidence-section{gap:12px;}}
         .gallery-flash{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;font-size:.85rem;font-weight:500;background:#f1f5f9;color:#1e293b;box-shadow:0 6px 18px rgba(15,23,42,.08);}
         .gallery-flash[data-variant="success"]{background:#ecfdf5;color:#047857;}
         .gallery-flash[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
@@ -1874,9 +2093,12 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       <div class="app-shell">
         <header class="topbar">
           <div class="topbar-inner">
-            <a href="/" class="brand" aria-label="Booking Engine">
-              <span class="brand-logo">BE</span>
-              <span class="brand-name">Booking Engine</span>
+            <a href="/" class="brand" aria-label="${esc(branding.brandName)}">
+              <span class="${brandLogoClass}">${brandLogoContent}</span>
+              <span class="brand-info">
+                <span class="brand-name">${esc(branding.brandName)}</span>
+                ${brandTagline}
+              </span>
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
@@ -1884,6 +2106,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
               ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
               ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
+              ${can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
               ${can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
@@ -1901,7 +2124,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           ${body}
         </main>
         <footer class="footer">
-          <div class="footer-inner">(c) ${new Date().getFullYear()} Booking Engine (demo)</div>
+          <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(branding.brandName)} · Plataforma demo</div>
         </footer>
       </div>
     </body>
@@ -1954,10 +2177,11 @@ app.post('/logout', (req,res)=>{
 // ===================== Front Office =====================
 app.get('/', (req, res) => {
   const sess = getSession(req.cookies.adm);
-  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+  const viewer = sess ? buildUserContext(sess) : undefined;
+  const user = viewer;
+  const branding = getBranding();
   const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
-  const canEditBooking = userCan(req.user, 'bookings.edit');
-  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+  const canManageBranding = userCan(viewer, 'users.manage');
 
   res.send(layout({
     title: 'Reservas',
@@ -1965,13 +2189,13 @@ app.get('/', (req, res) => {
     activeNav: 'search',
     body: html`
       <section class="search-hero">
-        <span class="pill-indicator">Passo 1 de 3</span>
-        <h1 class="search-title">Reservar connosco é simples e seguro</h1>
-        <p class="search-intro">Escolha as datas ideais e veja em segundos as unidades disponíveis. Apostamos em clareza total: preços transparentes, mensagens imediatas e confirmações instantâneas.</p>
+        <span class="pill-indicator">Percurso de reserva</span>
+        <h1 class="search-title">${esc(branding.brandName)} coloca confiança em cada reserva</h1>
+        <p class="search-intro">Combine comunicação profissional com dados operacionais em tempo real. A equipa vê sempre preços claros, disponibilidade fiável e o contexto necessário para acolher cada hóspede.</p>
         <ul class="progress-steps" aria-label="Passos da reserva">
           <li class="progress-step is-active">1. Defina datas</li>
           <li class="progress-step">2. Escolha o alojamento</li>
-          <li class="progress-step">3. Confirme e relaxe</li>
+          <li class="progress-step">3. Confirme a estadia</li>
         </ul>
         <form action="/search" method="get" class="search-form" data-search-form>
           <div class="search-field">
@@ -2004,6 +2228,73 @@ app.get('/', (req, res) => {
             <div><strong>Comece por escolher as datas.</strong><br/>Escolha check-in e check-out válidos para ver disponibilidade instantânea.</div>
           </div>
         </form>
+      </section>
+
+      <section class="confidence-section">
+        <h2 class="section-title">Credibilidade para quem gere alojamentos exigentes</h2>
+        <p class="section-lead">Processos transparentes, linguagem coerente e dados acessíveis. Tudo pensado para equipas que querem focar-se na hospitalidade.</p>
+        <div class="reassurance-grid">
+          <article class="reassurance-card">
+            <span class="reassurance-icon">✓</span>
+            <h3 class="reassurance-title">Informação transparente</h3>
+            <p class="reassurance-copy">Resumo imediato de valores, ocupação e contactos para acelerar cada decisão de reserva.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">🛡</span>
+            <h3 class="reassurance-title">Perfis com permissão certa</h3>
+            <p class="reassurance-copy">Direção, gestão e operação trabalham com acessos distintos e auditáveis.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">💬</span>
+            <h3 class="reassurance-title">Comunicação consistente</h3>
+            <p class="reassurance-copy">Mensagens automáticas falam sempre em “reserva” e “alojamento”, reforçando profissionalismo.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="branding-section">
+        <div>
+          <h2 class="section-title section-title--left">Tema visual ajustável à sua marca</h2>
+          <p class="section-lead" style="text-align:left;">Defina cores, logotipo e mensagem de boas-vindas sem recorrer a desenvolvimento. O portal fica alinhado com a identidade do seu alojamento.</p>
+        </div>
+        <div class="branding-grid">
+          <div class="branding-highlight">
+            <h3>Escolha a paleta de cores</h3>
+            <p>Personalize o degradé, botões e chamadas de atenção para refletir a experiência que quer entregar.</p>
+          </div>
+          <div class="branding-highlight">
+            <h3>Carregue o logotipo</h3>
+            <p>Envie o ficheiro com o símbolo da marca e veja-o aplicado em segundos na navegação e rodapé.</p>
+          </div>
+          <div class="branding-highlight">
+            <h3>Mensagem de confiança</h3>
+            <p>Ajuste o slogan que acompanha o logotipo e reforce a proposta de valor junto da equipa e dos hóspedes.</p>
+          </div>
+        </div>
+        <div class="branding-actions">
+          ${canManageBranding ? `<a class="btn btn-primary" href="/admin/identidade-visual">Personalizar identidade</a>` : `<a class="btn btn-light" href="/login">Entrar para personalizar</a>`}
+        </div>
+      </section>
+
+      <section class="onboarding-section">
+        <div class="onboarding-card">
+          <h2 class="section-title section-title--left">Guia rápido de onboarding</h2>
+          <p class="section-lead" style="text-align:left;">Três passos para colocar a operação em marcha e garantir reservas consistentes desde o primeiro dia.</p>
+          <ol class="onboarding-steps">
+            <li>
+              <strong>Configure a identidade visual.</strong>
+              <p>Aceda a <a href="/admin/identidade-visual">Identidade</a>, defina cores e carregue o logotipo para apresentar um portal coerente.</p>
+            </li>
+            <li>
+              <strong>Registe propriedades e unidades.</strong>
+              <p>Complete cada unidade com descrição, capacidade e tarifas para abrir disponibilidade imediata.</p>
+            </li>
+            <li>
+              <strong>Convide a equipa.</strong>
+              <p>Atribua perfis e permissões em <a href="/admin/utilizadores">Utilizadores</a>, garantindo que cada responsável trata reservas com segurança.</p>
+            </li>
+          </ol>
+        </div>
       </section>
     `
   }));
@@ -3741,6 +4032,27 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
       }).join('')
     : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
 
+  const onboardingCard = html`
+      <section class="onboarding-card mb-6">
+        <h2 class="text-lg font-semibold text-slate-800 mb-2">Guia rápido para começar</h2>
+        <p class="text-sm text-slate-600 mb-4">Três ações asseguram que a equipa trabalha com uma experiência consistente e profissional.</p>
+        <ol class="onboarding-steps">
+          <li>
+            <strong>Personalize a identidade.</strong>
+            <p>Ajuste cores e carregue o logotipo em <a class="underline" href="/admin/identidade-visual">Identidade visual</a> para refletir a marca em todo o portal.</p>
+          </li>
+          <li>
+            <strong>Complete propriedades e unidades.</strong>
+            <p>Revise descrições, fotos e tarifas para que cada reserva tenha contexto completo.</p>
+          </li>
+          <li>
+            <strong>Defina a equipa.</strong>
+            <p>Convide utilizadores e atribua permissões em <a class="underline" href="/admin/utilizadores">Utilizadores</a>, garantindo que cada perfil vê apenas o necessário.</p>
+          </li>
+        </ol>
+      </section>
+  `;
+
   const automationCard = html`
       <section class="card p-4 mb-6 space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -4082,6 +4394,8 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
     activeNav: 'backoffice',
     body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
+
+      ${onboardingCard}
 
       ${automationCard}
 
@@ -4956,6 +5270,9 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
   `;
   const rows = db.prepare(sql).all(...args);
 
+  const canEditBooking = userCan(req.user, 'bookings.edit');
+  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+
   res.send(layout({
     title: 'Reservas',
     user: req.user,
@@ -5254,6 +5571,166 @@ app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
     }, null);
   }
   res.redirect('/admin/bookings');
+});
+
+app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
+  const branding = getBranding();
+  const success = req.query.success === '1';
+  const errorMessage = typeof req.query.error === 'string' ? req.query.error : '';
+
+  res.send(layout({
+    title: 'Identidade visual',
+    user: req.user,
+    activeNav: 'branding',
+    body: html`
+      <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+      <h1 class="text-2xl font-semibold mt-2 mb-4">Identidade visual</h1>
+      <p class="text-slate-600 mb-4">Personalize o aspeto do gestor de alojamentos sem escrever código. Ajuste cores, logotipo e mensagem para reforçar a credibilidade da sua operação.</p>
+
+      ${success ? `
+        <div class="inline-feedback mb-4" data-variant="success">
+          <span class="inline-feedback-icon">✓</span>
+          <div><strong>Preferências guardadas.</strong><br/>A nova identidade já está disponível em todo o portal.</div>
+        </div>
+      ` : ''}
+      ${errorMessage ? `
+        <div class="inline-feedback mb-4" data-variant="danger">
+          <span class="inline-feedback-icon">!</span>
+          <div>${esc(errorMessage)}</div>
+        </div>
+      ` : ''}
+
+      <form method="post" action="/admin/identidade-visual" enctype="multipart/form-data" class="card p-4 grid gap-4 max-w-2xl">
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Nome da marca</span>
+            <input class="input" name="brand_name" value="${esc(branding.brandName)}" maxlength="80" required />
+          </label>
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Sigla do logotipo</span>
+            <input class="input" name="brand_initials" value="${esc(branding.brandInitials)}" maxlength="3" placeholder="Ex: GA" />
+            <span class="text-xs text-slate-500">Mostrada quando não existe imagem carregada.</span>
+          </label>
+        </div>
+        <label class="grid gap-2 text-sm text-slate-600">
+          <span>Slogan / mensagem</span>
+          <input class="input" name="tagline" value="${esc(branding.tagline)}" maxlength="140" placeholder="Ex: Reservas com confiança" />
+        </label>
+        <div class="grid gap-4 md:grid-cols-3">
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Cor principal</span>
+            <input class="input" type="color" name="accent_color" value="${esc(branding.accentColor)}" />
+          </label>
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Gradiente inicial</span>
+            <input class="input" type="color" name="gradient_from" value="${esc(branding.gradientFrom)}" />
+          </label>
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Gradiente final</span>
+            <input class="input" type="color" name="gradient_to" value="${esc(branding.gradientTo)}" />
+          </label>
+        </div>
+        <label class="grid gap-2 text-sm text-slate-600">
+          <span>Logotipo (PNG, JPG, WEBP ou SVG · até 3 MB)</span>
+          <input class="input" type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+        </label>
+        <label class="grid gap-2 text-sm text-slate-600">
+          <span>Texto alternativo do logotipo</span>
+          <input class="input" name="logo_alt" value="${esc(branding.logoAlt || branding.brandName)}" maxlength="140" />
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" name="remove_logo" value="1" />
+          <span>Remover logotipo atual</span>
+        </label>
+        <button class="btn btn-primary justify-self-start">Guardar identidade</button>
+      </form>
+
+      <div class="branding-preview mt-6 max-w-2xl">
+        <div class="branding-preview-logo">
+          ${branding.logoPath ? `<img src="${esc(branding.logoPath)}" alt="${esc(branding.logoAlt)}" />` : `<span>${esc(branding.brandInitials)}</span>`}
+        </div>
+        <div class="branding-preview-meta">
+          <div class="text-sm font-semibold text-slate-700">${esc(branding.brandName)}</div>
+          <div class="text-xs text-slate-500">${esc(branding.tagline)}</div>
+          <div class="text-xs text-slate-500">Cor principal ${esc(branding.accentColor)} · Gradiente ${esc(branding.gradientFrom)} → ${esc(branding.gradientTo)}</div>
+        </div>
+      </div>
+
+      <div class="card p-4 mt-6 max-w-2xl">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Sugestões rápidas</h2>
+        <ul class="branding-tips">
+          <li>Utilize um logotipo com fundo transparente para uma integração mais elegante.</li>
+          <li>Escolha cores que reforcem a experiência do alojamento e mantenha contraste legível.</li>
+          <li>Atualize o slogan sempre que quiser destacar promoções ou compromissos de serviço.</li>
+        </ul>
+      </div>
+    `
+  }));
+});
+
+app.post('/admin/identidade-visual', requireAdmin, (req, res) => {
+  uploadBrandingAsset.single('logo_file')(req, res, async (err) => {
+    if (err) {
+      console.error('Identidade visual: erro no upload', err.message);
+      return res.redirect('/admin/identidade-visual?error=' + encodeURIComponent('Falha ao carregar o logotipo: ' + err.message));
+    }
+
+    try {
+      const nextStore = { ...brandingStore };
+
+      const nameRaw = typeof req.body.brand_name === 'string' ? req.body.brand_name.trim() : '';
+      if (nameRaw) nextStore.brandName = nameRaw.slice(0, 80);
+
+      const initialsRaw = typeof req.body.brand_initials === 'string' ? req.body.brand_initials.replace(/[^\p{L}0-9]/gu, '').toUpperCase() : '';
+      if (initialsRaw) nextStore.brandInitials = initialsRaw.slice(0, 3);
+      else delete nextStore.brandInitials;
+
+      const taglineRaw = typeof req.body.tagline === 'string' ? req.body.tagline.trim() : '';
+      if (taglineRaw) nextStore.tagline = taglineRaw.slice(0, 140);
+      else delete nextStore.tagline;
+
+      const accent = normalizeHexColor(req.body.accent_color, null);
+      if (accent) nextStore.accentColor = accent;
+      const gradientFrom = normalizeHexColor(req.body.gradient_from, null);
+      if (gradientFrom) nextStore.gradientFrom = gradientFrom;
+      const gradientTo = normalizeHexColor(req.body.gradient_to, null);
+      if (gradientTo) nextStore.gradientTo = gradientTo;
+
+      const removeLogo = req.body.remove_logo === '1';
+      const logoAltProvided = typeof req.body.logo_alt === 'string';
+      const altRaw = logoAltProvided ? req.body.logo_alt.trim() : '';
+
+      if (removeLogo && nextStore.logoFile) {
+        await removeBrandingLogo(nextStore.logoFile);
+        delete nextStore.logoFile;
+        delete nextStore.logoAlt;
+      }
+
+      if (req.file) {
+        if (nextStore.logoFile && nextStore.logoFile !== req.file.filename) {
+          await removeBrandingLogo(nextStore.logoFile);
+        }
+        nextStore.logoFile = req.file.filename;
+        if (logoAltProvided) {
+          if (altRaw) nextStore.logoAlt = altRaw.slice(0, 140);
+          else delete nextStore.logoAlt;
+        }
+        await compressImage(req.file.path).catch(() => {});
+      } else if (logoAltProvided) {
+        if (altRaw) nextStore.logoAlt = altRaw.slice(0, 140);
+        else delete nextStore.logoAlt;
+      }
+
+      persistBrandingStore(nextStore);
+      res.redirect('/admin/identidade-visual?success=1');
+    } catch (saveErr) {
+      console.error('Identidade visual: falha ao guardar', saveErr);
+      if (req.file) {
+        await removeBrandingLogo(req.file.filename);
+      }
+      res.redirect('/admin/identidade-visual?error=' + encodeURIComponent('Não foi possível guardar as alterações.'));
+    }
+  });
 });
 
 app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'logs.view']), (req, res) => {
