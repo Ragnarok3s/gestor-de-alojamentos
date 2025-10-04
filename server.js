@@ -2060,6 +2060,33 @@ function layout({ title, body, user, activeNav = '', branding }) {
         .gallery-overlay .gallery-prev{left:-1.5rem;}
         .gallery-overlay .gallery-next{right:-1.5rem;}
         .gallery-overlay .gallery-counter{font-weight:600;}
+        .responsive-table{overflow:hidden;}
+        .responsive-table table{width:100%;border-collapse:collapse;min-width:0;}
+        .responsive-table thead th{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;padding:.65rem .9rem;border-bottom:1px solid rgba(148,163,184,.4);background:rgba(248,250,252,.7);}
+        .responsive-table tbody tr{border-top:1px solid rgba(148,163,184,.35);}
+        .responsive-table tbody tr:first-child{border-top:none;}
+        .responsive-table td{padding:.7rem .9rem;vertical-align:top;font-size:.9rem;color:#1f2937;line-height:1.45;word-break:break-word;}
+        .responsive-table td .table-cell-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;}
+        .responsive-table td .table-cell-actions form{margin:0;}
+        .responsive-table td .table-cell-value{display:block;color:inherit;}
+        .responsive-table td .table-cell-muted{color:#64748b;font-size:.8rem;display:block;margin-top:.1rem;}
+        @media (max-width:1024px){
+          .responsive-table{padding:0;}
+          .responsive-table table,
+          .responsive-table thead,
+          .responsive-table tbody,
+          .responsive-table th,
+          .responsive-table td,
+          .responsive-table tr{display:block;width:100%;}
+          .responsive-table thead{display:none;}
+          .responsive-table tbody{display:grid;gap:12px;margin:0;padding:16px;}
+          .responsive-table tbody tr{border:1px solid var(--brand-surface-border);border-radius:var(--brand-radius);padding:16px;background:#fff;box-shadow:0 10px 22px rgba(15,23,42,.05);}
+          .responsive-table td{border:none;padding:8px 0;display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,2fr);gap:12px;align-items:start;}
+          .responsive-table td::before{content:attr(data-label);font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;}
+          .responsive-table td .table-cell-actions{justify-content:flex-start;}
+          .responsive-table td .table-cell-actions form{width:auto;}
+          .responsive-table td:last-child{padding-bottom:0;}
+        }
         @keyframes spin{to{transform:rotate(360deg);}}
         @media (max-width:640px){
           .gallery-overlay{padding:1rem;}

@@ -180,15 +180,15 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
         const depLabel = d.departuresPending ? `${d.departuresConfirmed} <span class=\"text-xs text-slate-500\">(+${d.departuresPending} pend)</span>` : String(d.departuresConfirmed);
         const pendingBadge = d.pendingCount ? `<span class=\"text-xs text-slate-500 ml-1\">(+${d.pendingCount} pend)</span>` : '';
         return `
-          <tr class="border-t">
-            <td class="py-2 text-sm">${dayjs(d.date).format('DD/MM')}</td>
-            <td class="py-2 text-sm">${occPct}%</td>
-            <td class="py-2 text-sm">${d.confirmedCount}${pendingBadge}</td>
-            <td class="py-2 text-sm">${arrLabel}</td>
-            <td class="py-2 text-sm">${depLabel}</td>
+          <tr>
+            <td class="py-2 text-sm" data-label="Dia"><span class="table-cell-value">${dayjs(d.date).format('DD/MM')}</span></td>
+            <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
+            <td class="py-2 text-sm" data-label="Reservas"><span class="table-cell-value">${d.confirmedCount}${pendingBadge}</span></td>
+            <td class="py-2 text-sm" data-label="Check-in"><span class="table-cell-value">${arrLabel}</span></td>
+            <td class="py-2 text-sm" data-label="Check-out"><span class="table-cell-value">${depLabel}</span></td>
           </tr>`;
       }).join('')
-    : '<tr><td class="py-2 text-sm text-slate-500" colspan="5">Sem dados para o período.</td></tr>';
+    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados para o período.</td></tr>';
 
   const weeklyRows = automationWeekly.length
     ? automationWeekly.map(w => {
@@ -196,13 +196,13 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
         const pending = w.pendingNights ? ` <span class=\"text-xs text-slate-500\">(+${w.pendingNights} pend)</span>` : '';
         const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
         return `
-          <tr class="border-t">
-            <td class="py-2 text-sm">${dayjs(w.start).format('DD/MM')} → ${endLabel}</td>
-            <td class="py-2 text-sm">${occPct}%</td>
-            <td class="py-2 text-sm">${w.confirmedNights}${pending}</td>
+          <tr>
+            <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} → ${endLabel}</span></td>
+            <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
+            <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
           </tr>`;
       }).join('')
-    : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
+    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados agregados.</td></tr>';
 
   const onboardingCard = html`
       <section class="onboarding-card mb-6">
@@ -304,8 +304,8 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
                 <h3 class="font-semibold text-slate-800">Resumo diário (próximos 7 dias)</h3>
                 <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
               </div>
-              <div class="overflow-x-auto">
-                <table class="w-full min-w-[420px] text-sm">
+              <div class="responsive-table">
+                <table class="w-full text-sm">
                   <thead>
                     <tr class="text-left text-slate-500">
                       <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
@@ -321,8 +321,8 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
                 <h3 class="font-semibold text-slate-800">Resumo semanal</h3>
                 <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
               </div>
-              <div class="overflow-x-auto">
-                <table class="w-full min-w-[320px] text-sm">
+              <div class="responsive-table">
+                <table class="w-full text-sm">
                   <thead>
                     <tr class="text-left text-slate-500">
                       <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
@@ -592,8 +592,8 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
 
         <section class="card p-4 md:col-span-2">
           <h2 class="font-semibold mb-3">Unidades</h2>
-          <div class="overflow-x-auto">
-            <table class="w-full min-w-[820px] text-sm">
+          <div class="responsive-table">
+            <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-slate-500">
                   <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
@@ -601,12 +601,12 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
               </thead>
               <tbody>
                 ${units.map(u => `
-                  <tr class="border-t">
-                    <td>${esc(u.property_name)}</td>
-                    <td>${esc(u.name)}</td>
-                    <td>${u.capacity}</td>
-                    <td>${eur(u.base_price_cents)}</td>
-                    <td><a class="text-slate-600 hover:text-slate-900 underline" href="/admin/units/${u.id}">Gerir</a></td>
+                  <tr>
+                    <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
+                    <td data-label="Unidade"><span class="table-cell-value">${esc(u.name)}</span></td>
+                    <td data-label="Capacidade"><span class="table-cell-value">${u.capacity}</span></td>
+                    <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
+                    <td data-label="Ações"><div class="table-cell-actions"><a class="text-slate-600 hover:text-slate-900 underline" href="/admin/units/${u.id}">Gerir</a></div></td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -636,8 +636,8 @@ kitchen|Kitchenette"></textarea>
 
       <section class="card p-4 mt-6">
         <h2 class="font-semibold mb-3">Reservas recentes</h2>
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[980px] text-sm">
+        <div class="responsive-table">
+          <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-slate-500">
                 <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
@@ -645,14 +645,14 @@ kitchen|Kitchenette"></textarea>
             </thead>
             <tbody>
               ${recentBookings.map(b => `
-                <tr class="border-t" title="${esc(b.guest_name||'')}">
-                  <td>${dayjs(b.created_at).format('DD/MM HH:mm')}</td>
-                  <td>${esc(b.property_name)} · ${esc(b.unit_name)}</td>
-                  <td>${esc(b.guest_name)}</td>
-                  <td>${esc(b.guest_phone||'-')} · ${esc(b.guest_email)}</td>
-                  <td>${b.adults}A+${b.children}C</td>
-                  <td>${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')}</td>
-                  <td>€ ${eur(b.total_cents)}</td>
+                <tr title="${esc(b.guest_name||'')}">
+                  <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
+                  <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
+                  <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
+                  <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone||'-')}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
+                  <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                  <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                  <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -979,8 +979,8 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
           </form>
 
           <h2 class="font-semibold mt-6 mb-2">Rates</h2>
-          <div class="overflow-x-auto">
-            <table class="w-full min-w-[720px] text-sm">
+          <div class="responsive-table">
+            <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-slate-500">
                   <th>De</th><th>Até</th><th>€/noite (weekday)</th><th>€/noite (weekend)</th><th>Mín</th><th></th>
@@ -988,16 +988,18 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
               </thead>
               <tbody>
                 ${rates.map(r => `
-                  <tr class="border-t">
-                    <td>${dayjs(r.start_date).format('DD/MM/YYYY')}</td>
-                    <td>${dayjs(r.end_date).format('DD/MM/YYYY')}</td>
-                    <td>€ ${eur(r.weekday_price_cents)}</td>
-                    <td>€ ${eur(r.weekend_price_cents)}</td>
-                    <td>${r.min_stay || 1}</td>
-                    <td>
-                      <form method="post" action="/admin/rates/${r.id}/delete" onsubmit="return confirm('Apagar rate?');">
-                        <button class="text-rose-600">Apagar</button>
-                      </form>
+                  <tr>
+                    <td data-label="Início"><span class="table-cell-value">${dayjs(r.start_date).format('DD/MM/YYYY')}</span></td>
+                    <td data-label="Fim"><span class="table-cell-value">${dayjs(r.end_date).format('DD/MM/YYYY')}</span></td>
+                    <td data-label="€/noite (weekday)"><span class="table-cell-value">€ ${eur(r.weekday_price_cents)}</span></td>
+                    <td data-label="€/noite (weekend)"><span class="table-cell-value">€ ${eur(r.weekend_price_cents)}</span></td>
+                    <td data-label="Mín. noites"><span class="table-cell-value">${r.min_stay || 1}</span></td>
+                    <td data-label="Ações">
+                      <div class="table-cell-actions">
+                        <form method="post" action="/admin/rates/${r.id}/delete" onsubmit="return confirm('Apagar rate?');">
+                          <button class="text-rose-600">Apagar</button>
+                        </form>
+                      </div>
                     </td>
                   </tr>
                 `).join('')}
@@ -1473,40 +1475,44 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
         <button class="btn btn-primary">Filtrar</button>
       </form>
 
-      <div class="card p-0 overflow-x-auto">
-        <table class="w-full min-w-[980px] text-sm">
-          <thead>
-            <tr class="text-left text-slate-500">
-              <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.map(b => `
-              <tr class="border-t">
-                <td>${dayjs(b.checkin).format('DD/MM/YYYY')}</td>
-                <td>${dayjs(b.checkout).format('DD/MM/YYYY')}</td>
-                <td>${esc(b.property_name)} - ${esc(b.unit_name)}</td>
-                <td>${esc(b.agency || '')}</td>
-                <td>${esc(b.guest_name)} <span class="text-slate-500">(${esc(b.guest_email)})</span></td>
-                <td>${b.adults}A+${b.children}C</td>
-                <td>€ ${eur(b.total_cents)}</td>
-                <td>
-                  <span class="text-xs rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
-                    ${b.status}
-                  </span>
-                </td>
-                <td class="whitespace-nowrap">
-                  <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
-                  ${canCancelBooking ? `
-                    <form method="post" action="/admin/bookings/${b.id}/cancel" style="display:inline" onsubmit="return confirm('Cancelar esta reserva?');">
-                      <button class="text-rose-600 ml-2">Cancelar</button>
-                    </form>
-                  ` : ''}
-                </td>
+      <div class="card p-0">
+        <div class="responsive-table">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-slate-500">
+                <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${rows.map(b => `
+                <tr>
+                  <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
+                  <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
+                  <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
+                  <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
+                  <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
+                  <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                  <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
+                  <td data-label="Status">
+                    <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
+                      ${b.status}
+                    </span>
+                  </td>
+                  <td data-label="Ações">
+                    <div class="table-cell-actions">
+                      <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
+                      ${canCancelBooking ? `
+                        <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
+                          <button class="text-rose-600">Cancelar</button>
+                        </form>
+                      ` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
         ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
       </div>
     `
@@ -2372,29 +2378,31 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             <h2 class="text-xl font-semibold">Logs de sessão</h2>
             <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
           </div>
-          <div class="card p-0 overflow-x-auto">
-            <table class="w-full min-w-[720px] text-sm">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr>
-                  <th class="text-left px-4 py-2">Quando</th>
-                  <th class="text-left px-4 py-2">Utilizador</th>
-                  <th class="text-left px-4 py-2">Ação</th>
-                  <th class="text-left px-4 py-2">IP</th>
-                  <th class="text-left px-4 py-2">User-Agent</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${sessionLogs.length ? sessionLogs.map(row => `
-                  <tr class="border-t">
-                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
-                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
-                    <td class="px-4 py-2">${esc(row.action)}</td>
-                    <td class="px-4 py-2">${esc(row.ip || '')}</td>
-                    <td class="px-4 py-2 text-slate-500">${esc((row.user_agent || '').slice(0, 120))}</td>
+          <div class="card p-0">
+            <div class="responsive-table">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="text-left px-4 py-2">Quando</th>
+                    <th class="text-left px-4 py-2">Utilizador</th>
+                    <th class="text-left px-4 py-2">Ação</th>
+                    <th class="text-left px-4 py-2">IP</th>
+                    <th class="text-left px-4 py-2">User-Agent</th>
                   </tr>
-                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade de sessão registada.</td></tr>'}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  ${sessionLogs.length ? sessionLogs.map(row => `
+                    <tr>
+                      <td class="px-4 py-2 text-slate-600" data-label="Quando"><span class="table-cell-value">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</span></td>
+                      <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(row.username || '—')}</span></td>
+                      <td class="px-4 py-2" data-label="Ação"><span class="table-cell-value">${esc(row.action)}</span></td>
+                      <td class="px-4 py-2" data-label="IP"><span class="table-cell-value">${esc(row.ip || '') || '—'}</span></td>
+                      <td class="px-4 py-2 text-slate-500" data-label="User-Agent"><span class="table-cell-value">${esc((row.user_agent || '').slice(0, 120))}</span></td>
+                    </tr>
+                  `).join('') : '<tr><td class="px-4 py-3 text-slate-500" data-label="Info">Sem atividade de sessão registada.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -2403,29 +2411,31 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             <h2 class="text-xl font-semibold">Atividade da aplicação</h2>
             <span class="text-xs text-slate-500">Últimos ${activityLogs.length} eventos</span>
           </div>
-          <div class="card p-0 overflow-x-auto">
-            <table class="w-full min-w-[820px] text-sm">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr>
-                  <th class="text-left px-4 py-2">Quando</th>
-                  <th class="text-left px-4 py-2">Utilizador</th>
-                  <th class="text-left px-4 py-2">Ação</th>
-                  <th class="text-left px-4 py-2">Entidade</th>
-                  <th class="text-left px-4 py-2">Detalhes</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${activityLogs.length ? activityLogs.map(row => `
-                  <tr class="border-t align-top">
-                    <td class="px-4 py-2 text-slate-600">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</td>
-                    <td class="px-4 py-2">${esc(row.username || '—')}</td>
-                    <td class="px-4 py-2">${esc(row.action)}</td>
-                    <td class="px-4 py-2">${row.entity_type ? esc(row.entity_type) + (row.entity_id ? ' #' + row.entity_id : '') : '—'}</td>
-                    <td class="px-4 py-2">${formatJsonSnippet(row.meta_json)}</td>
+          <div class="card p-0">
+            <div class="responsive-table">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="text-left px-4 py-2">Quando</th>
+                    <th class="text-left px-4 py-2">Utilizador</th>
+                    <th class="text-left px-4 py-2">Ação</th>
+                    <th class="text-left px-4 py-2">Entidade</th>
+                    <th class="text-left px-4 py-2">Detalhes</th>
                   </tr>
-                `).join('') : '<tr><td colspan="5" class="px-4 py-3 text-slate-500">Sem atividade registada.</td></tr>'}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  ${activityLogs.length ? activityLogs.map(row => `
+                    <tr class="align-top">
+                      <td class="px-4 py-2 text-slate-600" data-label="Quando"><span class="table-cell-value">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</span></td>
+                      <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(row.username || '—')}</span></td>
+                      <td class="px-4 py-2" data-label="Ação"><span class="table-cell-value">${esc(row.action)}</span></td>
+                      <td class="px-4 py-2" data-label="Entidade"><span class="table-cell-value">${row.entity_type ? esc(row.entity_type) + (row.entity_id ? ' #' + row.entity_id : '') : '—'}</span></td>
+                      <td class="px-4 py-2" data-label="Detalhes"><span class="table-cell-value">${formatJsonSnippet(row.meta_json)}</span></td>
+                    </tr>
+                  `).join('') : '<tr><td class="px-4 py-3 text-slate-500" data-label="Info">Sem atividade registada.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       ` : ''}
