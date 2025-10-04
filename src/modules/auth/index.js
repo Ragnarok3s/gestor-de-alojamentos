@@ -68,11 +68,13 @@ module.exports = function registerAuthRoutes(app, context) {
     const defaultRedirect =
       userHasBackofficeAccess(userContext) && userCan(userContext, 'dashboard.view')
         ? '/admin'
+        : userCan(userContext, 'bookings.view')
+        ? '/admin/bookings'
         : userCan(userContext, 'housekeeping.view')
-      ? '/limpeza/tarefas'
-      : userCan(userContext, 'calendar.view')
-      ? '/calendar'
-      : '/';
+        ? '/limpeza/tarefas'
+        : userCan(userContext, 'calendar.view')
+        ? '/calendar'
+        : '/';
     res.redirect(safeNext || defaultRedirect);
   });
 
