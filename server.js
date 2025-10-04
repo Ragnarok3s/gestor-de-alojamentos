@@ -1068,9 +1068,11 @@ if (!masterUser) {
 // ===================== Uploads =====================
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
+const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
+ensureDir(UPLOAD_BRANDING);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1090,6 +1092,26 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype || '');
+    cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
+  }
+});
+
+const brandingStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    ensureDir(UPLOAD_BRANDING);
+    cb(null, UPLOAD_BRANDING);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname || '') || '.png').toLowerCase();
+    cb(null, crypto.randomBytes(8).toString('hex') + ext);
+  }
+});
+
+const uploadBrandingAsset = multer({
+  storage: brandingStorage,
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /image\/(png|jpe?g|webp|gif|svg\+xml)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
   }
 });
@@ -1114,6 +1136,398 @@ async function compressImage(filePath) {
   } catch (err) {
     console.warn('Compressão de imagem falhou para', filePath, '-', err.message);
   }
+}
+
+function normalizeHexColor(value, fallback = null) {
+  if (!value) return fallback;
+  const str = String(value).trim();
+  const match = str.match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return fallback;
+  return `#${match[1].toLowerCase()}`;
+}
+
+function hexToRgb(hex) {
+  const clean = String(hex || '').replace('#', '');
+  if (clean.length !== 6) return null;
+  return {
+    r: parseInt(clean.slice(0, 2), 16),
+    g: parseInt(clean.slice(2, 4), 16),
+    b: parseInt(clean.slice(4, 6), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  return `#${clamp(r).toString(16).padStart(2, '0')}${clamp(g).toString(16).padStart(2, '0')}${clamp(b).toString(16).padStart(2, '0')}`;
+}
+
+function mixColors(hexA, hexB, ratio) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return hexA;
+  const t = Math.max(0, Math.min(1, Number(ratio))); 
+  return rgbToHex({
+    r: a.r * (1 - t) + b.r * t,
+    g: a.g * (1 - t) + b.g * t,
+    b: a.b * (1 - t) + b.b * t
+  });
+}
+
+function contrastColor(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#ffffff';
+  const luminance = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  return luminance > 0.6 ? '#0f172a' : '#ffffff';
+}
+
+function sanitizeBrandingTheme(raw = {}) {
+  if (!raw || typeof raw !== 'object') return {};
+  const cleaned = {};
+
+  if (raw.brandName !== undefined) {
+    const val = String(raw.brandName || '').trim();
+    if (val) cleaned.brandName = val.slice(0, 80);
+  }
+  if (raw.brandInitials !== undefined) {
+    const letters = String(raw.brandInitials || '')
+      .replace(/[^\p{L}0-9]/gu, '')
+      .toUpperCase()
+      .slice(0, 3);
+    if (letters) cleaned.brandInitials = letters;
+  }
+  if (raw.tagline !== undefined) {
+    const tagline = String(raw.tagline || '').trim();
+    if (tagline) cleaned.tagline = tagline.slice(0, 140);
+  }
+  if (raw.mode !== undefined) {
+    const mode = String(raw.mode).toLowerCase();
+    cleaned.mode = mode === 'manual' ? 'manual' : 'quick';
+  }
+  if (raw.primaryColor !== undefined) {
+    const primary = normalizeHexColor(raw.primaryColor, null);
+    if (primary) cleaned.primaryColor = primary;
+  }
+  if (raw.secondaryColor !== undefined) {
+    const secondary = normalizeHexColor(raw.secondaryColor, null);
+    if (secondary) cleaned.secondaryColor = secondary;
+  }
+  if (raw.highlightColor !== undefined) {
+    const highlight = normalizeHexColor(raw.highlightColor, null);
+    if (highlight) cleaned.highlightColor = highlight;
+  }
+  if (raw.cornerStyle !== undefined) {
+    const style = String(raw.cornerStyle || '').toLowerCase();
+    if (style === 'square' || style === 'rounded') cleaned.cornerStyle = style;
+  }
+  if (raw.logoFile !== undefined) {
+    const file = String(raw.logoFile || '').trim();
+    if (/^[a-f0-9]{16}\.[a-z0-9]+$/i.test(file)) cleaned.logoFile = file;
+  }
+  if (raw.logoHidden) {
+    cleaned.logoHidden = true;
+  }
+  if (raw.logoAlt !== undefined) {
+    const alt = String(raw.logoAlt || '').trim();
+    if (alt) cleaned.logoAlt = alt.slice(0, 140);
+  }
+
+  return cleaned;
+}
+
+function sanitizeSavedTheme(raw = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const theme = sanitizeBrandingTheme(raw.theme || {});
+  const name = String(raw.name || '').trim().slice(0, 80);
+  if (!name || !Object.keys(theme).length) return null;
+  const idSource = raw.id !== undefined ? String(raw.id) : crypto.randomBytes(6).toString('hex');
+  return {
+    id: idSource.slice(0, 40),
+    name,
+    theme
+  };
+}
+
+function sanitizeBrandingStore(raw) {
+  const base = {
+    global: {},
+    properties: {},
+    savedThemes: []
+  };
+  if (!raw || typeof raw !== 'object') return base;
+
+  // Legacy flat structure
+  if (raw.brandName !== undefined || raw.accentColor !== undefined || raw.logoFile !== undefined) {
+    base.global = sanitizeBrandingTheme(raw);
+  }
+
+  if (raw.global !== undefined) {
+    base.global = sanitizeBrandingTheme(raw.global);
+  }
+
+  if (raw.properties && typeof raw.properties === 'object') {
+    Object.entries(raw.properties).forEach(([key, value]) => {
+      const id = Number(key);
+      if (!Number.isInteger(id) || id <= 0) return;
+      const theme = sanitizeBrandingTheme(value);
+      if (Object.keys(theme).length) base.properties[id] = theme;
+    });
+  }
+
+  if (Array.isArray(raw.savedThemes)) {
+    base.savedThemes = raw.savedThemes
+      .map(entry => sanitizeSavedTheme(entry))
+      .filter(Boolean);
+  }
+
+  return base;
+}
+
+const BRANDING_THEME_DEFAULT = {
+  brandName: 'Gestor de Alojamentos',
+  brandInitials: 'GA',
+  tagline: 'Reservas com confiança e profissionalismo.',
+  primaryColor: '#2563eb',
+  secondaryColor: '#1d4ed8',
+  highlightColor: '#f97316',
+  mode: 'quick',
+  cornerStyle: 'rounded'
+};
+
+let brandingStore = sanitizeBrandingStore(readAutomationState('branding'));
+
+function deriveInitials(name) {
+  return String(name || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase())
+    .join('')
+    .slice(0, 3) || BRANDING_THEME_DEFAULT.brandInitials;
+}
+
+function computeBrandingTheme(themeRaw, { fallbackName } = {}) {
+  const theme = sanitizeBrandingTheme(themeRaw || {});
+  const merged = { ...BRANDING_THEME_DEFAULT, ...theme };
+  const brandName = merged.brandName || fallbackName || BRANDING_THEME_DEFAULT.brandName;
+  const brandInitials = merged.brandInitials || deriveInitials(brandName);
+  const tagline = merged.tagline || BRANDING_THEME_DEFAULT.tagline;
+  const mode = merged.mode === 'manual' ? 'manual' : 'quick';
+
+  const primaryColor = merged.primaryColor || BRANDING_THEME_DEFAULT.primaryColor;
+  const secondaryColor = mode === 'manual'
+    ? (merged.secondaryColor || BRANDING_THEME_DEFAULT.secondaryColor)
+    : mixColors(primaryColor, '#1f2937', 0.18);
+  const highlightColor = mode === 'manual'
+    ? (merged.highlightColor || BRANDING_THEME_DEFAULT.highlightColor)
+    : mixColors(primaryColor, '#f97316', 0.35);
+
+  const primaryContrast = contrastColor(primaryColor);
+  const primaryHover = mixColors(primaryColor, '#000000', 0.18);
+  const primarySoft = mixColors(primaryColor, '#ffffff', 0.82);
+  const surface = mixColors(primaryColor, '#ffffff', 0.94);
+  const surfaceBorder = mixColors(primaryColor, '#1f2937', 0.12);
+  const surfaceRing = mixColors(primaryColor, '#60a5fa', 0.35);
+  const surfaceContrast = contrastColor(surface);
+  const background = mixColors(primaryColor, '#ffffff', 0.97);
+  const mutedText = mixColors(primaryColor, '#475569', 0.35);
+  const gradientFrom = secondaryColor;
+  const gradientTo = primaryColor;
+
+  const cornerStyle = merged.cornerStyle === 'square' ? 'square' : 'rounded';
+  const radius = cornerStyle === 'square' ? '14px' : '24px';
+  const radiusSm = cornerStyle === 'square' ? '8px' : '16px';
+  const radiusLg = cornerStyle === 'square' ? '24px' : '32px';
+  const radiusPill = cornerStyle === 'square' ? '22px' : '999px';
+
+  const logoHidden = !!merged.logoHidden;
+  const rawLogoFile = merged.logoFile || null;
+  const logoFile = logoHidden ? null : rawLogoFile;
+  const logoAlt = merged.logoAlt || brandName;
+  const logoPath = logoFile ? `/uploads/branding/${logoFile}` : null;
+
+  return {
+    brandName,
+    brandInitials,
+    tagline,
+    primaryColor,
+    secondaryColor,
+    highlightColor,
+    primaryContrast,
+    primaryHover,
+    primarySoft,
+    surface,
+    surfaceBorder,
+    surfaceRing,
+    surfaceContrast,
+    background,
+    mutedText,
+    gradientFrom,
+    gradientTo,
+    cornerStyle,
+    radius,
+    radiusSm,
+    radiusLg,
+    radiusPill,
+    mode,
+    logoHidden,
+    logoFile,
+    logoAlt,
+    logoPath
+  };
+}
+
+function computeBranding(state, options = {}) {
+  return computeBrandingTheme(state, options);
+}
+
+function getBranding({ propertyId = null, propertyName = '' } = {}) {
+  const baseTheme = { ...brandingStore.global };
+  if (propertyId && brandingStore.properties[propertyId]) {
+    Object.assign(baseTheme, brandingStore.properties[propertyId]);
+  }
+  return computeBranding(baseTheme, { fallbackName: propertyName });
+}
+
+function persistBrandingStore(nextStore) {
+  brandingStore = sanitizeBrandingStore(nextStore);
+  writeAutomationState('branding', brandingStore);
+}
+
+function listBrandingThemes(store = brandingStore) {
+  const themes = [];
+  if (store.global) themes.push(store.global);
+  Object.values(store.properties || {}).forEach(theme => themes.push(theme));
+  (store.savedThemes || []).forEach(entry => {
+    if (entry && entry.theme) themes.push(entry.theme);
+  });
+  return themes;
+}
+
+function isBrandingLogoInUse(fileName, store = brandingStore) {
+  if (!fileName) return false;
+  return listBrandingThemes(store).some(theme => theme.logoFile === fileName);
+}
+
+function cloneBrandingStoreState(store = brandingStore) {
+  return {
+    global: { ...(store.global || {}) },
+    properties: Object.fromEntries(
+      Object.entries(store.properties || {}).map(([key, value]) => [Number(key), { ...(value || {}) }])
+    ),
+    savedThemes: (store.savedThemes || []).map(entry => ({
+      id: entry.id,
+      name: entry.name,
+      theme: { ...((entry && entry.theme) || {}) }
+    }))
+  };
+}
+
+
+function extractBrandingSubmission(body = {}) {
+  const updates = {};
+  const clears = new Set();
+  const modeRaw = typeof body.mode === 'string' ? body.mode.toLowerCase() : '';
+  updates.mode = modeRaw === 'manual' ? 'manual' : 'quick';
+
+  if (body.brand_name !== undefined) {
+    const val = String(body.brand_name || '').trim();
+    if (val) updates.brandName = val.slice(0, 80);
+  }
+  if (body.brand_initials !== undefined) {
+    const initials = String(body.brand_initials || '')
+      .replace(/[^\p{L}0-9]/gu, '')
+      .toUpperCase()
+      .slice(0, 3);
+    if (initials) updates.brandInitials = initials;
+    else clears.add('brandInitials');
+  }
+  if (body.tagline !== undefined) {
+    const tagline = String(body.tagline || '').trim();
+    if (tagline) updates.tagline = tagline.slice(0, 140);
+    else clears.add('tagline');
+  }
+  if (body.corner_style !== undefined) {
+    const style = String(body.corner_style || '').toLowerCase();
+    if (style === 'square' || style === 'rounded') updates.cornerStyle = style;
+  }
+
+  const primary = normalizeHexColor(body.primary_color, null);
+  if (primary) updates.primaryColor = primary;
+  const secondary = normalizeHexColor(body.secondary_color, null);
+  const highlight = normalizeHexColor(body.highlight_color, null);
+  if (updates.mode === 'manual') {
+    if (secondary) updates.secondaryColor = secondary;
+    if (highlight) updates.highlightColor = highlight;
+  } else {
+    clears.add('secondaryColor');
+    clears.add('highlightColor');
+  }
+
+  if (body.logo_alt !== undefined) {
+    const alt = String(body.logo_alt || '').trim();
+    if (alt) updates.logoAlt = alt.slice(0, 140);
+    else clears.add('logoAlt');
+  }
+
+  return { updates: sanitizeBrandingTheme(updates), clears, mode: updates.mode };
+}
+
+async function removeBrandingLogo(fileName) {
+  if (!fileName || isBrandingLogoInUse(fileName)) return;
+  const target = path.join(UPLOAD_BRANDING, fileName);
+  try {
+    await fsp.unlink(target);
+  } catch (_) {}
+}
+
+const selectPropertyById = db.prepare('SELECT id, name FROM properties WHERE id = ?');
+
+function parsePropertyId(raw) {
+  if (raw === undefined || raw === null) return null;
+  const value = Number(String(raw).trim());
+  if (!Number.isInteger(value) || value <= 0) return null;
+  return value;
+}
+
+function rememberActiveBrandingProperty(res, propertyId) {
+  if (!res || typeof res.cookie !== 'function') return;
+  if (propertyId) {
+    res.cookie('active_branding_property', String(propertyId), {
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      sameSite: 'lax'
+    });
+  } else {
+    res.clearCookie('active_branding_property');
+  }
+}
+
+function resolveBrandingForRequest(req, overrides = {}) {
+  let propertyId = null;
+  let propertyName = overrides.propertyName || null;
+
+  const explicit = parsePropertyId(overrides.propertyId);
+  const requestProp = parsePropertyId(req && req.activeBrandingPropertyId);
+  const queryProp = req ? (
+    parsePropertyId(req.query ? (req.query.propertyId ?? req.query.property_id ?? req.query.property ?? null) : null)
+  ) : null;
+  const cookieProp = req && req.cookies ? parsePropertyId(req.cookies.active_branding_property) : null;
+
+  propertyId = explicit || requestProp || queryProp || cookieProp || null;
+
+  if (propertyId && !propertyName) {
+    const row = selectPropertyById.get(propertyId);
+    if (row) {
+      propertyName = row.name;
+    } else {
+      propertyId = null;
+    }
+  }
+
+  const branding = getBranding({ propertyId, propertyName });
+  if (req) {
+    req.brandingPropertyId = propertyId;
+    req.brandingPropertyName = propertyName || null;
+  }
+  return branding;
 }
 
 // ===================== Utils =====================
@@ -1440,74 +1854,127 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 }
 
 // ===================== Layout =====================
-function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
+function layout({ title, body, user, activeNav = '', branding }) {
+  const theme = branding || getBranding();
+  const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
   const can = (perm) => userCan(user, perm);
   const userPermissions = user ? Array.from(user.permissions || []) : [];
+  const brandLogoClass = theme.logoPath ? 'brand-logo has-image' : 'brand-logo';
+  const brandLogoContent = theme.logoPath
+    ? `<img src="${esc(theme.logoPath)}" alt="${esc(theme.logoAlt)}" class="brand-logo-img" />`
+    : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
+  const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
   return html`<!doctype html>
   <html lang="pt">
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>${title}</title>
+      <title>${pageTitle}</title>
       <script src="https://unpkg.com/htmx.org@2.0.3"></script>
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest"></script>
       <style>
+        :root{
+          --brand-primary:${theme.primaryColor};
+          --brand-primary-contrast:${theme.primaryContrast};
+          --brand-primary-hover:${theme.primaryHover};
+          --brand-primary-soft:${theme.primarySoft};
+          --brand-secondary:${theme.secondaryColor};
+          --brand-highlight:${theme.highlightColor};
+          --brand-surface:${theme.surface};
+          --brand-surface-border:${theme.surfaceBorder};
+          --brand-surface-ring:${theme.surfaceRing};
+          --brand-surface-contrast:${theme.surfaceContrast};
+          --brand-background:${theme.background};
+          --brand-muted:${theme.mutedText};
+          --brand-radius:${theme.radius};
+          --brand-radius-sm:${theme.radiusSm};
+          --brand-radius-lg:${theme.radiusLg};
+          --brand-radius-pill:${theme.radiusPill};
+        }
         .input { box-sizing:border-box; width:100%; min-width:0; display:block; padding:.5rem .75rem; border-radius:.5rem; border:1px solid #cbd5e1; background:#fff; line-height:1.25rem; }
         .btn  { display:inline-block; padding:.5rem .75rem; border-radius:.5rem; }
-        .btn-primary{ background:#0f172a; color:#fff; }
+        .btn-primary{ background:var(--brand-primary); color:var(--brand-primary-contrast); }
         .btn-muted{ background:#e2e8f0; }
-        .btn-light{ background:#f8fafc; color:#0f172a; font-weight:600; }
+        .btn-light{ background:var(--brand-primary-soft); color:#0f172a; font-weight:600; }
         .btn-danger{ background:#f43f5e; color:#fff; }
         .btn[disabled]{opacity:.5;cursor:not-allowed;}
-        .card{ background:#fff; border-radius: .75rem; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
-        body.app-body{margin:0;background:#fafafa;color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
+        .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
+        body.app-body{margin:0;background:var(--brand-background);color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
-        .topbar{background:#f7f6f9;border-bottom:1px solid #e2e1e8;box-shadow:0 1px 0 rgba(15,23,42,.04);}
+        .topbar{background:var(--brand-surface);border-bottom:1px solid var(--brand-surface-border);box-shadow:0 1px 0 rgba(15,23,42,.04);}
         .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
-        .brand{display:flex;align-items:center;gap:12px;color:#5f616d;font-weight:600;text-decoration:none;font-size:1.125rem;}
-        .brand-logo{width:40px;height:40px;border-radius:14px;background:linear-gradient(130deg,#ffb347,#ff5a91);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;box-shadow:0 10px 20px rgba(255,90,145,.25);}
+        .brand{display:flex;align-items:center;gap:12px;color:#3a3b47;font-weight:600;text-decoration:none;font-size:1.125rem;}
+        .brand-logo{width:40px;height:40px;border-radius:var(--brand-radius-sm);background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--brand-primary-contrast);box-shadow:0 10px 20px rgba(15,23,42,.18);overflow:hidden;}
+        .brand-logo.has-image{box-shadow:none;background:none;padding:0;}
+        .brand-logo-img{width:100%;height:100%;object-fit:cover;display:block;}
+        .brand-logo-text{display:inline-flex;align-items:center;justify-content:center;width:100%;height:100%;}
         .brand-name{letter-spacing:.02em;}
+        .brand-tagline{display:block;font-size:.75rem;color:#7a7b88;font-weight:500;margin-top:-6px;}
         .nav-links{display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
         .nav-link{position:relative;color:#7a7b88;font-weight:500;text-decoration:none;padding-bottom:6px;transition:color .2s ease;}
         .nav-link:hover{color:#424556;}
         .nav-link.active{color:#2f3140;}
-        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,#ff5a91,#ffb347);}
+        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,var(--brand-secondary),var(--brand-primary));}
         .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
         .logout-form{margin:0;}
         .logout-form button,.login-link{background:none;border:none;color:#7a7b88;font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
         .logout-form button:hover,.login-link:hover{color:#2f3140;}
-        .nav-accent-bar{height:3px;background:linear-gradient(90deg,#ff5a91,#ffb347);opacity:.55;}
+        .nav-accent-bar{height:3px;background:linear-gradient(90deg,var(--brand-secondary),var(--brand-primary));opacity:.55;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
-        .footer{background:#f7f6f9;border-top:1px solid #e2e1e8;color:#8c8d97;font-size:.875rem;}
+        .footer{background:var(--brand-surface);border-top:1px solid var(--brand-surface-border);color:#8c8d97;font-size:.875rem;}
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
         .search-hero{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:32px;text-align:center;}
-        .search-title{font-size:2.25rem;font-weight:600;color:#5a5c68;margin:0;}
-        .search-intro{color:#5f616d;font-size:1.05rem;line-height:1.7;margin:0 auto;max-width:720px;}
+        .search-title{font-size:2.25rem;font-weight:600;color:#30323f;margin:0;}
+        .search-intro{color:var(--brand-muted);font-size:1.05rem;line-height:1.7;margin:0 auto;max-width:720px;}
         .reassurance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-top:8px;}
-        .reassurance-card{background:rgba(255,255,255,.85);border-radius:18px;padding:18px 20px;border:1px solid rgba(148,163,184,.35);display:flex;flex-direction:column;gap:6px;box-shadow:0 18px 32px rgba(148,163,184,.14);}
-        .reassurance-icon{width:32px;height:32px;border-radius:999px;background:linear-gradient(130deg,#34d399,#0ea5e9);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;align-self:flex-start;}
+        .reassurance-card{background:rgba(255,255,255,.9);border-radius:var(--brand-radius-sm);padding:18px 20px;border:1px solid rgba(148,163,184,.35);display:flex;flex-direction:column;gap:6px;box-shadow:0 18px 32px rgba(148,163,184,.14);}
+        .reassurance-icon{width:32px;height:32px;border-radius:999px;background:linear-gradient(130deg,var(--brand-secondary),var(--brand-primary));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;align-self:flex-start;}
         .reassurance-title{font-size:.95rem;font-weight:600;color:#374151;}
         .reassurance-copy{font-size:.85rem;color:#64748b;margin:0;line-height:1.5;}
+        .confidence-section{max-width:980px;margin:48px auto 0;display:flex;flex-direction:column;gap:16px;text-align:center;}
+        .section-title{font-size:1.75rem;font-weight:600;color:#374151;margin:0;}
+        .section-title--left{text-align:left;}
+        .section-lead{font-size:1rem;color:#4b5563;margin:0 auto;max-width:720px;}
+        .branding-section{margin:48px auto 0;max-width:980px;padding:32px;border-radius:var(--brand-radius-lg);background:var(--brand-surface);border:1px solid var(--brand-surface-border);display:grid;gap:24px;text-align:left;}
+        .branding-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+        .branding-highlight{background:#fff;border-radius:var(--brand-radius-sm);padding:18px;border:1px solid rgba(148,163,184,.25);box-shadow:0 10px 24px rgba(15,23,42,.08);}
+        .branding-highlight h3{margin:0 0 8px;font-size:1rem;color:#1f2937;}
+        .branding-highlight p{margin:0;font-size:.9rem;color:#475569;line-height:1.5;}
+        .branding-actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;}
+        .branding-preview{display:flex;align-items:center;gap:18px;padding:18px;border-radius:var(--brand-radius-sm);border:1px solid rgba(148,163,184,.25);background:#fff;}
+        .branding-preview-logo{width:52px;height:52px;border-radius:16px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));color:var(--brand-primary-contrast);font-weight:700;box-shadow:0 10px 20px rgba(15,23,42,.12);}
+        .branding-preview-logo img{width:100%;height:100%;object-fit:cover;display:block;}
+        .branding-preview-meta{display:flex;flex-direction:column;gap:4px;}
+        .branding-tips{margin:0;padding-left:20px;color:#475569;font-size:.9rem;}
+        .branding-tips li{margin-bottom:6px;}
+        .onboarding-section{max-width:980px;margin:48px auto 0;padding:0 16px;}
+        .onboarding-steps{counter-reset:onboarding;list-style:none;padding:0;margin:0;display:grid;gap:16px;}
+        .onboarding-steps li{position:relative;padding:18px 20px 18px 54px;border-radius:var(--brand-radius);background:var(--brand-primary-soft);border:1px solid var(--brand-surface-border);}
+        .onboarding-steps li::before{counter-increment:onboarding;content:counter(onboarding);position:absolute;left:18px;top:18px;width:28px;height:28px;border-radius:999px;background:var(--brand-primary);color:var(--brand-primary-contrast);display:flex;align-items:center;justify-content:center;font-weight:600;}
+        .onboarding-steps strong{display:block;font-size:1rem;color:#1f2937;margin-bottom:6px;}
+        .onboarding-steps p{margin:0;color:#475569;font-size:.9rem;line-height:1.55;}
+        .onboarding-card{background:#fff;border-radius:var(--brand-radius-lg);padding:24px;border:1px solid rgba(148,163,184,.25);box-shadow:0 16px 32px rgba(15,23,42,.08);}
+        .brand-info{display:flex;flex-direction:column;}
         .progress-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:0;padding:0;list-style:none;color:#475569;font-size:.95rem;}
-        .progress-step{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:999px;background:#f1f5f9;border:1px solid rgba(148,163,184,.35);font-weight:500;}
-        .progress-step.is-active{background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;box-shadow:0 12px 22px rgba(255,107,0,.25);}
-        .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:#f7f6f9;border-radius:28px;padding:32px;border:1px solid rgba(255,166,67,.4);box-shadow:0 24px 42px rgba(15,23,42,.08);}
+        .progress-step{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:var(--brand-radius-pill);background:#f1f5f9;border:1px solid rgba(148,163,184,.35);font-weight:500;}
+        .progress-step.is-active{background:linear-gradient(130deg,var(--brand-secondary),var(--brand-primary));color:#fff;box-shadow:0 12px 22px rgba(15,23,42,.25);}
+        .search-form{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:end;background:var(--brand-surface);border-radius:var(--brand-radius-lg);padding:32px;border:1px solid var(--brand-surface-border);box-shadow:0 24px 42px rgba(15,23,42,.08);}
         .search-field{display:flex;flex-direction:column;gap:10px;text-align:left;}
         .search-field label{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;color:#9b9ca6;}
         .search-dates{display:flex;gap:14px;flex-wrap:wrap;}
-        .search-input{width:100%;border-radius:16px;border:2px solid rgba(255,166,67,.6);padding:14px 16px;background:#fff;font-size:1rem;color:#44454f;transition:border-color .2s ease,box-shadow .2s ease;}
-        .search-input:focus{border-color:#ff8c00;outline:none;box-shadow:0 0 0 4px rgba(255,166,67,.2);}
+        .search-input{width:100%;border-radius:var(--brand-radius-sm);border:2px solid var(--brand-surface-border);padding:14px 16px;background:#fff;font-size:1rem;color:#44454f;transition:border-color .2s ease,box-shadow .2s ease;}
+        .search-input:focus{border-color:var(--brand-secondary);outline:none;box-shadow:0 0 0 4px var(--brand-surface-ring);}
         .search-submit{display:flex;justify-content:flex-end;}
-        .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:999px;border:none;background:linear-gradient(130deg,#ffb347,#ff6b00);color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
-        .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(255,107,0,.25);}
+        .search-button{display:inline-flex;align-items:center;justify-content:center;padding:14px 40px;border-radius:var(--brand-radius-pill);border:none;background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));color:var(--brand-primary-contrast);font-weight:700;font-size:1.05rem;cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
+        .search-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(15,23,42,.18);}
         .search-button[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none;transform:none;}
         .search-button[data-loading="true"]{position:relative;color:transparent;}
-        .search-button[data-loading="true"]::after{content:'A procurar...';color:#fff;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
-        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;}
+        .search-button[data-loading="true"]::after{content:'A procurar...';color:var(--brand-primary-contrast);position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+        .search-button[data-loading="true"]::before{content:'';position:absolute;left:18px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:var(--brand-primary-contrast);animation:spin .8s linear infinite;}
         .inline-feedback{border-radius:18px;padding:14px 18px;text-align:left;font-size:.9rem;display:flex;gap:12px;align-items:flex-start;line-height:1.5;}
         .inline-feedback[data-variant="info"]{background:#ecfeff;border:1px solid #67e8f9;color:#155e75;}
         .inline-feedback[data-variant="success"]{background:#ecfdf3;border:1px solid #4ade80;color:#166534;}
@@ -1520,7 +1987,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .result-header .progress-steps{justify-content:flex-start;}
         .calendar-card{position:relative;}
         .calendar-card[data-loading="true"]::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(15,23,42,.08);backdrop-filter:blur(1px);}
-        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:#0f172a;animation:spin .9s linear infinite;}
+        .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:var(--brand-primary);animation:spin .9s linear infinite;}
         .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
         .calendar-cell{position:relative;height:3rem;display:flex;align-items:center;justify-content:center;border-radius:.6rem;font-size:.75rem;user-select:none;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;}
         @media (min-width:640px){.calendar-cell{height:3.5rem;font-size:.85rem;}}
@@ -1544,7 +2011,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
         .calendar-dialog{border:none;border-radius:20px;padding:0;max-width:420px;width:92vw;}
         .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
-        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}.branding-section{padding:28px;}.confidence-section{gap:12px;}}
         .gallery-flash{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;font-size:.85rem;font-weight:500;background:#f1f5f9;color:#1e293b;box-shadow:0 6px 18px rgba(15,23,42,.08);}
         .gallery-flash[data-variant="success"]{background:#ecfdf5;color:#047857;}
         .gallery-flash[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
@@ -1874,9 +2341,12 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
       <div class="app-shell">
         <header class="topbar">
           <div class="topbar-inner">
-            <a href="/" class="brand" aria-label="Booking Engine">
-              <span class="brand-logo">BE</span>
-              <span class="brand-name">Booking Engine</span>
+            <a href="/" class="brand" aria-label="${esc(theme.brandName)}">
+              <span class="${brandLogoClass}">${brandLogoContent}</span>
+              <span class="brand-info">
+                <span class="brand-name">${esc(theme.brandName)}</span>
+                ${brandTagline}
+              </span>
             </a>
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
@@ -1884,6 +2354,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
               ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
               ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
               ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
+              ${can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
               ${can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
@@ -1901,7 +2372,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
           ${body}
         </main>
         <footer class="footer">
-          <div class="footer-inner">(c) ${new Date().getFullYear()} Booking Engine (demo)</div>
+          <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(theme.brandName)} · Plataforma demo</div>
         </footer>
       </div>
     </body>
@@ -1911,7 +2382,7 @@ function layout({ title = 'Booking Engine', body, user, activeNav = '' }) {
 // ===================== Auth =====================
 app.get('/login', (req,res)=>{
   const { error, next: nxt } = req.query;
-  res.send(layout({ title: 'Login', body: html`
+  res.send(layout({ title: 'Login', branding: resolveBrandingForRequest(req), body: html`
     <div class="max-w-md mx-auto card p-6">
       <h1 class="text-xl font-semibold mb-4">Login Backoffice</h1>
       ${error ? `<div class="mb-3 text-sm text-rose-600">${error}</div>`: ''}
@@ -1954,24 +2425,30 @@ app.post('/logout', (req,res)=>{
 // ===================== Front Office =====================
 app.get('/', (req, res) => {
   const sess = getSession(req.cookies.adm);
-  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+  const viewer = sess ? buildUserContext(sess) : undefined;
+  const user = viewer;
+  const theme = resolveBrandingForRequest(req);
+  const queryProperty = parsePropertyId(req.query ? (req.query.propertyId ?? req.query.property_id ?? req.query.property ?? null) : null);
+  if (queryProperty !== null) {
+    rememberActiveBrandingProperty(res, req.brandingPropertyId);
+  }
   const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
-  const canEditBooking = userCan(req.user, 'bookings.edit');
-  const canCancelBooking = userCan(req.user, 'bookings.cancel');
+  const canManageBranding = userCan(viewer, 'users.manage');
 
   res.send(layout({
     title: 'Reservas',
     user,
     activeNav: 'search',
+    branding: theme,
     body: html`
       <section class="search-hero">
-        <span class="pill-indicator">Passo 1 de 3</span>
-        <h1 class="search-title">Reservar connosco é simples e seguro</h1>
-        <p class="search-intro">Escolha as datas ideais e veja em segundos as unidades disponíveis. Apostamos em clareza total: preços transparentes, mensagens imediatas e confirmações instantâneas.</p>
+        <span class="pill-indicator">Percurso de reserva</span>
+        <h1 class="search-title">${esc(theme.brandName)} coloca confiança em cada reserva</h1>
+        <p class="search-intro">Combine comunicação profissional com dados operacionais em tempo real. A equipa vê sempre preços claros, disponibilidade fiável e o contexto necessário para acolher cada hóspede.</p>
         <ul class="progress-steps" aria-label="Passos da reserva">
           <li class="progress-step is-active">1. Defina datas</li>
           <li class="progress-step">2. Escolha o alojamento</li>
-          <li class="progress-step">3. Confirme e relaxe</li>
+          <li class="progress-step">3. Confirme a estadia</li>
         </ul>
         <form action="/search" method="get" class="search-form" data-search-form>
           <div class="search-field">
@@ -2005,6 +2482,73 @@ app.get('/', (req, res) => {
           </div>
         </form>
       </section>
+
+      <section class="confidence-section">
+        <h2 class="section-title">Credibilidade para quem gere alojamentos exigentes</h2>
+        <p class="section-lead">Processos transparentes, linguagem coerente e dados acessíveis. Tudo pensado para equipas que querem focar-se na hospitalidade.</p>
+        <div class="reassurance-grid">
+          <article class="reassurance-card">
+            <span class="reassurance-icon">✓</span>
+            <h3 class="reassurance-title">Informação transparente</h3>
+            <p class="reassurance-copy">Resumo imediato de valores, ocupação e contactos para acelerar cada decisão de reserva.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">🛡</span>
+            <h3 class="reassurance-title">Perfis com permissão certa</h3>
+            <p class="reassurance-copy">Direção, gestão e operação trabalham com acessos distintos e auditáveis.</p>
+          </article>
+          <article class="reassurance-card">
+            <span class="reassurance-icon">💬</span>
+            <h3 class="reassurance-title">Comunicação consistente</h3>
+            <p class="reassurance-copy">Mensagens automáticas falam sempre em “reserva” e “alojamento”, reforçando profissionalismo.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="branding-section">
+        <div>
+          <h2 class="section-title section-title--left">Tema visual ajustável à sua marca</h2>
+          <p class="section-lead" style="text-align:left;">Defina cores, logotipo e mensagem de boas-vindas sem recorrer a desenvolvimento. O portal fica alinhado com a identidade do seu alojamento.</p>
+        </div>
+        <div class="branding-grid">
+          <div class="branding-highlight">
+            <h3>Escolha a paleta de cores</h3>
+            <p>Personalize o degradé, botões e chamadas de atenção para refletir a experiência que quer entregar.</p>
+          </div>
+          <div class="branding-highlight">
+            <h3>Carregue o logotipo</h3>
+            <p>Envie o ficheiro com o símbolo da marca e veja-o aplicado em segundos na navegação e rodapé.</p>
+          </div>
+          <div class="branding-highlight">
+            <h3>Mensagem de confiança</h3>
+            <p>Ajuste o slogan que acompanha o logotipo e reforce a proposta de valor junto da equipa e dos hóspedes.</p>
+          </div>
+        </div>
+        <div class="branding-actions">
+          ${canManageBranding ? `<a class="btn btn-primary" href="/admin/identidade-visual">Personalizar identidade</a>` : `<a class="btn btn-light" href="/login">Entrar para personalizar</a>`}
+        </div>
+      </section>
+
+      <section class="onboarding-section">
+        <div class="onboarding-card">
+          <h2 class="section-title section-title--left">Guia rápido de onboarding</h2>
+          <p class="section-lead" style="text-align:left;">Três passos para colocar a operação em marcha e garantir reservas consistentes desde o primeiro dia.</p>
+          <ol class="onboarding-steps">
+            <li>
+              <strong>Configure a identidade visual.</strong>
+              <p>Aceda a <a href="/admin/identidade-visual">Identidade</a>, defina cores e carregue o logotipo para apresentar um portal coerente.</p>
+            </li>
+            <li>
+              <strong>Registe propriedades e unidades.</strong>
+              <p>Complete cada unidade com descrição, capacidade e tarifas para abrir disponibilidade imediata.</p>
+            </li>
+            <li>
+              <strong>Convide a equipa.</strong>
+              <p>Atribua perfis e permissões em <a href="/admin/utilizadores">Utilizadores</a>, garantindo que cada responsável trata reservas com segurança.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
     `
   }));
 });
@@ -2019,12 +2563,17 @@ app.get('/search', (req, res) => {
   const totalGuests = adults + children;
   if (!checkin || !checkout) return res.redirect('/');
 
+  const propertyId = parsePropertyId(property_id);
+  const propertyRow = propertyId ? selectPropertyById.get(propertyId) : null;
+  const theme = resolveBrandingForRequest(req, { propertyId, propertyName: propertyRow ? propertyRow.name : null });
+  if (propertyId) rememberActiveBrandingProperty(res, propertyId);
+
   const units = db.prepare(
     `SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id
      WHERE (? IS NULL OR u.property_id = ?)
        AND u.capacity >= ?
      ORDER BY p.name, u.name`
-  ).all(property_id || null, property_id || null, Number(totalGuests));
+  ).all(propertyId || null, propertyId || null, Number(totalGuests));
 
   const imageStmt = db.prepare(
     'SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 4'
@@ -2052,6 +2601,7 @@ app.get('/search', (req, res) => {
     title: 'Resultados',
     user,
     activeNav: 'search',
+    branding: theme,
     body: html`
       <div class="result-header">
         <span class="pill-indicator">Passo 2 de 3</span>
@@ -2146,11 +2696,14 @@ app.get('/book/:unitId', (req, res) => {
   if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia mínima: ' + quote.minStayReq + ' noites');
   const total = quote.total_cents;
   const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), { className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3', badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full', iconWrapClass: 'inline-flex items-center justify-center text-emerald-700' });
+  const theme = resolveBrandingForRequest(req, { propertyId: u.property_id, propertyName: u.property_name });
+  rememberActiveBrandingProperty(res, u.property_id);
 
   res.send(layout({
     title: 'Confirmar Reserva',
     user,
     activeNav: 'search',
+    branding: theme,
     body: html`
       <div class="result-header">
         <span class="pill-indicator">Passo 3 de 3</span>
@@ -2276,7 +2829,7 @@ app.get('/booking/:id', (req, res) => {
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
 
   const b = db.prepare(
-    `SELECT b.*, u.name as unit_name, p.name as property_name
+    `SELECT b.*, u.name as unit_name, u.property_id, p.name as property_name
      FROM bookings b
      JOIN units u ON u.id = b.unit_id
      JOIN properties p ON p.id = u.property_id
@@ -2284,10 +2837,14 @@ app.get('/booking/:id', (req, res) => {
   ).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
 
+  const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
+  rememberActiveBrandingProperty(res, b.property_id);
+
   res.send(layout({
     title: 'Reserva Confirmada',
     user,
     activeNav: 'search',
+    branding: theme,
     body: html`
       <div class="result-header">
         <span class="pill-indicator">Reserva finalizada</span>
@@ -2346,6 +2903,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     title: 'Mapa de Reservas',
     user: req.user,
     activeNav: 'calendar',
+    branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
       <div class="flex items-center justify-between mb-4">
@@ -3267,6 +3825,7 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
     title: 'Exportar Mapa (Excel)',
     user: req.user,
     activeNav: 'export',
+    branding: resolveBrandingForRequest(req),
     body: html`
       <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
       <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
@@ -3741,6 +4300,27 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
       }).join('')
     : '<tr><td class="py-2 text-sm text-slate-500" colspan="3">Sem dados agregados.</td></tr>';
 
+  const onboardingCard = html`
+      <section class="onboarding-card mb-6">
+        <h2 class="text-lg font-semibold text-slate-800 mb-2">Guia rápido para começar</h2>
+        <p class="text-sm text-slate-600 mb-4">Três ações asseguram que a equipa trabalha com uma experiência consistente e profissional.</p>
+        <ol class="onboarding-steps">
+          <li>
+            <strong>Personalize a identidade.</strong>
+            <p>Ajuste cores e carregue o logotipo em <a class="underline" href="/admin/identidade-visual">Identidade visual</a> para refletir a marca em todo o portal.</p>
+          </li>
+          <li>
+            <strong>Complete propriedades e unidades.</strong>
+            <p>Revise descrições, fotos e tarifas para que cada reserva tenha contexto completo.</p>
+          </li>
+          <li>
+            <strong>Defina a equipa.</strong>
+            <p>Convide utilizadores e atribua permissões em <a class="underline" href="/admin/utilizadores">Utilizadores</a>, garantindo que cada perfil vê apenas o necessário.</p>
+          </li>
+        </ol>
+      </section>
+  `;
+
   const automationCard = html`
       <section class="card p-4 mb-6 space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -4080,8 +4660,11 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
     title: 'Backoffice',
     user: req.user,
     activeNav: 'backoffice',
+    branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
+
+      ${onboardingCard}
 
       ${automationCard}
 
@@ -4316,10 +4899,14 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
       ORDER BY b.checkin`
   ).all(p.id);
 
+  const theme = resolveBrandingForRequest(req, { propertyId: p.id, propertyName: p.name });
+  rememberActiveBrandingProperty(res, p.id);
+
   res.send(layout({
     title: p.name,
     user: req.user,
     activeNav: 'backoffice',
+    branding: theme,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
@@ -4378,10 +4965,14 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     'SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id'
   ).all(u.id);
 
+  const theme = resolveBrandingForRequest(req, { propertyId: u.property_id, propertyName: u.property_name });
+  rememberActiveBrandingProperty(res, u.property_id);
+
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
     user: req.user,
     activeNav: 'backoffice',
+    branding: theme,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
@@ -4963,6 +5554,7 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
     title: 'Reservas',
     user: req.user,
     activeNav: 'bookings',
+    branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
@@ -5019,7 +5611,7 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
 
 app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const b = db.prepare(`
-    SELECT b.*, u.name as unit_name, u.capacity, u.base_price_cents, p.name as property_name
+    SELECT b.*, u.name as unit_name, u.capacity, u.base_price_cents, u.property_id, p.name as property_name
       FROM bookings b
       JOIN units u ON u.id = b.unit_id
       JOIN properties p ON p.id = u.property_id
@@ -5041,10 +5633,14 @@ app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'),
     created_human: dayjs(n.created_at).format('DD/MM/YYYY HH:mm')
   }));
 
+  const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
+  rememberActiveBrandingProperty(res, b.property_id);
+
   res.send(layout({
     title: `Editar reserva #${b.id}`,
     user: req.user,
     activeNav: 'bookings',
+    branding: theme,
     body: html`
       <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
       <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
@@ -5259,6 +5855,522 @@ app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
   res.redirect('/admin/bookings');
 });
 
+
+app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
+  const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const propertyQuery = parsePropertyId(req.query ? (req.query.property_id ?? req.query.propertyId ?? null) : null);
+  const propertyId = propertyQuery || null;
+  const propertyRow = propertyId ? properties.find(p => p.id === propertyId) || null : null;
+  const theme = resolveBrandingForRequest(req, { propertyId, propertyName: propertyRow ? propertyRow.name : null });
+  if (propertyQuery !== null) rememberActiveBrandingProperty(res, propertyId);
+
+  const globalThemeRaw = brandingStore.global || {};
+  const propertyThemeRaw = propertyId ? (brandingStore.properties[propertyId] || {}) : {};
+  const formMode = propertyThemeRaw.mode || globalThemeRaw.mode || 'quick';
+  const formCorner = propertyThemeRaw.cornerStyle || globalThemeRaw.cornerStyle || 'rounded';
+  const formBrandName = propertyThemeRaw.brandName ?? globalThemeRaw.brandName ?? theme.brandName;
+  const formInitials = propertyThemeRaw.brandInitials ?? globalThemeRaw.brandInitials ?? '';
+  const formTagline = propertyThemeRaw.tagline ?? globalThemeRaw.tagline ?? '';
+  const formPrimary = propertyThemeRaw.primaryColor ?? globalThemeRaw.primaryColor ?? theme.primaryColor;
+  const formSecondary = propertyThemeRaw.secondaryColor ?? globalThemeRaw.secondaryColor ?? theme.secondaryColor;
+  const formHighlight = propertyThemeRaw.highlightColor ?? globalThemeRaw.highlightColor ?? theme.highlightColor;
+  const formLogoAlt = propertyThemeRaw.logoAlt ?? globalThemeRaw.logoAlt ?? theme.logoAlt;
+  const logoPath = theme.logoPath;
+  const successKey = typeof req.query.success === 'string' ? req.query.success : '';
+  const errorMessage = typeof req.query.error === 'string' ? req.query.error : '';
+  const successMessage = (() => {
+    switch (successKey) {
+      case 'saved':
+      case '1':
+        return 'Preferências guardadas. O tema foi atualizado em todo o portal.';
+      case 'reset': return 'Tema reposto aos valores padrão.';
+      case 'template': return 'Tema personalizado guardado para reutilização futura.';
+      case 'applied': return 'Tema personalizado aplicado com sucesso.';
+      case 'deleted': return 'Tema personalizado removido.';
+      case 'logo_removed': return 'Logotipo removido. Será utilizada a sigla da marca.';
+      default: return '';
+    }
+  })();
+  const savedThemes = brandingStore.savedThemes || [];
+  const propertyLabel = propertyRow ? propertyRow.name : 'tema global';
+
+  res.send(layout({
+    title: 'Identidade visual',
+    user: req.user,
+    activeNav: 'branding',
+    branding: theme,
+    body: html`
+      <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+      <h1 class="text-2xl font-semibold mt-2">Identidade visual</h1>
+      <p class="text-slate-600 mb-4">Personalize cores, logotipo e mensagens para garantir consistência entre frontoffice e backoffice em cada propriedade.</p>
+
+      <form method="get" class="card p-4 mb-4 flex flex-wrap gap-3 items-end max-w-xl">
+        <label class="grid gap-1 text-sm text-slate-600">
+          <span>Propriedade ativa</span>
+          <select class="input" name="property_id" onchange="this.form.submit()">
+            <option value="" ${!propertyId ? 'selected' : ''}>Tema global (aplicado por defeito)</option>
+            ${properties.map(p => `<option value="${p.id}" ${propertyId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select>
+        </label>
+        <p class="text-xs text-slate-500 max-w-sm">Ao selecionar uma propriedade pode definir um tema próprio. Sem seleção, edita o tema global partilhado.</p>
+      </form>
+
+      ${successMessage ? `
+        <div class="inline-feedback mb-4" data-variant="success">
+          <span class="inline-feedback-icon">✓</span>
+          <div>${esc(successMessage)}</div>
+        </div>
+      ` : ''}
+      ${errorMessage ? `
+        <div class="inline-feedback mb-4" data-variant="danger">
+          <span class="inline-feedback-icon">!</span>
+          <div>${esc(errorMessage)}</div>
+        </div>
+      ` : ''}
+
+      <div class="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <form method="post" action="/admin/identidade-visual" enctype="multipart/form-data" class="card p-4 grid gap-4">
+          <input type="hidden" name="property_id" value="${propertyId || ''}" />
+          <div class="flex flex-col gap-1">
+            <h2 class="text-lg font-semibold text-slate-800">Configurar ${esc(propertyLabel)}</h2>
+            <p class="text-sm text-slate-500">Definições guardadas são aplicadas imediatamente ao frontoffice e backoffice da seleção atual.</p>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="grid gap-2 text-sm text-slate-600">
+              <span>Nome da marca</span>
+              <input class="input" name="brand_name" value="${esc(formBrandName)}" maxlength="80" required />
+            </label>
+            <label class="grid gap-2 text-sm text-slate-600">
+              <span>Sigla do logotipo</span>
+              <input class="input" name="brand_initials" value="${esc(formInitials)}" maxlength="3" placeholder="Ex: GA" />
+              <span class="text-xs text-slate-500">Utilizada quando não existe imagem carregada.</span>
+            </label>
+          </div>
+
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Slogan / mensagem de apoio</span>
+            <input class="input" name="tagline" value="${esc(formTagline)}" maxlength="140" placeholder="Ex: Reservas com confiança" />
+            <span class="text-xs text-slate-500">Deixe em branco para usar o texto padrão.</span>
+          </label>
+
+          <fieldset class="grid gap-3">
+            <legend class="text-sm font-semibold text-slate-600">Paleta de cores</legend>
+            <div class="flex flex-wrap items-center gap-4 text-sm text-slate-600">
+              <label class="inline-flex items-center gap-2">
+                <input type="radio" name="mode" value="quick" ${formMode !== 'manual' ? 'checked' : ''} data-mode-toggle />
+                Modo rápido (gerar automaticamente tons derivados)
+              </label>
+              <label class="inline-flex items-center gap-2">
+                <input type="radio" name="mode" value="manual" ${formMode === 'manual' ? 'checked' : ''} data-mode-toggle />
+                Avançado (definir todas as cores manualmente)
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-3">
+              <label class="grid gap-2 text-sm text-slate-600">
+                <span>Cor primária</span>
+                <input class="input" type="color" name="primary_color" value="${esc(formPrimary)}" data-theme-input />
+              </label>
+              <label class="grid gap-2 text-sm text-slate-600">
+                <span>Cor secundária</span>
+                <input class="input" type="color" name="secondary_color" value="${esc(formSecondary)}" data-theme-input data-manual-color ${formMode === 'manual' ? '' : 'disabled'} />
+              </label>
+              <label class="grid gap-2 text-sm text-slate-600">
+                <span>Cor de destaque</span>
+                <input class="input" type="color" name="highlight_color" value="${esc(formHighlight)}" data-theme-input data-manual-color ${formMode === 'manual' ? '' : 'disabled'} />
+              </label>
+            </div>
+          </fieldset>
+
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Estilo dos cantos</span>
+            <select class="input" name="corner_style" data-theme-input>
+              <option value="rounded" ${formCorner !== 'square' ? 'selected' : ''}>Arredondados suaves</option>
+              <option value="square" ${formCorner === 'square' ? 'selected' : ''}>Retos geométricos</option>
+            </select>
+          </label>
+
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Logotipo (PNG, JPG, WEBP ou SVG &middot; até 3 MB)</span>
+            <input class="input" type="file" name="logo_file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+            ${logoPath ? `<span class="text-xs text-slate-500">Logotipo atual: <a class="underline" href="${esc(logoPath)}" target="_blank" rel="noopener">ver imagem</a></span>` : '<span class="text-xs text-slate-500">Sem imagem carregada — será usada a sigla.</span>'}
+          </label>
+
+          ${logoPath ? `
+            <div class="flex flex-wrap gap-2">
+              <button class="btn btn-muted" name="action" value="remove_logo" onclick="return confirm('Remover o logotipo atual e utilizar a sigla?');">Remover logotipo</button>
+            </div>
+          ` : ''}
+
+          <label class="grid gap-2 text-sm text-slate-600">
+            <span>Texto alternativo do logotipo</span>
+            <input class="input" name="logo_alt" value="${esc(formLogoAlt)}" maxlength="140" placeholder="Descrição para leitores de ecrã" />
+            <span class="text-xs text-slate-500">Deixe em branco para utilizar automaticamente o nome da marca.</span>
+          </label>
+
+          <div class="flex flex-wrap gap-3">
+            <button class="btn btn-primary" name="action" value="save">Guardar alterações</button>
+            <button class="btn btn-muted" name="action" value="reset" onclick="return confirm('Repor o tema para os valores padrão?');">Repor padrão</button>
+          </div>
+
+          <div class="border-t border-slate-200 pt-4 grid gap-3">
+            <h3 class="text-sm font-semibold text-slate-700">Guardar como tema reutilizável</h3>
+            <p class="text-xs text-slate-500">Crie um tema nomeado para aplicar rapidamente noutras propriedades.</p>
+            <label class="grid gap-1 text-sm text-slate-600 max-w-sm">
+              <span>Nome do tema</span>
+              <input class="input" name="theme_name" maxlength="80" placeholder="Ex: Azul praia" />
+            </label>
+            <button class="btn btn-light w-fit" name="action" value="save_template">Guardar como tema personalizado</button>
+          </div>
+        </form>
+
+        <aside class="grid gap-4">
+          <section class="card p-4 grid gap-3" data-theme-preview>
+            <h2 class="text-sm font-semibold text-slate-700">Pré-visualização em tempo real</h2>
+            <div class="preview-card" data-preview-root>
+              <div class="preview-top">
+                <div class="preview-logo" data-preview-logo>
+                  ${logoPath ? `<img src="${esc(logoPath)}" alt="${esc(formLogoAlt)}" />` : `<span data-preview-initials>${esc(formInitials || theme.brandInitials)}</span>`}
+                </div>
+                <div>
+                  <div class="preview-brand" data-preview-name>${esc(formBrandName)}</div>
+                  <div class="preview-tagline" data-preview-tagline>${esc(formTagline)}</div>
+                </div>
+              </div>
+              <div class="preview-body">
+                <p>Botões, formulários e cartões utilizam estas variáveis de cor e raio em todo o portal.</p>
+                <div class="preview-actions">
+                  <button type="button" class="preview-btn-primary">Reservar</button>
+                  <button type="button" class="preview-btn-secondary">Ver unidades</button>
+                </div>
+              </div>
+            </div>
+            <ul class="preview-palette">
+              <li><span class="swatch" data-preview-swatch="primary"></span> Primária <code data-preview-code="primary">${esc(theme.primaryColor)}</code></li>
+              <li><span class="swatch" data-preview-swatch="secondary"></span> Secundária <code data-preview-code="secondary">${esc(theme.secondaryColor)}</code></li>
+              <li><span class="swatch" data-preview-swatch="highlight"></span> Destaque <code data-preview-code="highlight">${esc(theme.highlightColor)}</code></li>
+            </ul>
+          </section>
+
+          <section class="card p-4 grid gap-3">
+            <h2 class="text-sm font-semibold text-slate-700">Temas personalizados</h2>
+            ${savedThemes.length ? `
+              <ul class="grid gap-3">
+                ${savedThemes.map(entry => {
+                  const sample = computeBrandingTheme({ ...entry.theme }, {});
+                  return `
+                    <li class="saved-theme" style="--saved-primary:${sample.primaryColor};--saved-secondary:${sample.secondaryColor}">
+                      <div class="saved-theme-header">
+                        <span class="saved-theme-name">${esc(entry.name)}</span>
+                        <form method="post" action="/admin/identidade-visual" class="flex gap-2">
+                          <input type="hidden" name="property_id" value="${propertyId || ''}" />
+                          <input type="hidden" name="template_id" value="${esc(entry.id)}" />
+                          <button class="btn btn-primary btn-xs" name="action" value="apply_template">Aplicar</button>
+                          <button class="btn btn-muted btn-xs" name="action" value="delete_template" onclick="return confirm('Remover este tema personalizado?');">Remover</button>
+                        </form>
+                      </div>
+                      <div class="saved-theme-preview">
+                        <span class="swatch" style="background:var(--saved-primary)"></span>
+                        <span class="swatch" style="background:var(--saved-secondary)"></span>
+                        <span class="text-xs text-slate-500">${esc(sample.brandName)}</span>
+                      </div>
+                    </li>
+                  `;
+                }).join('')}
+              </ul>
+            ` : `<p class="text-sm text-slate-500">Ainda não existem temas guardados. Crie um acima para reutilizar noutros alojamentos.</p>`}
+          </section>
+        </aside>
+      </div>
+
+      <style>
+        [data-theme-preview] .preview-card{border-radius:var(--brand-radius-lg);border:1px solid var(--brand-surface-border);background:linear-gradient(135deg,var(--brand-primary-soft),#fff);padding:18px;display:grid;gap:16px;}
+        [data-theme-preview] .preview-top{display:flex;align-items:center;gap:14px;}
+        [data-theme-preview] .preview-logo{width:46px;height:46px;border-radius:var(--brand-radius-sm);background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));display:flex;align-items:center;justify-content:center;color:var(--brand-primary-contrast);font-weight:700;overflow:hidden;}
+        [data-theme-preview] .preview-logo img{width:100%;height:100%;object-fit:cover;display:block;}
+        [data-theme-preview] .preview-brand{font-weight:600;font-size:1rem;color:#1f2937;}
+        [data-theme-preview] .preview-tagline{font-size:.8rem;color:var(--brand-muted);}
+        [data-theme-preview] .preview-body{display:grid;gap:12px;font-size:.85rem;color:#475569;}
+        [data-theme-preview] .preview-actions{display:flex;gap:8px;flex-wrap:wrap;}
+        [data-theme-preview] .preview-btn-primary{background:var(--brand-primary);color:var(--brand-primary-contrast);border:none;border-radius:var(--brand-radius-pill);padding:8px 18px;font-weight:600;}
+        [data-theme-preview] .preview-btn-secondary{background:var(--brand-secondary);color:var(--brand-primary-contrast);border:none;border-radius:var(--brand-radius-pill);padding:8px 16px;font-weight:600;opacity:.9;}
+        [data-theme-preview] .preview-palette{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.8rem;color:#475569;}
+        [data-theme-preview] .preview-palette .swatch{display:inline-block;width:18px;height:18px;border-radius:6px;margin-right:6px;vertical-align:middle;border:1px solid rgba(15,23,42,.12);}
+        .saved-theme{border:1px solid var(--brand-surface-border);border-radius:var(--brand-radius-sm);padding:12px;display:grid;gap:8px;}
+        .saved-theme-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+        .saved-theme-name{font-size:.9rem;font-weight:600;color:#1f2937;}
+        .saved-theme-preview{display:flex;align-items:center;gap:8px;font-size:.75rem;color:#475569;}
+        .saved-theme .swatch{display:inline-block;width:18px;height:18px;border-radius:6px;border:1px solid rgba(15,23,42,.12);}
+        .btn.btn-xs{padding:4px 10px;font-size:.75rem;border-radius:999px;}
+      </style>
+
+      <script>
+        (function(){
+          const root = document.querySelector('[data-theme-preview]');
+          if (!root) return;
+          const modeToggles = Array.from(document.querySelectorAll('[data-mode-toggle]'));
+          const manualInputs = Array.from(document.querySelectorAll('[data-manual-color]'));
+          const previewRoot = root.querySelector('[data-preview-root]');
+          const previewName = root.querySelector('[data-preview-name]');
+          const previewTagline = root.querySelector('[data-preview-tagline]');
+          const previewInitials = root.querySelector('[data-preview-initials]');
+          const swatches = {
+            primary: root.querySelector('[data-preview-swatch="primary"]'),
+            secondary: root.querySelector('[data-preview-swatch="secondary"]'),
+            highlight: root.querySelector('[data-preview-swatch="highlight"]')
+          };
+          const codes = {
+            primary: root.querySelector('[data-preview-code="primary"]'),
+            secondary: root.querySelector('[data-preview-code="secondary"]'),
+            highlight: root.querySelector('[data-preview-code="highlight"]')
+          };
+
+          function hexToRgb(hex){
+            const clean = String(hex || '').replace('#','');
+            if (clean.length !== 6) return null;
+            return { r: parseInt(clean.slice(0,2),16), g: parseInt(clean.slice(2,4),16), b: parseInt(clean.slice(4,6),16) };
+          }
+          function rgbToHex(rgb){
+            const toHex = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2,'0');
+            return '#' + toHex(rgb.r) + toHex(rgb.g) + toHex(rgb.b);
+          }
+          function mix(aHex, bHex, ratio){
+            const a = hexToRgb(aHex); const b = hexToRgb(bHex);
+            if (!a || !b) return aHex;
+            const t = Math.max(0, Math.min(1, ratio));
+            return rgbToHex({ r: a.r * (1-t) + b.r * t, g: a.g * (1-t) + b.g * t, b: a.b * (1-t) + b.b * t });
+          }
+          function contrast(hex){
+            const rgb = hexToRgb(hex);
+            if (!rgb) return '#ffffff';
+            const luminance = (0.2126*rgb.r + 0.7152*rgb.g + 0.0722*rgb.b)/255;
+            return luminance > 0.6 ? '#0f172a' : '#ffffff';
+          }
+
+          function currentMode(){
+            const active = modeToggles.find(r => r.checked);
+            return active && active.value === 'manual' ? 'manual' : 'quick';
+          }
+
+          function applyManualState(){
+            const manual = currentMode() === 'manual';
+            manualInputs.forEach(input => {
+              input.disabled = !manual;
+              input.closest('label')?.classList.toggle('opacity-60', !manual);
+            });
+          }
+
+          function updatePreview(){
+            const mode = currentMode();
+            const primaryInput = document.querySelector('input[name="primary_color"]');
+            const secondaryInput = document.querySelector('input[name="secondary_color"]');
+            const highlightInput = document.querySelector('input[name="highlight_color"]');
+            const nameInput = document.querySelector('input[name="brand_name"]');
+            const taglineInput = document.querySelector('input[name="tagline"]');
+            const initialsInput = document.querySelector('input[name="brand_initials"]');
+            const cornerSelect = document.querySelector('select[name="corner_style"]');
+
+            const primary = primaryInput ? primaryInput.value : '#2563eb';
+            let secondary = secondaryInput ? secondaryInput.value : '#1d4ed8';
+            let highlight = highlightInput ? highlightInput.value : '#f97316';
+            if (mode !== 'manual') {
+              secondary = mix(primary, '#1f2937', 0.18);
+              highlight = mix(primary, '#f97316', 0.35);
+            }
+
+            const primaryHover = mix(primary, '#000000', 0.18);
+            const primarySoft = mix(primary, '#ffffff', 0.82);
+            const surface = mix(primary, '#ffffff', 0.94);
+            const surfaceBorder = mix(primary, '#1f2937', 0.12);
+            const surfaceRing = mix(primary, '#60a5fa', 0.35);
+            const background = mix(primary, '#ffffff', 0.97);
+            const muted = mix(primary, '#475569', 0.35);
+            const surfaceContrast = contrast(surface);
+
+            const cornerStyle = cornerSelect && cornerSelect.value === 'square' ? 'square' : 'rounded';
+            const radius = cornerStyle === 'square' ? '14px' : '24px';
+            const radiusSm = cornerStyle === 'square' ? '8px' : '16px';
+            const radiusLg = cornerStyle === 'square' ? '24px' : '32px';
+            const radiusPill = cornerStyle === 'square' ? '22px' : '999px';
+
+            previewRoot.style.setProperty('--brand-primary', primary);
+            previewRoot.style.setProperty('--brand-secondary', secondary);
+            previewRoot.style.setProperty('--brand-highlight', highlight);
+            previewRoot.style.setProperty('--brand-primary-contrast', contrast(primary));
+            previewRoot.style.setProperty('--brand-primary-hover', primaryHover);
+            previewRoot.style.setProperty('--brand-primary-soft', primarySoft);
+            previewRoot.style.setProperty('--brand-surface', surface);
+            previewRoot.style.setProperty('--brand-surface-border', surfaceBorder);
+            previewRoot.style.setProperty('--brand-surface-ring', surfaceRing);
+            previewRoot.style.setProperty('--brand-surface-contrast', surfaceContrast);
+            previewRoot.style.setProperty('--brand-background', background);
+            previewRoot.style.setProperty('--brand-muted', muted);
+            previewRoot.style.setProperty('--brand-radius', radius);
+            previewRoot.style.setProperty('--brand-radius-sm', radiusSm);
+            previewRoot.style.setProperty('--brand-radius-lg', radiusLg);
+            previewRoot.style.setProperty('--brand-radius-pill', radiusPill);
+
+            if (swatches.primary) swatches.primary.style.background = primary;
+            if (swatches.secondary) swatches.secondary.style.background = secondary;
+            if (swatches.highlight) swatches.highlight.style.background = highlight;
+            if (codes.primary) codes.primary.textContent = primary;
+            if (codes.secondary) codes.secondary.textContent = secondary;
+            if (codes.highlight) codes.highlight.textContent = highlight;
+
+            if (previewName && nameInput) previewName.textContent = nameInput.value || '${esc(theme.brandName)}';
+            if (previewTagline && taglineInput) previewTagline.textContent = taglineInput.value;
+            if (previewInitials && initialsInput) previewInitials.textContent = initialsInput.value || '${esc(theme.brandInitials)}';
+          }
+
+          modeToggles.forEach(el => el.addEventListener('change', () => { applyManualState(); updatePreview(); }));
+          ['input','change'].forEach(evt => {
+            document.querySelectorAll('[data-theme-input]').forEach(input => input.addEventListener(evt, updatePreview));
+          });
+
+          applyManualState();
+          updatePreview();
+        })();
+      </script>
+    `
+  }));
+});
+
+app.post('/admin/identidade-visual', requireAdmin, (req, res) => {
+  uploadBrandingAsset.single('logo_file')(req, res, async (err) => {
+    const propertyId = parsePropertyId((req.body ? req.body.property_id : null));
+    const baseRedirect = propertyId ? `/admin/identidade-visual?property_id=${propertyId}` : '/admin/identidade-visual';
+    const redirectWith = (key, value) => `${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}${key}=${value}`;
+    const cleanupUpload = async () => { if (req.file) await fsp.unlink(req.file.path).catch(() => {}); };
+
+    if (err) {
+      console.error('Identidade visual: erro no upload', err.message);
+      await cleanupUpload();
+      return res.redirect(redirectWith('error', encodeURIComponent('Falha ao carregar o logotipo: ' + err.message)));
+    }
+
+    const actionRaw = typeof (req.body && req.body.action) === 'string' ? req.body.action.toLowerCase() : 'save';
+    const action = ['save','reset','save_template','apply_template','delete_template','remove_logo'].includes(actionRaw) ? actionRaw : 'save';
+    const store = cloneBrandingStoreState();
+    const previousScope = propertyId ? (brandingStore.properties[propertyId] || {}) : (brandingStore.global || {});
+    let previousLogo = previousScope.logoFile || null;
+
+    try {
+      if (action === 'reset') {
+        const previous = propertyId ? store.properties[propertyId] || {} : store.global || {};
+        const oldLogo = previous.logoFile || null;
+        if (propertyId) {
+          delete store.properties[propertyId];
+        } else {
+          store.global = {};
+        }
+        persistBrandingStore(store);
+        if (oldLogo) await removeBrandingLogo(oldLogo);
+        await cleanupUpload();
+        rememberActiveBrandingProperty(res, propertyId);
+        return res.redirect(redirectWith('success', 'reset'));
+      }
+
+      if (action === 'apply_template') {
+        const templateId = String((req.body && req.body.template_id) || '').trim();
+        const template = store.savedThemes.find(entry => entry.id === templateId);
+        if (!template) {
+          await cleanupUpload();
+          return res.redirect(redirectWith('error', encodeURIComponent('Tema personalizado não encontrado.')));
+        }
+        const appliedTheme = sanitizeBrandingTheme({ ...template.theme });
+        if (propertyId) store.properties[propertyId] = appliedTheme; else store.global = appliedTheme;
+        persistBrandingStore(store);
+        if (propertyId) rememberActiveBrandingProperty(res, propertyId);
+        await cleanupUpload();
+        const oldLogo = propertyId ? (brandingStore.properties[propertyId]?.logoFile || null) : (brandingStore.global.logoFile || null);
+        if (oldLogo && (!appliedTheme.logoFile || appliedTheme.logoFile !== oldLogo)) await removeBrandingLogo(oldLogo);
+        return res.redirect(redirectWith('success', 'applied'));
+      }
+
+      if (action === 'delete_template') {
+        const templateId = String((req.body && req.body.template_id) || '').trim();
+        const originalLength = store.savedThemes.length;
+        store.savedThemes = store.savedThemes.filter(entry => entry.id !== templateId);
+        persistBrandingStore(store);
+        await cleanupUpload();
+        if (originalLength === store.savedThemes.length) {
+          return res.redirect(redirectWith('error', encodeURIComponent('Tema personalizado não encontrado.')));
+        }
+        return res.redirect(redirectWith('success', 'deleted'));
+      }
+
+      if (action === 'remove_logo') {
+        const target = propertyId ? { ...(store.properties[propertyId] || {}) } : { ...store.global };
+        const oldLogo = target.logoFile || null;
+        delete target.logoFile;
+        delete target.logoAlt;
+        target.logoHidden = true;
+        if (propertyId) {
+          if (Object.keys(target).length) {
+            store.properties[propertyId] = target;
+          } else {
+            delete store.properties[propertyId];
+          }
+        } else {
+          store.global = target;
+        }
+        persistBrandingStore(store);
+        await cleanupUpload();
+        rememberActiveBrandingProperty(res, propertyId);
+        if (oldLogo) await removeBrandingLogo(oldLogo);
+        return res.redirect(redirectWith('success', 'logo_removed'));
+      }
+
+      const submission = extractBrandingSubmission((req.body || {}));
+      const updates = submission.updates;
+      const clears = submission.clears;
+      const mode = submission.mode;
+      const existingTheme = propertyId ? { ...(store.properties[propertyId] || {}) } : { ...store.global };
+
+      if (req.file) {
+        updates.logoFile = req.file.filename;
+        clears.add('logoHidden');
+      }
+
+      clears.forEach(field => { delete existingTheme[field]; });
+      Object.assign(existingTheme, updates);
+      if (mode !== 'manual') {
+        delete existingTheme.secondaryColor;
+        delete existingTheme.highlightColor;
+      }
+
+      if (req.file) {
+        await compressImage(req.file.path).catch(() => {});
+      }
+
+      if (action === 'save_template') {
+        const templateName = String((req.body && req.body.theme_name) || '').trim();
+        if (!templateName) {
+          await cleanupUpload();
+          return res.redirect(redirectWith('error', encodeURIComponent('Indique o nome para o tema personalizado.')));
+        }
+        const savedTheme = sanitizeBrandingTheme({ ...existingTheme });
+        store.savedThemes.push({ id: crypto.randomBytes(6).toString('hex'), name: templateName.slice(0, 80), theme: savedTheme });
+      }
+
+      if (propertyId) {
+        store.properties[propertyId] = existingTheme;
+      } else {
+        store.global = existingTheme;
+      }
+
+      persistBrandingStore(store);
+      if (previousLogo && previousLogo !== existingTheme.logoFile) await removeBrandingLogo(previousLogo);
+      rememberActiveBrandingProperty(res, propertyId);
+      const successKey = action === 'save_template' ? 'template' : 'saved';
+      return res.redirect(redirectWith('success', successKey));
+    } catch (saveErr) {
+      console.error('Identidade visual: falha ao guardar', saveErr);
+      await cleanupUpload();
+      return res.redirect(redirectWith('error', encodeURIComponent('Não foi possível guardar as alterações.')));
+    }
+  });
+});
 app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'logs.view']), (req, res) => {
   const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
   const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
@@ -5303,10 +6415,13 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
       `).all()
     : [];
 
+  const theme = resolveBrandingForRequest(req);
+
   res.send(layout({
     title: 'Auditoria',
     user: req.user,
     activeNav: 'audit',
+    branding: theme,
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
       ${canViewAudit ? `
@@ -5418,7 +6533,8 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     ...u,
     role_key: normalizeRole(u.role)
   }));
-  res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', body: html`
+  const theme = resolveBrandingForRequest(req);
+  res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
 
