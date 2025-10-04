@@ -24,7 +24,9 @@ module.exports = function registerFrontoffice(app, context) {
     logActivity,
     logChange,
     overlaps,
-    ExcelJS
+    ExcelJS,
+    rescheduleBookingUpdateStmt,
+    rescheduleBlockUpdateStmt
   } = context;
 
   // ===================== Front Office =====================
