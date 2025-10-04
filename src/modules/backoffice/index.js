@@ -174,12 +174,119 @@ module.exports = function registerBackoffice(app, context) {
     };
   }
 
+  function jsonScriptPayload(value) {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/&/g, '\\u0026')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+  }
+
   function defaultHousekeepingTitle(taskType, booking) {
     const baseLabel = HOUSEKEEPING_TYPE_LABELS[taskType] || HOUSEKEEPING_TYPE_LABELS.custom;
     if (!booking) return baseLabel;
     const unitName = booking.unit_name || 'Unidade';
     const propertyName = booking.property_name ? `${booking.property_name} · ` : '';
     return `${propertyName}${baseLabel} · ${unitName}`;
+  }
+
+  function syncHousekeepingAutoTasks({ today, windowStart, windowEnd }) {
+    const deleteTaskStmt = db.prepare('DELETE FROM housekeeping_tasks WHERE id = ?');
+    const orphanTasks = db
+      .prepare(
+        `SELECT ht.id
+           FROM housekeeping_tasks ht
+           LEFT JOIN bookings b ON b.id = ht.booking_id
+          WHERE ht.source = 'auto'
+            AND ht.task_type = 'checkout'
+            AND (b.id IS NULL OR b.status <> 'CONFIRMED')`
+      )
+      .all();
+    orphanTasks.forEach(task => deleteTaskStmt.run(task.id));
+
+    const startIso = windowStart.format('YYYY-MM-DD');
+    const endIso = windowEnd.format('YYYY-MM-DD');
+    const bookings = db
+      .prepare(
+        `SELECT b.id,
+                b.unit_id,
+                b.checkin,
+                b.checkout,
+                b.guest_name,
+                u.property_id,
+                u.name AS unit_name,
+                p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.status = 'CONFIRMED'
+            AND b.checkout BETWEEN ? AND ?`
+      )
+      .all(startIso, endIso);
+
+    if (!bookings.length) return;
+
+    const bookingIds = bookings.map(b => b.id);
+    const placeholders = bookingIds.map(() => '?').join(',');
+    const existing = placeholders
+      ? db
+          .prepare(
+            `SELECT id, booking_id, status, source, due_date, priority
+               FROM housekeeping_tasks
+              WHERE task_type = 'checkout'
+                AND booking_id IN (${placeholders})`
+          )
+          .all(...bookingIds)
+      : [];
+
+    const tasksByBooking = new Map();
+    existing.forEach(task => {
+      if (!tasksByBooking.has(task.booking_id)) tasksByBooking.set(task.booking_id, []);
+      tasksByBooking.get(task.booking_id).push(task);
+    });
+
+    const insertStmt = db.prepare(
+      `INSERT INTO housekeeping_tasks
+         (booking_id, unit_id, property_id, task_type, title, details, due_date, due_time, status, priority, source, created_by)
+       VALUES (?, ?, ?, 'checkout', ?, NULL, ?, NULL, 'pending', ?, 'auto', NULL)`
+    );
+    const updateStmt = db.prepare(
+      `UPDATE housekeeping_tasks
+          SET due_date = ?, priority = ?
+        WHERE id = ?`
+    );
+
+    const priorityFor = dueDateIso => {
+      const due = dayjs(dueDateIso);
+      if (!due.isValid()) return 'normal';
+      if (due.isBefore(today, 'day') || due.isSame(today, 'day')) return 'alta';
+      if (due.diff(today, 'day') <= 1) return 'normal';
+      return 'baixa';
+    };
+
+    db.transaction(() => {
+      bookings.forEach(booking => {
+        const existingTasks = tasksByBooking.get(booking.id) || [];
+        const autoTask = existingTasks.find(task => task.source === 'auto');
+        const desiredPriority = priorityFor(booking.checkout);
+        if (autoTask) {
+          if (autoTask.due_date !== booking.checkout || autoTask.priority !== desiredPriority) {
+            updateStmt.run(booking.checkout, desiredPriority, autoTask.id);
+          }
+        } else if (existingTasks.length === 0) {
+          const title = defaultHousekeepingTitle('checkout', booking);
+          insertStmt.run(
+            booking.id,
+            booking.unit_id,
+            booking.property_id,
+            title,
+            booking.checkout,
+            desiredPriority
+          );
+        }
+      });
+    })();
   }
 
   function getHousekeepingTasks(options = {}) {
@@ -242,8 +349,15 @@ module.exports = function registerBackoffice(app, context) {
     }
     const bucketMap = new Map(buckets.map((b) => [b.iso, b]));
     const extendedEnd = today.add(futureWindowDays, 'day');
-    const taskList = getHousekeepingTasks({ includeCompleted: false, endDate: extendedEnd.format('YYYY-MM-DD') });
     const bookingsWindowStart = today.subtract(3, 'day');
+
+    syncHousekeepingAutoTasks({
+      today,
+      windowStart: bookingsWindowStart,
+      windowEnd: extendedEnd
+    });
+
+    const taskList = getHousekeepingTasks({ includeCompleted: false, endDate: extendedEnd.format('YYYY-MM-DD') });
     const bookingRows = db
       .prepare(
         `SELECT b.id,
@@ -1184,7 +1298,7 @@ module.exports = function registerBackoffice(app, context) {
     },
     initialData: operationalDefault
   };
-  const operationalConfigJson = esc(JSON.stringify(operationalConfig));
+  const operationalConfigJson = jsonScriptPayload(operationalConfig);
 
   const notificationsHtml = automationNotifications.length
     ? `<ul class="space-y-3">${automationNotifications.map(n => {
