@@ -63,6 +63,7 @@ module.exports = function registerBackoffice(app, context) {
     AUTO_CHAIN_THRESHOLD,
     AUTO_CHAIN_CLEANUP_NIGHTS,
     HOT_DEMAND_THRESHOLD,
+    renderAuditDiff,
     formatJsonSnippet,
     parsePropertyId,
     slugify,
