@@ -44,6 +44,7 @@ module.exports = function registerBackoffice(app, context) {
     deriveUnitType,
     dateRangeNights,
     requireLogin,
+    requireBackofficeAccess,
     requirePermission,
     requireAnyPermission,
     requireAdmin,
@@ -77,6 +78,8 @@ module.exports = function registerBackoffice(app, context) {
   } = context;
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
+
+  app.use('/admin', requireLogin, requireBackofficeAccess);
 
   const HOUSEKEEPING_TASK_TYPES = new Set(['checkout', 'checkin', 'midstay', 'custom']);
   const HOUSEKEEPING_TYPE_LABELS = {
@@ -3634,6 +3637,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
             <option value="rececao">Receção</option>
             <option value="gestao">Gestão</option>
             <option value="direcao">Direção</option>
+            <option value="limpeza">Limpeza</option>
           </select>
           <button class="btn btn-primary">Criar</button>
         </form>

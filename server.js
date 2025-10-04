@@ -293,7 +293,6 @@ const ROLE_PERMISSIONS = {
     'housekeeping.complete'
   ]),
   limpeza: new Set([
-    'calendar.view',
     'housekeeping.view',
     'housekeeping.complete'
   ])
@@ -1848,6 +1847,36 @@ function requireAdmin(req,res,next){
   next();
 }
 
+function userHasBackofficeAccess(user) {
+  if (!user) return false;
+  const normalizedRole = user.role ? normalizeRole(user.role) : null;
+  return normalizedRole === MASTER_ROLE || normalizedRole === 'gestao' || normalizedRole === 'direcao';
+}
+
+function requireBackofficeAccess(req, res, next) {
+  if (!req.user) {
+    const sess = getSession(req.cookies.adm);
+    if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+    req.user = buildUserContext(sess);
+  }
+
+  if (userHasBackofficeAccess(req.user)) return next();
+
+  const relativePath = req.baseUrl === '/admin' ? req.path || '' : req.originalUrl.replace(/^\/admin/, '') || '';
+  const method = req.method ? req.method.toUpperCase() : 'GET';
+  const isBookingsView =
+    relativePath === '/bookings' ||
+    relativePath === '/bookings/' ||
+    relativePath.startsWith('/bookings/');
+
+  if ((method === 'GET' || method === 'HEAD') && isBookingsView && userCan(req.user, 'bookings.view')) {
+    return next();
+  }
+
+  if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+  return res.status(403).send('Sem permissão');
+}
+
 function requirePermission(permission) {
   return (req, res, next) => {
     if (!req.user) {
@@ -1919,6 +1948,16 @@ function layout({ title, body, user, activeNav = '', branding }) {
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
   const can = (perm) => userCan(user, perm);
+  const isHousekeepingOnly = user && user.role === 'limpeza';
+  const canAccessBackoffice = userHasBackofficeAccess(user);
+  const canViewBookings = can('bookings.view');
+  const brandHomeHref = isHousekeepingOnly
+    ? '/limpeza/tarefas'
+    : canAccessBackoffice && can('dashboard.view')
+    ? '/admin'
+    : canViewBookings
+    ? '/admin/bookings'
+    : '/';
   const userPermissions = user ? Array.from(user.permissions || []) : [];
   const brandLogoClass = theme.logoPath ? 'brand-logo has-image' : 'brand-logo';
   const brandLogoContent = theme.logoPath
@@ -2427,7 +2466,7 @@ function layout({ title, body, user, activeNav = '', branding }) {
       <div class="app-shell">
         <header class="topbar">
           <div class="topbar-inner">
-            <a href="/" class="brand" aria-label="${esc(theme.brandName)}">
+            <a href="${esc(brandHomeHref)}" class="brand" aria-label="${esc(theme.brandName)}">
               <span class="${brandLogoClass}">${brandLogoContent}</span>
               <span class="brand-info">
                 <span class="brand-name">${esc(theme.brandName)}</span>
@@ -2435,14 +2474,14 @@ function layout({ title, body, user, activeNav = '', branding }) {
               </span>
             </a>
             <nav class="nav-links">
-              <a class="${navClass('search')}" href="/search">Pesquisar</a>
+              ${!isHousekeepingOnly ? `<a class="${navClass('search')}" href="/search">Pesquisar</a>` : ''}
               ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
               ${can('housekeeping.view') ? `<a class="${navClass('housekeeping')}" href="/limpeza/tarefas">Limpezas</a>` : ``}
-              ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
-              ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
-              ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
-              ${can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
-              ${can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${canAccessBackoffice && can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
+              ${canViewBookings ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
+              ${canAccessBackoffice && (can('audit.view') || can('logs.view')) ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
+              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
+              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
             </nav>
             <div class="nav-actions">
               ${user
@@ -2542,6 +2581,8 @@ const context = {
   getSession,
   destroySession,
   requireLogin,
+  userHasBackofficeAccess,
+  requireBackofficeAccess,
   requirePermission,
   requireAnyPermission,
   requireAdmin,
