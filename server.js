@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   total_cents INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'CONFIRMED',
   external_ref TEXT,
+  confirmation_token TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -198,6 +199,7 @@ try {
   ensureColumn('units', 'features', 'TEXT');
   ensureColumn('bookings', 'external_ref', 'TEXT');
   ensureColumn('bookings', 'updated_at', 'TEXT');
+  ensureColumn('bookings', 'confirmation_token', 'TEXT');
   ensureColumn('blocks', 'updated_at', 'TEXT');
   ensureColumn('unit_images', 'is_primary', 'INTEGER NOT NULL DEFAULT 0');
 } catch (_) {}
