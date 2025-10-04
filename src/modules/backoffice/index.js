@@ -71,13 +71,1181 @@ module.exports = function registerBackoffice(app, context) {
     removeBrandingLogo,
     compressImage,
     cloneBrandingStoreState,
-    computeBrandingTheme
+    computeBrandingTheme,
+    isSafeRedirectTarget
   } = context;
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
 
+  const HOUSEKEEPING_TASK_TYPES = new Set(['checkout', 'checkin', 'midstay', 'custom']);
+  const HOUSEKEEPING_TYPE_LABELS = {
+    checkout: 'Limpeza de saída',
+    checkin: 'Preparar entrada',
+    midstay: 'Arrumação intermédia',
+    custom: 'Tarefa de limpeza'
+  };
+  const HOUSEKEEPING_PRIORITIES = new Set(['alta', 'normal', 'baixa']);
+  const HOUSEKEEPING_PRIORITY_ORDER = { alta: 0, normal: 1, baixa: 2 };
+
+  const HOUSEKEEPING_TASK_BASE = `
+    SELECT
+      t.id,
+      t.booking_id,
+      t.unit_id,
+      t.property_id,
+      t.task_type,
+      t.title,
+      t.details,
+      t.due_date,
+      t.due_time,
+      t.status,
+      t.priority,
+      t.source,
+      t.created_by,
+      t.created_at,
+      t.started_at,
+      t.started_by,
+      t.completed_at,
+      t.completed_by,
+      u.id AS resolved_unit_id,
+      u.name AS resolved_unit_name,
+      prop_task.id AS task_property_id,
+      prop_task.name AS task_property_name,
+      prop_unit.id AS unit_property_id,
+      prop_unit.name AS unit_property_name,
+      b.guest_name AS booking_guest_name,
+      b.checkin AS booking_checkin,
+      b.checkout AS booking_checkout,
+      b.status AS booking_status,
+      creator.username AS created_by_username,
+      starter.username AS started_by_username,
+      completer.username AS completed_by_username
+    FROM housekeeping_tasks t
+    LEFT JOIN bookings b ON b.id = t.booking_id
+    LEFT JOIN units u ON u.id = COALESCE(t.unit_id, b.unit_id)
+    LEFT JOIN properties prop_unit ON prop_unit.id = u.property_id
+    LEFT JOIN properties prop_task ON prop_task.id = t.property_id
+    LEFT JOIN users creator ON creator.id = t.created_by
+    LEFT JOIN users starter ON starter.id = t.started_by
+    LEFT JOIN users completer ON completer.id = t.completed_by
+  `;
+
+  function mapHousekeepingTask(row) {
+    const propertyId = row.property_id || row.task_property_id || row.unit_property_id || null;
+    const propertyName = row.task_property_name || row.unit_property_name || '';
+    const unitId = row.unit_id || row.resolved_unit_id || null;
+    const unitName = row.resolved_unit_name || '';
+    const effectiveDate =
+      row.due_date ||
+      (row.task_type === 'checkout'
+        ? row.booking_checkout
+        : row.task_type === 'checkin'
+        ? row.booking_checkin
+        : null);
+    return {
+      id: row.id,
+      booking_id: row.booking_id,
+      unit_id: unitId,
+      property_id: propertyId,
+      property_name: propertyName,
+      unit_name: unitName,
+      task_type: row.task_type,
+      title: row.title,
+      details: row.details,
+      due_date: row.due_date,
+      due_time: row.due_time,
+      status: row.status,
+      priority: row.priority,
+      source: row.source,
+      created_by: row.created_by,
+      created_at: row.created_at,
+      started_at: row.started_at,
+      started_by: row.started_by,
+      started_by_username: row.started_by_username,
+      completed_at: row.completed_at,
+      completed_by: row.completed_by,
+      completed_by_username: row.completed_by_username,
+      created_by_username: row.created_by_username,
+      booking_checkin: row.booking_checkin,
+      booking_checkout: row.booking_checkout,
+      booking_guest_name: row.booking_guest_name,
+      booking_status: row.booking_status,
+      effective_date: effectiveDate || null
+    };
+  }
+
+  function jsonScriptPayload(value) {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/&/g, '\\u0026')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+  }
+
+  function defaultHousekeepingTitle(taskType, booking) {
+    const baseLabel = HOUSEKEEPING_TYPE_LABELS[taskType] || HOUSEKEEPING_TYPE_LABELS.custom;
+    if (!booking) return baseLabel;
+    const unitName = booking.unit_name || 'Unidade';
+    const propertyName = booking.property_name ? `${booking.property_name} · ` : '';
+    return `${propertyName}${baseLabel} · ${unitName}`;
+  }
+
+  function syncHousekeepingAutoTasks({ today, windowStart, windowEnd }) {
+    const deleteTaskStmt = db.prepare('DELETE FROM housekeeping_tasks WHERE id = ?');
+    const orphanTasks = db
+      .prepare(
+        `SELECT ht.id
+           FROM housekeeping_tasks ht
+           LEFT JOIN bookings b ON b.id = ht.booking_id
+          WHERE ht.source = 'auto'
+            AND ht.task_type = 'checkout'
+            AND (b.id IS NULL OR b.status <> 'CONFIRMED')`
+      )
+      .all();
+    orphanTasks.forEach(task => deleteTaskStmt.run(task.id));
+
+    const startIso = windowStart.format('YYYY-MM-DD');
+    const endIso = windowEnd.format('YYYY-MM-DD');
+    const bookings = db
+      .prepare(
+        `SELECT b.id,
+                b.unit_id,
+                b.checkin,
+                b.checkout,
+                b.guest_name,
+                u.property_id,
+                u.name AS unit_name,
+                p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.status = 'CONFIRMED'
+            AND b.checkout BETWEEN ? AND ?`
+      )
+      .all(startIso, endIso);
+
+    if (!bookings.length) return;
+
+    const bookingIds = bookings.map(b => b.id);
+    const placeholders = bookingIds.map(() => '?').join(',');
+    const existing = placeholders
+      ? db
+          .prepare(
+            `SELECT id, booking_id, status, source, due_date, priority
+               FROM housekeeping_tasks
+              WHERE task_type = 'checkout'
+                AND booking_id IN (${placeholders})`
+          )
+          .all(...bookingIds)
+      : [];
+
+    const tasksByBooking = new Map();
+    existing.forEach(task => {
+      if (!tasksByBooking.has(task.booking_id)) tasksByBooking.set(task.booking_id, []);
+      tasksByBooking.get(task.booking_id).push(task);
+    });
+
+    const insertStmt = db.prepare(
+      `INSERT INTO housekeeping_tasks
+         (booking_id, unit_id, property_id, task_type, title, details, due_date, due_time, status, priority, source, created_by)
+       VALUES (?, ?, ?, 'checkout', ?, NULL, ?, NULL, 'pending', ?, 'auto', NULL)`
+    );
+    const updateStmt = db.prepare(
+      `UPDATE housekeeping_tasks
+          SET due_date = ?, priority = ?
+        WHERE id = ?`
+    );
+
+    const priorityFor = dueDateIso => {
+      const due = dayjs(dueDateIso);
+      if (!due.isValid()) return 'normal';
+      if (due.isBefore(today, 'day') || due.isSame(today, 'day')) return 'alta';
+      if (due.diff(today, 'day') <= 1) return 'normal';
+      return 'baixa';
+    };
+
+    db.transaction(() => {
+      bookings.forEach(booking => {
+        const existingTasks = tasksByBooking.get(booking.id) || [];
+        const autoTask = existingTasks.find(task => task.source === 'auto');
+        const desiredPriority = priorityFor(booking.checkout);
+        if (autoTask) {
+          if (autoTask.due_date !== booking.checkout || autoTask.priority !== desiredPriority) {
+            updateStmt.run(booking.checkout, desiredPriority, autoTask.id);
+          }
+        } else if (existingTasks.length === 0) {
+          const title = defaultHousekeepingTitle('checkout', booking);
+          insertStmt.run(
+            booking.id,
+            booking.unit_id,
+            booking.property_id,
+            title,
+            booking.checkout,
+            desiredPriority
+          );
+        }
+      });
+    })();
+  }
+
+  function getHousekeepingTasks(options = {}) {
+    const {
+      statuses = null,
+      includeCompleted = false,
+      startDate = null,
+      endDate = null,
+      limit = null,
+      order = 'default'
+    } = options;
+    const filters = [];
+    const params = [];
+    if (statuses && statuses.length) {
+      filters.push(`t.status IN (${statuses.map(() => '?').join(',')})`);
+      params.push(...statuses);
+    } else if (!includeCompleted) {
+      filters.push("t.status IN ('pending','in_progress')");
+    }
+    if (startDate) {
+      filters.push('(t.due_date IS NULL OR t.due_date >= ?)');
+      params.push(startDate);
+    }
+    if (endDate) {
+      filters.push('(t.due_date IS NULL OR t.due_date <= ?)');
+      params.push(endDate);
+    }
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const orderClause =
+      order === 'completed_desc'
+        ? 'ORDER BY t.completed_at DESC'
+        : `ORDER BY CASE t.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END, CASE t.priority WHEN 'alta' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, t.due_date IS NULL, t.due_date, t.due_time, t.created_at`;
+    let limitClause = '';
+    if (limit !== null && limit !== undefined) {
+      const parsedLimit = Number(limit);
+      if (!Number.isNaN(parsedLimit) && parsedLimit > 0) {
+        limitClause = ` LIMIT ${Math.floor(parsedLimit)}`;
+      }
+    }
+    const sql = `${HOUSEKEEPING_TASK_BASE} ${whereClause} ${orderClause}${limitClause}`;
+    const rows = db.prepare(sql).all(...params);
+    return rows.map(mapHousekeepingTask);
+  }
+
+  function computeHousekeepingBoard({ horizonDays = 5, futureWindowDays = 21 } = {}) {
+    const today = dayjs().startOf('day');
+    const buckets = [];
+    for (let i = 0; i < horizonDays; i++) {
+      const date = today.add(i, 'day');
+      buckets.push({
+        iso: date.format('YYYY-MM-DD'),
+        displayLabel: capitalizeMonth(date.format('D [de] MMMM')),
+        shortLabel: date.format('DD/MM'),
+        weekdayLabel: capitalizeMonth(date.format('dddd')),
+        isToday: i === 0,
+        checkins: [],
+        checkouts: [],
+        tasks: []
+      });
+    }
+    const bucketMap = new Map(buckets.map((b) => [b.iso, b]));
+    const extendedEnd = today.add(futureWindowDays, 'day');
+    const bookingsWindowStart = today.subtract(3, 'day');
+
+    syncHousekeepingAutoTasks({
+      today,
+      windowStart: bookingsWindowStart,
+      windowEnd: extendedEnd
+    });
+
+    const taskList = getHousekeepingTasks({ includeCompleted: false, endDate: extendedEnd.format('YYYY-MM-DD') });
+    const bookingRows = db
+      .prepare(
+        `SELECT b.id,
+                b.guest_name,
+                b.checkin,
+                b.checkout,
+                b.status,
+                u.name AS unit_name,
+                p.name AS property_name,
+                p.id AS property_id
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.status IN ('CONFIRMED','PENDING')
+            AND (
+              b.checkin BETWEEN ? AND ?
+              OR b.checkout BETWEEN ? AND ?
+            )
+          ORDER BY b.checkout, b.checkin`
+      )
+      .all(
+        bookingsWindowStart.format('YYYY-MM-DD'),
+        extendedEnd.format('YYYY-MM-DD'),
+        bookingsWindowStart.format('YYYY-MM-DD'),
+        extendedEnd.format('YYYY-MM-DD')
+      );
+
+    const overdueTasks = [];
+    const futureTasks = [];
+    const unscheduledTasks = [];
+    const backlogCheckouts = [];
+    const futureCheckins = [];
+    const futureCheckouts = [];
+
+    taskList.forEach((task) => {
+      const effective = task.effective_date ? dayjs(task.effective_date) : null;
+      const effectiveIso = effective ? effective.format('YYYY-MM-DD') : null;
+      const enriched = { ...task, effective_iso: effectiveIso };
+      if (effective && effective.isBefore(today, 'day')) {
+        overdueTasks.push(enriched);
+      } else if (effectiveIso && bucketMap.has(effectiveIso)) {
+        bucketMap.get(effectiveIso).tasks.push(enriched);
+      } else if (effective) {
+        futureTasks.push(enriched);
+      } else {
+        unscheduledTasks.push(enriched);
+      }
+    });
+
+    const sortBookings = (arr) =>
+      arr.sort((a, b) => {
+        const propDiff = (a.property_name || '').localeCompare(b.property_name || '', 'pt', { sensitivity: 'base' });
+        if (propDiff !== 0) return propDiff;
+        return (a.unit_name || '').localeCompare(b.unit_name || '', 'pt', { sensitivity: 'base' });
+      });
+
+    bookingRows.forEach((row) => {
+      const checkoutDate = dayjs(row.checkout);
+      const checkinDate = dayjs(row.checkin);
+      const enriched = {
+        ...row,
+        range_label: formatDateRangeShort(row.checkin, row.checkout)
+      };
+      if (checkoutDate.isBefore(today, 'day')) {
+        if (!checkoutDate.isBefore(today.subtract(3, 'day'), 'day')) {
+          backlogCheckouts.push(enriched);
+        }
+      } else {
+        const iso = checkoutDate.format('YYYY-MM-DD');
+        if (bucketMap.has(iso)) {
+          bucketMap.get(iso).checkouts.push(enriched);
+        } else {
+          futureCheckouts.push(enriched);
+        }
+      }
+
+      if (!checkinDate.isBefore(today, 'day')) {
+        const iso = checkinDate.format('YYYY-MM-DD');
+        if (bucketMap.has(iso)) {
+          bucketMap.get(iso).checkins.push(enriched);
+        } else {
+          futureCheckins.push(enriched);
+        }
+      }
+    });
+
+    buckets.forEach((bucket) => {
+      sortBookings(bucket.checkouts);
+      sortBookings(bucket.checkins);
+      bucket.tasks.sort((a, b) => {
+        const priorityDiff = (HOUSEKEEPING_PRIORITY_ORDER[a.priority] ?? 1) - (HOUSEKEEPING_PRIORITY_ORDER[b.priority] ?? 1);
+        if (priorityDiff !== 0) return priorityDiff;
+        if (a.due_time && b.due_time) return a.due_time.localeCompare(b.due_time);
+        if (a.due_time) return -1;
+        if (b.due_time) return 1;
+        return a.title.localeCompare(b.title, 'pt', { sensitivity: 'base' });
+      });
+    });
+
+    const sortTasksByDate = (arr) =>
+      arr.sort((a, b) => {
+        if (a.effective_date && b.effective_date) {
+          return a.effective_date.localeCompare(b.effective_date);
+        }
+        if (a.effective_date) return -1;
+        if (b.effective_date) return 1;
+        return a.title.localeCompare(b.title, 'pt', { sensitivity: 'base' });
+      });
+
+    sortTasksByDate(overdueTasks);
+    sortTasksByDate(futureTasks);
+    unscheduledTasks.sort((a, b) => a.title.localeCompare(b.title, 'pt', { sensitivity: 'base' }));
+    sortBookings(futureCheckins);
+    sortBookings(futureCheckouts);
+
+    return {
+      today,
+      buckets,
+      overdueTasks,
+      futureTasks,
+      unscheduledTasks,
+      backlogCheckouts,
+      futureCheckins,
+      futureCheckouts,
+      tasks: taskList
+    };
+  }
+
+  function renderHousekeepingBoard(options = {}) {
+    const {
+      buckets = [],
+      overdueTasks = [],
+      futureTasks = [],
+      unscheduledTasks = [],
+      backlogCheckouts = [],
+      futureCheckins = [],
+      futureCheckouts = [],
+      canStart = false,
+      canComplete = false,
+      actionBase = '/limpeza/tarefas',
+      redirectPath = '/limpeza/tarefas'
+    } = options;
+
+    const statusLabels = { pending: 'Pendente', in_progress: 'Em curso', completed: 'Concluída' };
+    const priorityLabels = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
+    const safeActionBase = actionBase.replace(/\/+$/, '');
+    const safeRedirect = esc(redirectPath || '/limpeza/tarefas');
+
+    const statusBadgeClass = (status) => {
+      if (status === 'completed') return 'bg-emerald-100 text-emerald-700';
+      if (status === 'in_progress') return 'bg-amber-100 text-amber-700';
+      return 'bg-slate-100 text-slate-700';
+    };
+    const priorityBadgeClass = (priority) => {
+      if (priority === 'alta') return 'bg-rose-100 text-rose-700';
+      if (priority === 'baixa') return 'bg-slate-100 text-slate-600';
+      return 'bg-sky-100 text-sky-700';
+    };
+
+    const renderTaskActions = (task) => {
+      const actions = [];
+      if (canStart && task.status === 'pending') {
+        actions.push(html`<form method="post" action="${safeActionBase}/${task.id}/progresso" class="inline-flex">
+            <input type="hidden" name="redirect" value="${safeRedirect}" />
+            <button class="btn btn-light btn-xs" type="submit">Iniciar</button>
+          </form>`);
+      }
+      if (canComplete && task.status !== 'completed') {
+        actions.push(html`<form method="post" action="${safeActionBase}/${task.id}/concluir" class="inline-flex">
+            <input type="hidden" name="redirect" value="${safeRedirect}" />
+            <button class="btn btn-primary btn-xs" type="submit">Concluir</button>
+          </form>`);
+      }
+      return actions.join('');
+    };
+
+    const renderTaskCard = (task, { highlight = false, showDate = false } = {}) => {
+      const propertyUnitLine = `${task.property_name ? `${task.property_name} · ` : ''}${task.unit_name || 'Sem unidade associada'}`;
+      const meta = [];
+      if (showDate && task.effective_date) {
+        meta.push(
+          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">${esc(
+            capitalizeMonth(dayjs(task.effective_date).format('D [de] MMMM'))
+          )}</span>`
+        );
+      }
+      if (task.due_time) {
+        meta.push(
+          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">${esc(
+            task.due_time
+          )}</span>`
+        );
+      }
+      if (task.source && task.source !== 'manual') {
+        meta.push(
+          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Automático</span>`
+        );
+      }
+      if (task.created_by_username) {
+        meta.push(
+          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Por ${esc(
+            task.created_by_username
+          )}</span>`
+        );
+      }
+
+      return html`<article class="rounded-lg border ${highlight ? 'border-rose-200 bg-rose-50/70' : 'border-slate-200 bg-white'} p-3 shadow-sm space-y-2">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <p class="font-medium text-slate-900">${esc(task.title)}</p>
+            <p class="text-sm text-slate-500">${esc(propertyUnitLine)}</p>
+          </div>
+          <div class="flex flex-col items-end gap-1 text-right">
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(task.status)}">${esc(
+              statusLabels[task.status] || task.status
+            )}</span>
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${priorityBadgeClass(task.priority)}">${esc(
+              priorityLabels[task.priority] || task.priority
+            )}</span>
+          </div>
+        </div>
+        ${task.booking_guest_name ? `<p class="text-sm text-slate-600">Hóspede: ${esc(task.booking_guest_name)}</p>` : ''}
+        ${task.booking_checkin && task.booking_checkout
+          ? `<p class="text-xs text-slate-500">Estadia: ${esc(formatDateRangeShort(task.booking_checkin, task.booking_checkout))}</p>`
+          : ''}
+        ${task.details ? `<p class="text-sm text-slate-600 whitespace-pre-line">${esc(task.details)}</p>` : ''}
+        ${meta.length ? `<div class="flex flex-wrap gap-2 text-xs text-slate-500">${meta.join('')}</div>` : ''}
+        ${canStart || canComplete
+          ? `<div class="flex flex-wrap gap-2 pt-1">${renderTaskActions(task)}</div>`
+          : ''}
+      </article>`;
+    };
+
+    const renderBookingCard = (booking, type) => {
+      const badgeClass =
+        type === 'checkout' ? 'bg-rose-100 text-rose-700' : type === 'backlog' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700';
+      const borderClass = type === 'checkout' || type === 'backlog' ? 'border-rose-200 bg-rose-50/60' : 'border-sky-200 bg-sky-50/60';
+      const label = type === 'checkout' ? 'Checkout' : type === 'backlog' ? 'Pendente' : 'Check-in';
+      return html`<article class="rounded-lg border ${borderClass} p-3 shadow-sm space-y-1">
+        <div class="flex items-center justify-between text-sm font-medium text-slate-800">
+          <span>${esc(booking.property_name || '')} · ${esc(booking.unit_name || '')}</span>
+          <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass}">${label}</span>
+        </div>
+        <div class="text-sm text-slate-600">${esc(booking.guest_name || '—')}</div>
+        <div class="text-xs text-slate-500">${esc(booking.range_label || '')}</div>
+      </article>`;
+    };
+
+    const backlogSection = backlogCheckouts.length
+      ? html`<section class="card border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+          <div>
+            <h3 class="text-base font-semibold text-rose-700">Check-outs recentes a aguardar limpeza</h3>
+            <p class="text-sm text-rose-600">Garanta a higienização destas unidades para libertar novas entradas.</p>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            ${backlogCheckouts.map((item) => renderBookingCard(item, 'backlog')).join('')}
+          </div>
+        </section>`
+      : '';
+
+    const overdueSection = overdueTasks.length
+      ? html`<section class="card border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-semibold text-rose-700">Tarefas de limpeza em atraso</h3>
+            <span class="text-sm text-rose-600 font-medium">${overdueTasks.length}</span>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            ${overdueTasks.map((task) => renderTaskCard(task, { highlight: true, showDate: true })).join('')}
+          </div>
+        </section>`
+      : '';
+
+    const bucketGrid = buckets.length
+      ? html`<div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          ${buckets
+            .map(
+              (bucket) => html`<section class="card p-4 space-y-4">
+                <header class="flex items-start justify-between gap-2">
+                  <div>
+                    <p class="text-xs uppercase tracking-wide text-slate-500">${esc(bucket.weekdayLabel)}</p>
+                    <h3 class="text-lg font-semibold text-slate-900">${esc(bucket.displayLabel)}</h3>
+                    <p class="text-xs text-slate-500">${esc(bucket.shortLabel)}</p>
+                  </div>
+                  ${bucket.isToday
+                    ? '<span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">Hoje</span>'
+                    : ''}
+                </header>
+                <div class="space-y-4">
+                  ${bucket.checkouts.length
+                    ? html`<div class="space-y-2">
+                        <h4 class="text-sm font-semibold text-rose-700">Saídas</h4>
+                        <div class="space-y-2">
+                          ${bucket.checkouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
+                        </div>
+                      </div>`
+                    : ''}
+                  ${bucket.checkins.length
+                    ? html`<div class="space-y-2">
+                        <h4 class="text-sm font-semibold text-sky-700">Entradas</h4>
+                        <div class="space-y-2">
+                          ${bucket.checkins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
+                        </div>
+                      </div>`
+                    : ''}
+                  ${bucket.tasks.length
+                    ? html`<div class="space-y-2">
+                        <h4 class="text-sm font-semibold text-slate-700">Tarefas</h4>
+                        <div class="space-y-2">
+                          ${bucket.tasks.map((task) => renderTaskCard(task)).join('')}
+                        </div>
+                      </div>`
+                    : ''}
+                  ${!bucket.checkouts.length && !bucket.checkins.length && !bucket.tasks.length
+                    ? '<p class="text-sm text-slate-500">Sem tarefas planeadas.</p>'
+                    : ''}
+                </div>
+              </section>`
+            )
+            .join('')}
+        </div>`
+      : '<p class="text-sm text-slate-500">Sem tarefas planeadas para os próximos dias.</p>';
+
+    const futureGroups = [];
+    const groupMap = new Map();
+    futureTasks.forEach((task) => {
+      const key = task.effective_iso || task.effective_date || 'future';
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          key,
+          label: task.effective_date ? capitalizeMonth(dayjs(task.effective_date).format('D [de] MMMM')) : 'Próximas',
+          tasks: []
+        });
+        futureGroups.push(groupMap.get(key));
+      }
+      groupMap.get(key).tasks.push(task);
+    });
+
+    const futureSection = futureGroups.length
+      ? html`<section class="card p-4 space-y-4">
+          <h3 class="text-base font-semibold text-slate-800">Próximas limpezas</h3>
+          ${futureGroups
+            .map(
+              (group) => html`<div class="space-y-2">
+                <h4 class="text-sm font-semibold text-slate-600">${esc(group.label)}</h4>
+                <div class="space-y-2">
+                  ${group.tasks.map((task) => renderTaskCard(task, { showDate: true })).join('')}
+                </div>
+              </div>`
+            )
+            .join('')}
+        </section>`
+      : '';
+
+    const unscheduledSection = unscheduledTasks.length
+      ? html`<section class="card p-4 space-y-3">
+          <h3 class="text-base font-semibold text-slate-800">Tarefas sem data definida</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            ${unscheduledTasks.map((task) => renderTaskCard(task)).join('')}
+          </div>
+        </section>`
+      : '';
+
+    const futureEventsSection = futureCheckins.length || futureCheckouts.length
+      ? html`<section class="card p-4 space-y-4">
+          <h3 class="text-base font-semibold text-slate-800">Agenda futura</h3>
+          <div class="grid gap-4 md:grid-cols-2">
+            ${futureCheckouts.length
+              ? html`<div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-rose-700">Saídas planeadas</h4>
+                  <div class="space-y-2">
+                    ${futureCheckouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
+                  </div>
+                </div>`
+              : ''}
+            ${futureCheckins.length
+              ? html`<div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-sky-700">Entradas planeadas</h4>
+                  <div class="space-y-2">
+                    ${futureCheckins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
+                  </div>
+                </div>`
+              : ''}
+          </div>
+        </section>`
+      : '';
+
+    return [backlogSection, overdueSection, bucketGrid, futureSection, unscheduledSection, futureEventsSection]
+      .filter(Boolean)
+      .join('');
+  }
+
+  function resolveHousekeepingRedirect(req, fallback) {
+    const target = req.body && typeof req.body.redirect === 'string' ? req.body.redirect : null;
+    if (target && isSafeRedirectTarget(target)) {
+      return target;
+    }
+    return fallback;
+  }
+
   // ===================== Backoffice (protegido) =====================
-app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
+  app.get('/limpeza/tarefas', requireLogin, requirePermission('housekeeping.view'), (req, res) => {
+    const board = computeHousekeepingBoard({ horizonDays: 5, futureWindowDays: 21 });
+    const canCompleteTasks = userCan(req.user, 'housekeeping.complete');
+    const totalTasks = board.tasks || [];
+    const pendingCount = totalTasks.filter(task => task.status === 'pending').length;
+    const inProgressCount = totalTasks.filter(task => task.status === 'in_progress').length;
+    const completedWindowStart = dayjs().subtract(1, 'day');
+    const completedRecent = getHousekeepingTasks({
+      statuses: ['completed'],
+      includeCompleted: true,
+      limit: 40,
+      order: 'completed_desc'
+    }).filter(task => task.completed_at && dayjs(task.completed_at).isAfter(completedWindowStart));
+    const completedLast24h = completedRecent.length;
+    const boardHtml = renderHousekeepingBoard({
+      ...board,
+      canStart: canCompleteTasks,
+      canComplete: canCompleteTasks,
+      actionBase: '/limpeza/tarefas',
+      redirectPath: '/limpeza/tarefas'
+    });
+    const body = html`
+      <div class="space-y-6">
+        <header class="card p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 class="text-2xl font-semibold text-slate-900">Mapa de limpezas</h1>
+            <p class="text-sm text-slate-600">Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
+          </div>
+          <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
+            <div class="rounded-lg bg-slate-900 text-white p-3 text-center shadow-sm">
+              <p class="text-xs uppercase tracking-wide text-white/70">Pendentes</p>
+              <p class="text-2xl font-semibold">${pendingCount}</p>
+            </div>
+            <div class="rounded-lg bg-amber-500 text-white p-3 text-center shadow-sm">
+              <p class="text-xs uppercase tracking-wide text-white/70">Em curso</p>
+              <p class="text-2xl font-semibold">${inProgressCount}</p>
+            </div>
+            <div class="rounded-lg bg-emerald-600 text-white p-3 text-center shadow-sm">
+              <p class="text-xs uppercase tracking-wide text-white/70">Concluídas (24h)</p>
+              <p class="text-2xl font-semibold">${completedLast24h}</p>
+            </div>
+          </div>
+        </header>
+        ${boardHtml}
+      </div>
+    `;
+    res.send(
+      layout({
+        title: 'Mapa de limpezas',
+        activeNav: 'housekeeping',
+        user: req.user,
+        branding: resolveBrandingForRequest(req),
+        body
+      })
+    );
+  });
+
+  app.get('/admin/limpeza', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
+    const board = computeHousekeepingBoard({ horizonDays: 6, futureWindowDays: 30 });
+    const canCompleteTasks = userCan(req.user, 'housekeeping.complete');
+    const totalTasks = board.tasks || [];
+    const pendingCount = totalTasks.filter(task => task.status === 'pending').length;
+    const inProgressCount = totalTasks.filter(task => task.status === 'in_progress').length;
+    const highPriorityCount = totalTasks.filter(task => task.priority === 'alta' && task.status !== 'completed').length;
+    const completedLast7 = getHousekeepingTasks({
+      statuses: ['completed'],
+      includeCompleted: true,
+      limit: 80,
+      order: 'completed_desc'
+    }).filter(task => task.completed_at && dayjs(task.completed_at).isAfter(dayjs().subtract(7, 'day')));
+    const boardHtml = renderHousekeepingBoard({
+      ...board,
+      canStart: canCompleteTasks,
+      canComplete: canCompleteTasks,
+      actionBase: '/limpeza/tarefas',
+      redirectPath: '/admin/limpeza'
+    });
+    const upcomingBookings = db
+      .prepare(
+        `SELECT b.id,
+                b.checkin,
+                b.checkout,
+                b.guest_name,
+                u.name AS unit_name,
+                p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.status IN ('CONFIRMED','PENDING')
+            AND b.checkout >= date('now','-3 day')
+          ORDER BY b.checkout ASC
+          LIMIT 80`
+      )
+      .all();
+    const units = db
+      .prepare(
+        `SELECT u.id, u.name, p.id AS property_id, p.name AS property_name
+           FROM units u
+           JOIN properties p ON p.id = u.property_id
+          ORDER BY p.name, u.name`
+      )
+      .all();
+    const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+    const recentCompleted = completedLast7.slice(0, 12);
+    const typeOptions = ['checkout', 'checkin', 'midstay', 'custom'];
+    const priorityOptions = ['alta', 'normal', 'baixa'];
+    const body = html`
+      <div class="space-y-8">
+        <header class="card p-5">
+          <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 class="text-2xl font-semibold text-slate-900">Gestão de limpezas</h1>
+              <p class="text-sm text-slate-600">Atribua tarefas à equipa de limpeza e acompanhe a execução por propriedade.</p>
+            </div>
+            <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
+              <div class="rounded-lg bg-slate-900 text-white p-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-white/70">Pendentes</p>
+                <p class="text-2xl font-semibold">${pendingCount}</p>
+              </div>
+              <div class="rounded-lg bg-amber-500 text-white p-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-white/70">Em curso</p>
+                <p class="text-2xl font-semibold">${inProgressCount}</p>
+              </div>
+              <div class="rounded-lg bg-rose-500 text-white p-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-white/70">Prioridade alta</p>
+                <p class="text-2xl font-semibold">${highPriorityCount}</p>
+              </div>
+            </div>
+          </div>
+        </header>
+        <section class="card p-5 space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-900">Nova tarefa de limpeza</h2>
+            <p class="text-sm text-slate-600">Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.</p>
+          </div>
+          <form method="post" action="/admin/limpeza/tarefas" class="grid gap-4">
+            <input type="hidden" name="redirect" value="/admin/limpeza" />
+            <div class="grid gap-3 md:grid-cols-2">
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Tipo de tarefa</span>
+                <select name="task_type" class="input">
+                  ${typeOptions
+                    .map(
+                      value =>
+                        `<option value="${esc(value)}">${esc(HOUSEKEEPING_TYPE_LABELS[value] || value)}</option>`
+                    )
+                    .join('')}
+                </select>
+              </label>
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Prioridade</span>
+                <select name="priority" class="input">
+                  ${priorityOptions
+                    .map(value => `<option value="${esc(value)}">${esc(value === 'alta' ? 'Alta' : value === 'baixa' ? 'Baixa' : 'Normal')}</option>`)
+                    .join('')}
+                </select>
+              </label>
+            </div>
+            <label class="grid gap-2 text-sm">
+              <span class="font-medium text-slate-700">Reserva (opcional)</span>
+              <select name="booking_id" class="input">
+                <option value="">Selecionar reserva...</option>
+                ${upcomingBookings
+                  .map(
+                    booking =>
+                      `<option value="${booking.id}">${esc(
+                        `${booking.property_name} · ${booking.unit_name} — ${booking.guest_name || 'Sem hóspede'} (${formatDateRangeShort(
+                          booking.checkin,
+                          booking.checkout
+                        )})`
+                      )}</option>`
+                  )
+                  .join('')}
+              </select>
+            </label>
+            <div class="grid gap-3 md:grid-cols-2">
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Unidade (opcional)</span>
+                <select name="unit_id" class="input">
+                  <option value="">Selecionar unidade...</option>
+                  ${units
+                    .map(unit => `<option value="${unit.id}">${esc(`${unit.property_name} · ${unit.name}`)}</option>`)
+                    .join('')}
+                </select>
+              </label>
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Propriedade (opcional)</span>
+                <select name="property_id" class="input">
+                  <option value="">Selecionar propriedade...</option>
+                  ${properties.map(property => `<option value="${property.id}">${esc(property.name)}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Data prevista</span>
+                <input type="date" name="due_date" class="input" />
+              </label>
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">Hora limite (opcional)</span>
+                <input type="time" name="due_time" class="input" />
+              </label>
+            </div>
+            <label class="grid gap-2 text-sm">
+              <span class="font-medium text-slate-700">Título</span>
+              <input name="title" class="input" placeholder="Ex.: Preparar para nova entrada" />
+            </label>
+            <label class="grid gap-2 text-sm">
+              <span class="font-medium text-slate-700">Notas para a equipa (opcional)</span>
+              <textarea name="details" class="input min-h-[96px]" placeholder="Indique instruções específicas ou pedidos dos hóspedes"></textarea>
+            </label>
+            <div class="flex justify-end">
+              <button class="btn btn-primary">Criar tarefa</button>
+            </div>
+          </form>
+        </section>
+        ${boardHtml}
+        ${recentCompleted.length
+          ? html`<section class="card p-5 space-y-3">
+              <div class="flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-slate-900">Concluídas nos últimos 7 dias</h2>
+                <span class="text-sm text-slate-500">${completedLast7.length} no total</span>
+              </div>
+              <div class="responsive-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Tarefa</th>
+                      <th>Unidade</th>
+                      <th>Concluída</th>
+                      <th>Por</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${recentCompleted
+                      .map(
+                        task => html`<tr>
+                          <td data-label="Tarefa">
+                            <div class="font-medium text-slate-800">${esc(task.title)}</div>
+                            <div class="text-xs text-slate-500">${esc(HOUSEKEEPING_TYPE_LABELS[task.task_type] || task.task_type)}</div>
+                          </td>
+                          <td data-label="Unidade">
+                            ${task.property_name ? `<div>${esc(task.property_name)}</div>` : ''}
+                            ${task.unit_name ? `<div class="text-xs text-slate-500">${esc(task.unit_name)}</div>` : ''}
+                          </td>
+                          <td data-label="Concluída">
+                            ${task.completed_at ? esc(dayjs(task.completed_at).format('DD/MM HH:mm')) : '—'}
+                          </td>
+                          <td data-label="Por">${task.completed_by_username ? esc(task.completed_by_username) : '—'}</td>
+                          <td class="text-right">
+                            <form method="post" action="/admin/limpeza/tarefas/${task.id}/reabrir">
+                              <input type="hidden" name="redirect" value="/admin/limpeza" />
+                              <button class="btn btn-light btn-xs" type="submit">Reabrir</button>
+                            </form>
+                          </td>
+                        </tr>`
+                      )
+                      .join('')}
+                  </tbody>
+                </table>
+              </div>
+            </section>`
+          : ''}
+      </div>
+    `;
+    res.send(
+      layout({
+        title: 'Gestão de limpezas',
+        activeNav: 'housekeeping',
+        user: req.user,
+        branding: resolveBrandingForRequest(req),
+        body
+      })
+    );
+  });
+
+  app.post('/admin/limpeza/tarefas', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
+    const data = req.body || {};
+    const bookingId = data.booking_id ? Number.parseInt(data.booking_id, 10) : null;
+    const unitIdRaw = data.unit_id ? Number.parseInt(data.unit_id, 10) : null;
+    const propertyIdRaw = data.property_id ? Number.parseInt(data.property_id, 10) : null;
+    const typeKey = typeof data.task_type === 'string' ? data.task_type.toLowerCase() : 'custom';
+    const taskType = HOUSEKEEPING_TASK_TYPES.has(typeKey) ? typeKey : 'custom';
+    const priorityKey = typeof data.priority === 'string' ? data.priority.toLowerCase() : 'normal';
+    const taskPriority = HOUSEKEEPING_PRIORITIES.has(priorityKey) ? priorityKey : 'normal';
+    const trimmedTitle = typeof data.title === 'string' ? data.title.trim() : '';
+    const trimmedDetails = typeof data.details === 'string' ? data.details.trim() : '';
+    let dueDate = typeof data.due_date === 'string' && data.due_date.trim() ? data.due_date.trim() : null;
+    if (dueDate && !dayjs(dueDate, 'YYYY-MM-DD', true).isValid()) dueDate = null;
+    let dueTime = typeof data.due_time === 'string' && data.due_time.trim() ? data.due_time.trim() : null;
+    if (dueTime && !/^[0-2]\d:[0-5]\d$/.test(dueTime)) dueTime = null;
+    let resolvedUnitId = Number.isInteger(unitIdRaw) ? unitIdRaw : null;
+    let resolvedPropertyId = Number.isInteger(propertyIdRaw) ? propertyIdRaw : null;
+    let booking = null;
+    if (bookingId) {
+      booking = db
+        .prepare(
+          `SELECT b.id,
+                  b.unit_id,
+                  b.checkin,
+                  b.checkout,
+                  b.guest_name,
+                  u.property_id AS unit_property_id,
+                  u.name AS unit_name,
+                  p.name AS property_name
+             FROM bookings b
+             JOIN units u ON u.id = b.unit_id
+             JOIN properties p ON p.id = u.property_id
+            WHERE b.id = ?`
+        )
+        .get(bookingId);
+      if (!booking) {
+        const message = 'Reserva inválida';
+        if (wantsJson(req)) return res.status(400).json({ ok: false, message });
+        return res.status(400).send(message);
+      }
+      if (!resolvedUnitId) resolvedUnitId = booking.unit_id;
+      if (!resolvedPropertyId) resolvedPropertyId = booking.unit_property_id;
+      if (!dueDate) {
+        if (taskType === 'checkout') {
+          dueDate = booking.checkout;
+        } else if (taskType === 'checkin') {
+          dueDate = booking.checkin;
+        }
+      }
+    }
+
+    let unitRow = null;
+    if (resolvedUnitId) {
+      unitRow = db
+        .prepare(
+          `SELECT u.id, u.property_id, u.name, p.name AS property_name
+             FROM units u
+             JOIN properties p ON p.id = u.property_id
+            WHERE u.id = ?`
+        )
+        .get(resolvedUnitId);
+      if (!unitRow) {
+        resolvedUnitId = null;
+      } else if (!resolvedPropertyId) {
+        resolvedPropertyId = unitRow.property_id;
+      }
+    }
+
+    let propertyRow = null;
+    if (resolvedPropertyId) {
+      propertyRow = db.prepare('SELECT id, name FROM properties WHERE id = ?').get(resolvedPropertyId);
+      if (!propertyRow) {
+        resolvedPropertyId = null;
+      }
+    }
+
+    const fallbackContext =
+      booking ||
+      (unitRow ? { unit_name: unitRow.name, property_name: unitRow.property_name } : null) ||
+      (propertyRow ? { unit_name: '', property_name: propertyRow.name } : null);
+    const finalTitle = trimmedTitle || defaultHousekeepingTitle(taskType, fallbackContext);
+
+    const result = db
+      .prepare(
+        `INSERT INTO housekeeping_tasks
+           (booking_id, unit_id, property_id, task_type, title, details, due_date, due_time, priority, source, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)`
+      )
+      .run(
+        bookingId,
+        resolvedUnitId,
+        resolvedPropertyId,
+        taskType,
+        finalTitle,
+        trimmedDetails ? trimmedDetails : null,
+        dueDate,
+        dueTime,
+        taskPriority,
+        req.user.id
+      );
+
+    const taskId = result.lastInsertRowid;
+    logActivity(req.user.id, 'housekeeping:create', 'housekeeping_task', taskId, {
+      bookingId: bookingId || null,
+      unitId: resolvedUnitId || null,
+      propertyId: resolvedPropertyId || null,
+      taskType,
+      dueDate,
+      dueTime,
+      priority: taskPriority
+    });
+
+    if (wantsJson(req)) {
+      return res.json({ ok: true, id: taskId });
+    }
+    res.redirect(resolveHousekeepingRedirect(req, '/admin/limpeza'));
+  });
+
+  app.post('/limpeza/tarefas/:id/progresso', requireLogin, requirePermission('housekeeping.complete'), (req, res) => {
+    const taskId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
+      return res.status(400).send('Tarefa inválida');
+    }
+    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    if (!task) {
+      if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
+      return res.status(404).send('Tarefa não encontrada');
+    }
+    if (task.status === 'completed') {
+      if (wantsJson(req)) return res.json({ ok: true, status: 'completed' });
+      return res.redirect(resolveHousekeepingRedirect(req, '/limpeza/tarefas'));
+    }
+    const now = dayjs().toISOString();
+    db.prepare(
+      `UPDATE housekeeping_tasks
+          SET status = 'in_progress',
+              started_at = COALESCE(started_at, ?),
+              started_by = COALESCE(started_by, ?)
+        WHERE id = ?`
+    ).run(now, req.user.id, taskId);
+    logActivity(req.user.id, 'housekeeping:start', 'housekeeping_task', taskId, {
+      from: task.status,
+      to: 'in_progress'
+    });
+    if (wantsJson(req)) return res.json({ ok: true, status: 'in_progress' });
+    res.redirect(resolveHousekeepingRedirect(req, '/limpeza/tarefas'));
+  });
+
+  app.post('/limpeza/tarefas/:id/concluir', requireLogin, requirePermission('housekeeping.complete'), (req, res) => {
+    const taskId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
+      return res.status(400).send('Tarefa inválida');
+    }
+    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    if (!task) {
+      if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
+      return res.status(404).send('Tarefa não encontrada');
+    }
+    if (task.status === 'completed') {
+      if (wantsJson(req)) return res.json({ ok: true, status: 'completed' });
+      return res.redirect(resolveHousekeepingRedirect(req, '/limpeza/tarefas'));
+    }
+    const now = dayjs().toISOString();
+    db.prepare(
+      `UPDATE housekeeping_tasks
+          SET status = 'completed',
+              completed_at = ?,
+              completed_by = ?,
+              started_at = COALESCE(started_at, ?),
+              started_by = COALESCE(started_by, ?)
+        WHERE id = ?`
+    ).run(now, req.user.id, now, req.user.id, taskId);
+    logActivity(req.user.id, 'housekeeping:complete', 'housekeeping_task', taskId, {
+      from: task.status,
+      to: 'completed'
+    });
+    if (wantsJson(req)) return res.json({ ok: true, status: 'completed' });
+    res.redirect(resolveHousekeepingRedirect(req, '/limpeza/tarefas'));
+  });
+
+  app.post('/admin/limpeza/tarefas/:id/reabrir', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
+    const taskId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
+      return res.status(400).send('Tarefa inválida');
+    }
+    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    if (!task) {
+      if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
+      return res.status(404).send('Tarefa não encontrada');
+    }
+    db.prepare(
+      `UPDATE housekeeping_tasks
+          SET status = 'pending',
+              started_at = NULL,
+              started_by = NULL,
+              completed_at = NULL,
+              completed_by = NULL
+        WHERE id = ?`
+    ).run(taskId);
+    logActivity(req.user.id, 'housekeeping:reopen', 'housekeeping_task', taskId, {
+      from: task.status,
+      to: 'pending'
+    });
+    if (wantsJson(req)) return res.json({ ok: true, status: 'pending' });
+    res.redirect(resolveHousekeepingRedirect(req, '/admin/limpeza'));
+  });
+
+  app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
   const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
   const unitsRaw = db.prepare(
     `SELECT u.*, p.name as property_name
@@ -130,7 +1298,7 @@ app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) 
     },
     initialData: operationalDefault
   };
-  const operationalConfigJson = esc(JSON.stringify(operationalConfig));
+  const operationalConfigJson = jsonScriptPayload(operationalConfig);
 
   const notificationsHtml = automationNotifications.length
     ? `<ul class="space-y-3">${automationNotifications.map(n => {

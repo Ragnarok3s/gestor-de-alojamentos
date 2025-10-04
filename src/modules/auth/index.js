@@ -6,6 +6,8 @@ module.exports = function registerAuthRoutes(app, context) {
     db,
     bcrypt,
     normalizeRole,
+    buildUserContext,
+    userCan,
     createSession,
     logSessionEvent,
     logActivity,
@@ -52,6 +54,8 @@ module.exports = function registerAuthRoutes(app, context) {
       db.prepare('UPDATE users SET role = ? WHERE id = ?').run(normalizedRole, user.id);
     }
 
+    const userContext = buildUserContext({ user_id: user.id, username: user.username, role: normalizedRole });
+
     const token = createSession(user.id);
     const secure =
       !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
@@ -60,7 +64,14 @@ module.exports = function registerAuthRoutes(app, context) {
     logActivity(user.id, 'auth:login', null, null, {});
 
     const safeNext = typeof nxt === 'string' && isSafeRedirectTarget(nxt) ? nxt : null;
-    res.redirect(safeNext || '/admin');
+    const defaultRedirect = userCan(userContext, 'dashboard.view')
+      ? '/admin'
+      : userCan(userContext, 'housekeeping.view')
+      ? '/limpeza/tarefas'
+      : userCan(userContext, 'calendar.view')
+      ? '/calendar'
+      : '/';
+    res.redirect(safeNext || defaultRedirect);
   });
 
   app.post('/logout', (req, res) => {

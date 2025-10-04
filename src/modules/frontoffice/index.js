@@ -24,7 +24,9 @@ module.exports = function registerFrontoffice(app, context) {
     logActivity,
     logChange,
     overlaps,
-    ExcelJS
+    ExcelJS,
+    rescheduleBookingUpdateStmt,
+    rescheduleBlockUpdateStmt
   } = context;
 
   // ===================== Front Office =====================
@@ -593,6 +595,13 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
             });
           }
 
+          function releaseCapture(ctx) {
+            if (!ctx || !ctx.captureTarget || typeof ctx.pointerId !== 'number') return;
+            if (typeof ctx.captureTarget.releasePointerCapture === 'function') {
+              try { ctx.captureTarget.releasePointerCapture(ctx.pointerId); } catch (_) {}
+            }
+          }
+
           function highlightRange(unitId, start, endExclusive, className) {
             clearHighlight(className);
             if (!start || !endExclusive) return;
@@ -929,6 +938,9 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               const reschedPermission = entryKind === 'BOOKING'
                 ? (CAN_RESCHEDULE && status === 'CONFIRMED')
                 : CAN_MANAGE_BLOCK;
+              if (typeof cell.setPointerCapture === 'function') {
+                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
+              }
               dragCtx = {
                 entryId: entryId,
                 entryKind: entryKind,
@@ -939,17 +951,24 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
                 originEnd: cell.getAttribute('data-entry-end'),
                 anchorDate: cell.getAttribute('data-date'),
                 pointerStart: { x: e.clientX, y: e.clientY },
+                pointerId: e.pointerId,
+                captureTarget: cell,
                 moved: false,
                 preview: null,
                 conflict: false
               };
             } else {
               if (!CAN_CREATE_BLOCK) return;
+              if (typeof cell.setPointerCapture === 'function') {
+                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
+              }
               selectionCtx = {
                 unitId: cell.getAttribute('data-unit'),
                 startDate: cell.getAttribute('data-date'),
                 endDate: cell.getAttribute('data-date'),
                 pointerStart: { x: e.clientX, y: e.clientY },
+                pointerId: e.pointerId,
+                captureTarget: cell,
                 active: true
               };
               highlightRange(selectionCtx.unitId, selectionCtx.startDate, shiftDate(selectionCtx.startDate, 1), 'calendar-cell--selection');
@@ -1002,6 +1021,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               if (!wasDragging) {
                 clearHighlight('calendar-cell--preview');
                 clearHighlight('calendar-cell--invalid');
+                releaseCapture(dragCtx);
                 dragCtx = null;
                 return;
               }
@@ -1009,6 +1029,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               clearHighlight('calendar-cell--invalid');
               const changed = preview && (preview.start !== dragCtx.originStart || preview.end !== dragCtx.originEnd);
               const ctxCopy = dragCtx;
+              releaseCapture(dragCtx);
               dragCtx = null;
               if (preview && !conflict && changed) {
                 submitReschedule(ctxCopy, preview);
@@ -1020,6 +1041,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
               clearHighlight('calendar-cell--selection');
               const conflict = rangeHasConflicts(selectionCtx.unitId, range.start, range.endExclusive);
+              releaseCapture(selectionCtx);
               showSelectionActions({
                 unitId: selectionCtx.unitId,
                 start: range.start,
@@ -1028,6 +1050,20 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
                 clientX: e.clientX,
                 clientY: e.clientY
               });
+              selectionCtx = null;
+            }
+          }
+
+          function onPointerCancel() {
+            if (dragCtx) {
+              clearHighlight('calendar-cell--preview');
+              clearHighlight('calendar-cell--invalid');
+              releaseCapture(dragCtx);
+              dragCtx = null;
+            }
+            if (selectionCtx && selectionCtx.active) {
+              clearHighlight('calendar-cell--selection');
+              releaseCapture(selectionCtx);
               selectionCtx = null;
             }
           }
@@ -1105,7 +1141,9 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               clearHighlight('calendar-cell--preview');
               clearHighlight('calendar-cell--invalid');
               hideAction();
+              releaseCapture(dragCtx);
               dragCtx = null;
+              releaseCapture(selectionCtx);
               selectionCtx = null;
             }
           }
@@ -1113,6 +1151,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           root.addEventListener('pointerdown', onPointerDown);
           window.addEventListener('pointermove', onPointerMove);
           window.addEventListener('pointerup', onPointerUp);
+          window.addEventListener('pointercancel', onPointerCancel);
           root.addEventListener('dblclick', onDoubleClick);
           if (actionEl) actionEl.addEventListener('click', onActionClick);
           document.addEventListener('click', onDocumentClick);

@@ -159,6 +159,27 @@ CREATE TABLE IF NOT EXISTS booking_notes (
   note TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS housekeeping_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,
+  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  task_type TEXT NOT NULL DEFAULT 'custom',
+  title TEXT NOT NULL,
+  details TEXT,
+  due_date TEXT,
+  due_time TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at TEXT,
+  started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  completed_at TEXT,
+  completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
 `;
 db.exec(schema);
 
@@ -198,7 +219,8 @@ const ROLE_LABELS = {
   [MASTER_ROLE]: 'Desenvolvedor',
   rececao: 'Receção',
   gestao: 'Gestão',
-  direcao: 'Direção'
+  direcao: 'Direção',
+  limpeza: 'Limpeza'
 };
 
 const ROLE_PERMISSIONS = {
@@ -215,7 +237,10 @@ const ROLE_PERMISSIONS = {
     'bookings.cancel',
     'bookings.notes',
     'bookings.export',
-    'automation.view'
+    'automation.view',
+    'housekeeping.view',
+    'housekeeping.manage',
+    'housekeeping.complete'
   ]),
   gestao: new Set([
     'dashboard.view',
@@ -236,7 +261,10 @@ const ROLE_PERMISSIONS = {
     'gallery.manage',
     'automation.view',
     'automation.export',
-    'audit.view'
+    'audit.view',
+    'housekeeping.view',
+    'housekeeping.manage',
+    'housekeeping.complete'
   ]),
   direcao: new Set([
     'dashboard.view',
@@ -259,7 +287,15 @@ const ROLE_PERMISSIONS = {
     'automation.export',
     'audit.view',
     'users.manage',
-    'logs.view'
+    'logs.view',
+    'housekeeping.view',
+    'housekeeping.manage',
+    'housekeeping.complete'
+  ]),
+  limpeza: new Set([
+    'calendar.view',
+    'housekeeping.view',
+    'housekeeping.complete'
   ])
 };
 
@@ -274,7 +310,16 @@ function normalizeRole(role) {
   if (key === MASTER_ROLE || key === 'developer' || key === 'devmaster') return MASTER_ROLE;
   if (key === 'admin' || key === 'direcao' || key === 'direção') return 'direcao';
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
-  if (key === 'limpezas' || key === 'rececao' || key === 'receção' || key === 'recepcao' || key === 'recepção') return 'rececao';
+  if (key === 'limpeza' || key === 'limpezas' || key === 'housekeeping') return 'limpeza';
+  if (
+    key === 'rececao' ||
+    key === 'receção' ||
+    key === 'recepcao' ||
+    key === 'recepção' ||
+    key === 'rececionista' ||
+    key === 'recepcionista'
+  )
+    return 'rececao';
   return 'rececao';
 }
 
@@ -2002,7 +2047,7 @@ function layout({ title, body, user, activeNav = '', branding }) {
         .calendar-card{position:relative;}
         .calendar-card[data-loading="true"]::after{content:'';position:absolute;inset:0;border-radius:18px;background:rgba(15,23,42,.08);backdrop-filter:blur(1px);}
         .calendar-card[data-loading="true"]::before{content:'';position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:999px;border:3px solid rgba(15,23,42,.25);border-top-color:var(--brand-primary);animation:spin .9s linear infinite;}
-        .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+        .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;touch-action:pan-y;}
         .calendar-cell{position:relative;height:3rem;display:flex;align-items:center;justify-content:center;border-radius:.6rem;font-size:.75rem;user-select:none;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;}
         @media (min-width:640px){.calendar-cell{height:3.5rem;font-size:.85rem;}}
         .calendar-cell:hover{transform:translateY(-1px);box-shadow:0 8px 14px rgba(15,23,42,.12);}
@@ -2392,6 +2437,7 @@ function layout({ title, body, user, activeNav = '', branding }) {
             <nav class="nav-links">
               <a class="${navClass('search')}" href="/search">Pesquisar</a>
               ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
+              ${can('housekeeping.view') ? `<a class="${navClass('housekeeping')}" href="/limpeza/tarefas">Limpezas</a>` : ``}
               ${can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
               ${can('bookings.view') ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
               ${can('audit.view') || can('logs.view') ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
