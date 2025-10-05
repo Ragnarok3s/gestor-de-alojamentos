@@ -24,6 +24,7 @@ module.exports = function registerBackoffice(app, context) {
     logActivity,
     logChange,
     geocodeAddress,
+    mapboxAccessToken,
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
@@ -1327,7 +1328,7 @@ module.exports = function registerBackoffice(app, context) {
     ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'}`
     : 'Sem localizações geocodificadas';
 
-  const mapData = { properties: propertyMarkers };
+  const mapData = { properties: propertyMarkers, token: mapboxAccessToken || null };
   const mapDataJson = jsonScriptPayload(mapData);
 
   const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
@@ -1818,6 +1819,8 @@ module.exports = function registerBackoffice(app, context) {
           }
           datasetEl.textContent = '';
 
+          const mapToken = typeof dataset.token === 'string' ? dataset.token.trim() : '';
+
           function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
               switch (ch) {
@@ -1837,19 +1840,38 @@ module.exports = function registerBackoffice(app, context) {
             });
           }
 
-          function initMapLibre() {
-            if (!window.maplibregl) return;
+          function renderEmptyState(message, options) {
+            const opts = options || {};
+            if (opts.clear !== false) {
+              container.innerHTML = '';
+            }
+            const empty = document.createElement('div');
+            empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60 pointer-events-none text-center px-4';
+            empty.textContent = message;
+            container.appendChild(empty);
+          }
+
+          if (!mapToken) {
+            renderEmptyState('Configuração do Mapbox em falta. Defina MAPBOX_ACCESS_TOKEN.');
+            return;
+          }
+
+          function initMapbox() {
+            if (!window.mapboxgl) return;
             container.innerHTML = '';
-            const map = new maplibregl.Map({
+            mapboxgl.accessToken = mapToken;
+            const map = new mapboxgl.Map({
               container,
-              style: 'https://demotiles.maplibre.org/style.json',
+              style: 'mapbox://styles/mapbox/streets-v12',
               center: [-8, 39.5],
               zoom: 6,
               attributionControl: true
             });
-            map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+            map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 
             const markers = [];
+            const bounds = new mapboxgl.LngLatBounds();
+            let hasBounds = false;
             const properties = Array.isArray(dataset.properties) ? dataset.properties : [];
 
             properties.forEach(function (prop) {
@@ -1861,48 +1883,43 @@ module.exports = function registerBackoffice(app, context) {
               details.push(unitLabel);
               const popupHtml =
                 '<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>');
-              const marker = new maplibregl.Marker({ color: '#2563eb' })
+              const marker = new mapboxgl.Marker({ color: '#2563eb' })
                 .setLngLat([prop.lon, prop.lat])
-                .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(popupHtml))
+                .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
                 .addTo(map);
               markers.push(marker);
+              bounds.extend([prop.lon, prop.lat]);
+              hasBounds = true;
             });
 
             map.once('load', function () {
               if (markers.length === 1) {
                 const target = markers[0].getLngLat();
                 map.easeTo({ center: target, zoom: 14, duration: 0 });
-              } else if (markers.length > 1) {
-                const bounds = new maplibregl.LngLatBounds();
-                markers.forEach(marker => {
-                  bounds.extend(marker.getLngLat());
-                });
+              } else if (markers.length > 1 && hasBounds) {
                 map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-              } else {
+              } else if (!hasBounds) {
                 map.easeTo({ center: [-8, 39.5], zoom: 6, duration: 0 });
-                const empty = document.createElement('div');
-                empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60 pointer-events-none';
-                empty.textContent = 'Sem moradas geocodificadas ainda.';
-                container.appendChild(empty);
+                renderEmptyState('Sem moradas geocodificadas ainda.', { clear: false });
               }
             });
           }
 
-          function ensureMapLibre(callback) {
-            if (window.maplibregl) {
+          function ensureMapbox(callback) {
+            if (window.mapboxgl) {
               callback();
               return;
             }
 
-            if (!document.querySelector('link[data-maplibre]')) {
+            if (!document.querySelector('link[data-mapbox]')) {
               const link = document.createElement('link');
               link.rel = 'stylesheet';
-              link.href = 'https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.css';
-              link.dataset.maplibre = 'true';
+              link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
+              link.dataset.mapbox = 'true';
               document.head.appendChild(link);
             }
 
-            const existing = document.querySelector('script[data-maplibre]');
+            const existing = document.querySelector('script[data-mapbox]');
             if (existing) {
               if (existing.dataset.loaded === 'true') {
                 callback();
@@ -1916,8 +1933,8 @@ module.exports = function registerBackoffice(app, context) {
             }
 
             const script = document.createElement('script');
-            script.src = 'https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.js';
-            script.dataset.maplibre = 'true';
+            script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+            script.dataset.mapbox = 'true';
             script.addEventListener('load', function () {
               script.dataset.loaded = 'true';
               callback();
@@ -1925,7 +1942,7 @@ module.exports = function registerBackoffice(app, context) {
             document.head.appendChild(script);
           }
 
-          ensureMapLibre(initMapLibre);
+          ensureMapbox(initMapbox);
         })();
       </script>
 

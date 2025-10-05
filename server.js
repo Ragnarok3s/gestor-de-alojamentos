@@ -2717,7 +2717,8 @@ const context = {
   MASTER_ROLE,
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
-  slugify
+  slugify,
+  mapboxAccessToken: process.env.MAPBOX_ACCESS_TOKEN || null
 };
 
 registerAuthRoutes(app, context);
