@@ -1817,8 +1817,6 @@ module.exports = function registerBackoffice(app, context) {
             dataset = { properties: [] };
           }
           datasetEl.textContent = '';
-          const hasMarkers = Boolean(dataset.properties && dataset.properties.length);
-
           function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
               switch (ch) {
@@ -1840,7 +1838,7 @@ module.exports = function registerBackoffice(app, context) {
 
           function initMap() {
             if (!window.L) return;
-            const map = L.map(container).setView([39.5, -8], hasMarkers ? 7 : 6);
+            const map = L.map(container);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
               attribution: '&copy; OpenStreetMap contribuidores'
             }).addTo(map);
@@ -1848,12 +1846,8 @@ module.exports = function registerBackoffice(app, context) {
 
             (dataset.properties || []).forEach(function (prop) {
               if (prop.lat == null || prop.lon == null) return;
-              const marker = L.circleMarker([prop.lat, prop.lon], {
-                radius: 8,
-                color: '#2563eb',
-                weight: 2,
-                fillColor: '#3b82f6',
-                fillOpacity: 0.85
+              const marker = L.marker([prop.lat, prop.lon], {
+                title: prop.name
               }).addTo(map);
               const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
               const details = [];
@@ -1864,9 +1858,13 @@ module.exports = function registerBackoffice(app, context) {
               markerItems.push(marker);
             });
 
-            if (markerItems.length) {
-              const group = L.featureGroup(markerItems);
-              map.fitBounds(group.getBounds().pad(0.2));
+            if (markerItems.length === 1) {
+              map.setView(markerItems[0].getLatLng(), 14);
+            } else if (markerItems.length > 1) {
+              const bounds = L.latLngBounds(markerItems.map(marker => marker.getLatLng()));
+              map.fitBounds(bounds.pad(0.2), { maxZoom: 14 });
+            } else {
+              map.setView([39.5, -8], 6);
             }
 
             if (!markerItems.length) {
@@ -2178,12 +2176,8 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
 
   const addressDisplay = typeof p.address === 'string' ? p.address.trim() : '';
   const locationDisplay = propertyLocationLabel(p);
-  const latNum = p.latitude != null ? Number.parseFloat(p.latitude) : NaN;
-  const lonNum = p.longitude != null ? Number.parseFloat(p.longitude) : NaN;
-  const coordsDisplay = Number.isFinite(latNum) && Number.isFinite(lonNum) ? `${latNum.toFixed(5)}, ${lonNum.toFixed(5)}` : '';
   const addressInfo = addressDisplay ? `Morada atual: ${addressDisplay}` : 'Sem morada registada.';
   const locationInfo = locationDisplay ? `Localidade atual: ${locationDisplay}` : 'Sem localidade registada.';
-  const coordinateInfo = coordsDisplay ? `Coordenadas: ${coordsDisplay}` : '';
 
   const units = db.prepare('SELECT * FROM units WHERE property_id = ? ORDER BY name').all(p.id);
   const unitsListHtml = units.length
@@ -2230,7 +2224,6 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
               : '<p class="text-slate-400 mt-1">Morada não definida</p>'}
             ${locationDisplay ? `<p class="text-slate-500 mt-1">${esc(locationDisplay)}</p>` : ''}
             ${p.description ? `<p class="text-sm text-slate-500 mt-2 whitespace-pre-line">${esc(p.description)}</p>` : ''}
-            ${coordsDisplay ? `<p class="text-xs text-slate-500 mt-1">Coordenadas: ${esc(coordsDisplay)}</p>` : ''}
           </div>
           <form method="post" action="/admin/properties/${p.id}/delete" class="shrink-0" onsubmit="return confirm('Tem a certeza que quer eliminar esta propriedade? Isto remove unidades e reservas associadas.');">
             <button type="submit" class="text-rose-600 hover:text-rose-800 underline">Eliminar propriedade</button>
@@ -2260,12 +2253,11 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
               <span>Descrição</span>
               <textarea name="description" class="input" rows="3" placeholder="Notas internas ou destaques">${esc(p.description || '')}</textarea>
             </label>
-            <p class="text-xs text-slate-500 md:col-span-2">As coordenadas são atualizadas automaticamente após guardar a morada e localidade.</p>
+            <p class="text-xs text-slate-500 md:col-span-2">A localização no mapa é atualizada automaticamente após guardar a morada e localidade.</p>
             <div class="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div class="text-xs text-slate-500 leading-relaxed">
                 ${esc(addressInfo)}
                 ${locationInfo ? `<br/><span>${esc(locationInfo)}</span>` : ''}
-                ${coordinateInfo ? `<br/><span>${esc(coordinateInfo)}</span>` : ''}
               </div>
               <button class="btn btn-primary w-full sm:w-auto">Guardar alterações</button>
             </div>
