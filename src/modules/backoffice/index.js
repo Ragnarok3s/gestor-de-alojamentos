@@ -23,6 +23,7 @@ module.exports = function registerBackoffice(app, context) {
     userCan,
     logActivity,
     logChange,
+    geocodeAddress,
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
@@ -189,6 +190,17 @@ module.exports = function registerBackoffice(app, context) {
       .replace(/&/g, '\\u0026')
       .replace(/\u2028/g, '\\u2028')
       .replace(/\u2029/g, '\\u2029');
+  }
+
+  function propertyLocationLabel(property) {
+    if (!property) return '';
+    const parts = [];
+    const locality = typeof property.locality === 'string' ? property.locality.trim() : '';
+    const district = typeof property.district === 'string' ? property.district.trim() : '';
+    if (locality) parts.push(locality);
+    if (district) parts.push(district);
+    if (parts.length) return parts.join(', ');
+    return property.location || '';
   }
 
   function defaultHousekeepingTitle(taskType, booking) {
@@ -1256,12 +1268,21 @@ module.exports = function registerBackoffice(app, context) {
   app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
   const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
   const unitsRaw = db.prepare(
-    `SELECT u.*, p.name as property_name
+    `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
        FROM units u
        JOIN properties p ON p.id = u.property_id
       ORDER BY p.name, u.name`
   ).all();
-  const units = unitsRaw.map(u => ({ ...u, unit_type: deriveUnitType(u) }));
+  const units = unitsRaw.map(u => {
+    const lat = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
+    const lon = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
+    return {
+      ...u,
+      unit_type: deriveUnitType(u),
+      latitude: Number.isFinite(lat) ? lat : null,
+      longitude: Number.isFinite(lon) ? lon : null
+    };
+  });
   const recentBookings = db.prepare(
     `SELECT b.*, u.name as unit_name, p.name as property_name
        FROM bookings b
@@ -1281,6 +1302,46 @@ module.exports = function registerBackoffice(app, context) {
   const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
   const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
   const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
+
+  const propertyMarkers = props
+    .map(property => {
+      const lat = property && property.latitude != null ? Number.parseFloat(property.latitude) : NaN;
+      const lon = property && property.longitude != null ? Number.parseFloat(property.longitude) : NaN;
+      const latitude = Number.isFinite(lat) ? lat : null;
+      const longitude = Number.isFinite(lon) ? lon : null;
+      return {
+        id: property.id,
+        name: property.name,
+        locality: property.locality,
+        district: property.district,
+        locationLabel: propertyLocationLabel(property),
+        lat: latitude,
+        lon: longitude,
+        unitCount: units.filter(u => u.property_id === property.id).length
+      };
+    })
+    .filter(marker => marker.lat != null && marker.lon != null);
+
+  const unitMarkers = units
+    .filter(u => u.latitude != null && u.longitude != null)
+    .map(u => ({
+      id: u.id,
+      name: u.name,
+      propertyId: u.property_id,
+      propertyName: u.property_name,
+      propertyLocality: u.property_locality,
+      propertyDistrict: u.property_district,
+      address: u.address,
+      lat: u.latitude,
+      lon: u.longitude
+    }));
+
+  const mapSummaryLabel = propertyMarkers.length || unitMarkers.length
+    ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'} · ${unitMarkers.length} unidade${unitMarkers.length === 1 ? '' : 's'}`
+    : 'Sem localizações geocodificadas';
+
+  const mapData = { properties: propertyMarkers, units: unitMarkers };
+  const mapDataJson = jsonScriptPayload(mapData);
 
   const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b, 'pt', { sensitivity: 'base' })
@@ -1748,6 +1809,138 @@ module.exports = function registerBackoffice(app, context) {
 
       ${automationCard}
 
+      <section class="card p-4 mt-6" data-backoffice-map>
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
+          <h2 class="font-semibold">Mapa de propriedades e unidades</h2>
+          <span class="text-xs text-slate-500">${esc(mapSummaryLabel)}</span>
+        </div>
+        <div data-map-container class="relative w-full h-80 min-h-[320px] rounded-lg border border-slate-200 overflow-hidden bg-slate-100"></div>
+        <p class="text-xs text-slate-500 mt-2">Adicione localidade/distrito aos alojamentos e moradas completas às unidades para visualizá-las aqui.</p>
+      </section>
+      <script type="application/json" id="backoffice-map-data">${mapDataJson}</script>
+      <script>
+        (function () {
+          const container = document.querySelector('[data-map-container]');
+          const datasetEl = document.getElementById('backoffice-map-data');
+          if (!container || !datasetEl) return;
+          let dataset = { properties: [], units: [] };
+          try {
+            dataset = JSON.parse(datasetEl.textContent || '{}');
+          } catch (err) {
+            dataset = { properties: [], units: [] };
+          }
+          datasetEl.textContent = '';
+          const hasMarkers = Boolean((dataset.properties && dataset.properties.length) || (dataset.units && dataset.units.length));
+
+          function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+              switch (ch) {
+                case '&':
+                  return '&amp;';
+                case '<':
+                  return '&lt;';
+                case '>':
+                  return '&gt;';
+                case '"':
+                  return '&quot;';
+                case "'":
+                  return '&#39;';
+                default:
+                  return ch;
+              }
+            });
+          }
+
+          function initMap() {
+            if (!window.L) return;
+            const map = L.map(container).setView([39.5, -8], hasMarkers ? 7 : 6);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '&copy; OpenStreetMap contribuidores'
+            }).addTo(map);
+            const markerItems = [];
+
+            (dataset.properties || []).forEach(function (prop) {
+              if (prop.lat == null || prop.lon == null) return;
+              const marker = L.circleMarker([prop.lat, prop.lon], {
+                radius: 8,
+                color: '#2563eb',
+                weight: 2,
+                fillColor: '#3b82f6',
+                fillOpacity: 0.85
+              }).addTo(map);
+              const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
+              const details = [];
+              if (prop.locationLabel) details.push(escapeHtml(prop.locationLabel));
+              details.push(unitLabel);
+              marker.bindPopup('<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>'));
+              markerItems.push(marker);
+            });
+
+            (dataset.units || []).forEach(function (unit) {
+              if (unit.lat == null || unit.lon == null) return;
+              const marker = L.marker([unit.lat, unit.lon]).addTo(map);
+              const lines = ['<strong>' + escapeHtml(unit.propertyName) + ' · ' + escapeHtml(unit.name) + '</strong>'];
+              if (unit.address) lines.push(escapeHtml(unit.address));
+              const localityParts = [unit.propertyLocality, unit.propertyDistrict].filter(Boolean);
+              if (localityParts.length) lines.push(escapeHtml(localityParts.join(', ')));
+              marker.bindPopup(lines.join('<br/>'));
+              markerItems.push(marker);
+            });
+
+            if (markerItems.length) {
+              const group = L.featureGroup(markerItems);
+              map.fitBounds(group.getBounds().pad(0.2));
+            }
+
+            if (!markerItems.length) {
+              const empty = document.createElement('div');
+              empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60';
+              empty.textContent = 'Sem moradas geocodificadas ainda.';
+              container.appendChild(empty);
+            }
+          }
+
+          function ensureLeaflet(callback) {
+            if (window.L) {
+              callback();
+              return;
+            }
+
+            if (!document.querySelector('link[data-leaflet]')) {
+              const link = document.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+              link.dataset.leaflet = 'true';
+              document.head.appendChild(link);
+            }
+
+            const existing = document.querySelector('script[data-leaflet]');
+            if (existing) {
+              if (existing.dataset.loaded === 'true') {
+                callback();
+              } else {
+                existing.addEventListener('load', function () {
+                  existing.dataset.loaded = 'true';
+                  callback();
+                }, { once: true });
+              }
+              return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+            script.dataset.leaflet = 'true';
+            script.addEventListener('load', function () {
+              script.dataset.loaded = 'true';
+              callback();
+            }, { once: true });
+            document.head.appendChild(script);
+          }
+
+          ensureLeaflet(initMap);
+        })();
+      </script>
+
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <section class="card p-4">
           <h2 class="font-semibold mb-3">Propriedades</h2>
@@ -1760,7 +1953,10 @@ module.exports = function registerBackoffice(app, context) {
           </ul>
           <form method="post" action="/admin/properties/create" class="grid gap-2">
             <input required name="name" class="input" placeholder="Nome"/>
-            <input name="location" class="input" placeholder="Localização"/>
+            <div class="grid gap-2 sm:grid-cols-2">
+              <input required name="locality" class="input" placeholder="Localidade"/>
+              <input required name="district" class="input" placeholder="Distrito"/>
+            </div>
             <textarea name="description" class="input" placeholder="Descrição"></textarea>
             <button class="btn btn-primary">Adicionar Propriedade</button>
           </form>
@@ -1796,6 +1992,7 @@ module.exports = function registerBackoffice(app, context) {
             <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade"/>
             <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade"/>
             <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Preço base €/noite"/>
+            <input required name="address" class="input md:col-span-6" placeholder="Morada completa"/>
             <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="Características (uma por linha). Ex: 
 bed|3 camas
 wifi
@@ -1952,9 +2149,38 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   res.send('\ufeff' + csv);
 });
 
-app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  const { name, location, description } = req.body;
-  db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
+app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  const { name, locality, district, description } = req.body;
+  const trimmedLocality = String(locality || '').trim();
+  const trimmedDistrict = String(district || '').trim();
+  const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
+  let latitude = null;
+  let longitude = null;
+
+  try {
+    const queryParts = [trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+    if (queryParts.length) {
+      const coords = await geocodeAddress(queryParts.join(', '));
+      if (coords) {
+        latitude = coords.latitude != null ? coords.latitude : null;
+        longitude = coords.longitude != null ? coords.longitude : null;
+      }
+    }
+  } catch (err) {
+    console.warn('Falha ao geocodificar nova propriedade:', err.message);
+  }
+
+  db.prepare(
+    'INSERT INTO properties(name, location, locality, district, description, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    name,
+    locationLabel,
+    trimmedLocality || null,
+    trimmedDistrict || null,
+    description ? String(description) : null,
+    latitude,
+    longitude
+  );
   res.redirect('/admin');
 });
 
@@ -1970,7 +2196,32 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Propriedade não encontrada');
 
+  const locationDisplay = propertyLocationLabel(p);
+  const latNum = p.latitude != null ? Number.parseFloat(p.latitude) : NaN;
+  const lonNum = p.longitude != null ? Number.parseFloat(p.longitude) : NaN;
+  const coordsDisplay = Number.isFinite(latNum) && Number.isFinite(lonNum) ? `${latNum.toFixed(5)}, ${lonNum.toFixed(5)}` : '';
+  const locationInfo = locationDisplay ? `Localização atual: ${locationDisplay}` : 'Sem localidade registada.';
+  const coordinateInfo = coordsDisplay ? `Coordenadas: ${coordsDisplay}` : '';
+
   const units = db.prepare('SELECT * FROM units WHERE property_id = ? ORDER BY name').all(p.id);
+  const unitsListHtml = units.length
+    ? units
+        .map(u => {
+          const priceLabel = `€ ${eur(u.base_price_cents)}`;
+          return `
+            <li class="border-b border-slate-200 last:border-0 pb-2">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                <div class="font-medium text-slate-700">
+                  <a class="text-slate-700 underline" href="/admin/units/${u.id}">${esc(u.name)}</a>
+                  <span class="text-xs text-slate-500 ml-2">cap ${u.capacity}</span>
+                </div>
+                <div class="text-xs text-slate-500">${esc(priceLabel)}</div>
+              </div>
+              ${u.address ? `<div class="text-xs text-slate-500 mt-1">${esc(u.address)}</div>` : ''}
+            </li>`;
+        })
+        .join('')
+    : '<li class="text-sm text-slate-500">Sem unidades</li>';
   const bookings = db.prepare(
     `SELECT b.*, u.name as unit_name
        FROM bookings b
@@ -1989,42 +2240,167 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
     branding: theme,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
-        <div>
-          <h1 class="text-2xl font-semibold">${esc(p.name)}</h1>
-          <p class="text-slate-600 mt-1">${esc(p.location||'')}</p>
+      <div class="flex flex-col gap-6">
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 class="text-2xl font-semibold">${esc(p.name)}</h1>
+            ${locationDisplay
+              ? `<p class="text-slate-600 mt-1">${esc(locationDisplay)}</p>`
+              : '<p class="text-slate-400 mt-1">Localidade não definida</p>'}
+            ${p.description ? `<p class="text-sm text-slate-500 mt-2 whitespace-pre-line">${esc(p.description)}</p>` : ''}
+            ${coordsDisplay ? `<p class="text-xs text-slate-500 mt-1">Coordenadas: ${esc(coordsDisplay)}</p>` : ''}
+          </div>
+          <form method="post" action="/admin/properties/${p.id}/delete" class="shrink-0" onsubmit="return confirm('Tem a certeza que quer eliminar esta propriedade? Isto remove unidades e reservas associadas.');">
+            <button type="submit" class="text-rose-600 hover:text-rose-800 underline">Eliminar propriedade</button>
+          </form>
         </div>
-        <form method="post" action="/admin/properties/${p.id}/delete" class="shrink-0" onsubmit="return confirm('Tem a certeza que quer eliminar esta propriedade? Isto remove unidades e reservas associadas.');">
-          <button type="submit" class="text-rose-600 hover:text-rose-800 underline">Eliminar propriedade</button>
-        </form>
-      </div>
-      <h2 class="font-semibold mb-2">Unidades</h2>
-      <ul class="mb-6">
-        ${units.map(u => `<li><a class="text-slate-700 underline" href="/admin/units/${u.id}">${esc(u.name)}</a> (cap ${u.capacity})</li>`).join('')}
-      </ul>
 
-      <h2 class="font-semibold mb-2">Reservas</h2>
-      <ul class="space-y-1">
-        ${bookings.length ? bookings.map(b => `
-          <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} · ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
-        `).join('') : '<em>Sem reservas</em>'}
-      </ul>
+        <section class="card p-4 grid gap-3">
+          <h2 class="text-lg font-semibold text-slate-800">Editar alojamento</h2>
+          <form method="post" action="/admin/properties/${p.id}/update" class="grid gap-3 md:grid-cols-2">
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Nome</span>
+              <input required name="name" class="input" value="${esc(p.name)}" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600">
+              <span>Localidade</span>
+              <input required name="locality" class="input" value="${esc(p.locality || '')}" placeholder="Ex.: Lagos" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600">
+              <span>Distrito</span>
+              <input required name="district" class="input" value="${esc(p.district || '')}" placeholder="Ex.: Faro" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Descrição</span>
+              <textarea name="description" class="input" rows="3" placeholder="Notas internas ou destaques">${esc(p.description || '')}</textarea>
+            </label>
+            <p class="text-xs text-slate-500 md:col-span-2">As coordenadas são atualizadas automaticamente após guardar.</p>
+            <div class="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div class="text-xs text-slate-500 leading-relaxed">
+                ${esc(locationInfo)}
+                ${coordinateInfo ? `<br/><span>${esc(coordinateInfo)}</span>` : ''}
+              </div>
+              <button class="btn btn-primary w-full sm:w-auto">Guardar alterações</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card p-4">
+          <h2 class="font-semibold mb-2">Unidades</h2>
+          <ul class="space-y-2">${unitsListHtml}</ul>
+        </section>
+
+        <section class="card p-4">
+          <h2 class="font-semibold mb-2">Reservas</h2>
+          <ul class="space-y-1">
+            ${bookings.length
+              ? bookings
+                  .map(b => `
+                    <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} · ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
+                  `)
+                  .join('')
+              : '<li class="text-sm text-slate-500">Sem reservas</li>'}
+          </ul>
+        </section>
+      </div>
     `
   }));
 });
 
-app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
-  const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
+app.post('/admin/properties/:id/update', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  const propertyId = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
+  if (!existing) return res.status(404).send('Propriedade não encontrada');
+
+  const { name, locality, district, description } = req.body;
+  const trimmedLocality = String(locality || '').trim();
+  const trimmedDistrict = String(district || '').trim();
+  const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
+
+  let latitude = existing.latitude != null ? Number.parseFloat(existing.latitude) : null;
+  let longitude = existing.longitude != null ? Number.parseFloat(existing.longitude) : null;
+  const localityChanged = trimmedLocality !== String(existing.locality || '').trim();
+  const districtChanged = trimmedDistrict !== String(existing.district || '').trim();
+  const hasValidCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  if (localityChanged || districtChanged || !hasValidCoords) {
+    try {
+      const queryParts = [trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+      if (queryParts.length) {
+        const coords = await geocodeAddress(queryParts.join(', '));
+        if (coords) {
+          latitude = coords.latitude != null ? coords.latitude : null;
+          longitude = coords.longitude != null ? coords.longitude : null;
+        }
+      }
+    } catch (err) {
+      console.warn(`Falha ao geocodificar propriedade #${propertyId}:`, err.message);
+    }
+  }
+
+  const finalLatitude = Number.isFinite(latitude) ? latitude : null;
+  const finalLongitude = Number.isFinite(longitude) ? longitude : null;
+
+  db.prepare(
+    'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
+  ).run(
+    name,
+    locationLabel,
+    trimmedLocality || null,
+    trimmedDistrict || null,
+    description ? String(description) : null,
+    finalLatitude,
+    finalLongitude,
+    propertyId
+  );
+
+  res.redirect(`/admin/properties/${propertyId}`);
+});
+
+app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  let { property_id, name, capacity, base_price_eur, features_raw, address } = req.body;
+  const property = db.prepare('SELECT locality, district FROM properties WHERE id = ?').get(property_id);
+  if (!property) return res.status(400).send('Propriedade inválida');
+
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
+
+  const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
-  db.prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, features) VALUES (?, ?, ?, ?, ?)')
-    .run(property_id, name, Number(capacity), cents, JSON.stringify(features));
+
+  let latitude = null;
+  let longitude = null;
+  try {
+    const queryParts = [trimmedAddress, property.locality, property.district, 'Portugal'].filter(Boolean);
+    if (queryParts.length) {
+      const coords = await geocodeAddress(queryParts.join(', '));
+      if (coords) {
+        latitude = coords.latitude != null ? coords.latitude : null;
+        longitude = coords.longitude != null ? coords.longitude : null;
+      }
+    }
+  } catch (err) {
+    console.warn('Falha ao geocodificar unidade nova:', err.message);
+  }
+
+  db.prepare(
+    'INSERT INTO units(property_id, name, capacity, base_price_cents, features, address, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    property_id,
+    name,
+    Number(capacity),
+    cents,
+    JSON.stringify(features),
+    trimmedAddress,
+    latitude,
+    longitude
+  );
   res.redirect('/admin');
 });
 
 app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const u = db.prepare(
-    `SELECT u.*, p.name as property_name
+    `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
        FROM units u
        JOIN properties p ON p.id = u.property_id
       WHERE u.id = ?`
@@ -2033,6 +2409,12 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
   const unitFeatures = parseFeaturesStored(u.features);
   const unitFeaturesTextarea = esc(featuresToTextarea(unitFeatures));
+  const propertyLocation = propertyLocationLabel({ locality: u.property_locality, district: u.property_district, location: null });
+  const unitLatNum = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
+  const unitLonNum = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
+  const unitCoordsDisplay = Number.isFinite(unitLatNum) && Number.isFinite(unitLonNum)
+    ? `${unitLatNum.toFixed(5)}, ${unitLonNum.toFixed(5)}`
+    : '';
   const unitFeaturesPreview = featureChipsHtml(unitFeatures, {
     className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
     badgeClass: 'inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 px-2 py-1 rounded-full',
@@ -2056,6 +2438,11 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
+      <div class="text-sm text-slate-500 mb-4 leading-relaxed">
+        ${u.address ? esc(u.address) : 'Morada não registada'}
+        ${propertyLocation ? `<br/><span>${esc(`Localidade: ${propertyLocation}`)}</span>` : ''}
+        ${unitCoordsDisplay ? `<br/><span>${esc(`Coordenadas: ${unitCoordsDisplay}`)}</span>` : ''}
+      </div>
       ${unitFeaturesPreview}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2146,6 +2533,10 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
             <label class="text-sm">Preço base €/noite</label>
             <input type="number" step="0.01" name="base_price_eur" class="input" value="${eur(u.base_price_cents)}"/>
+
+            <label class="text-sm">Morada</label>
+            <input required name="address" class="input" value="${esc(u.address || '')}" placeholder="Morada completa"/>
+            <p class="text-xs text-slate-500">Localidade da propriedade: ${esc(propertyLocation || 'Não definida')}.</p>
 
             <label class="text-sm">Características</label>
             <textarea name="features_raw" rows="6" class="input">${unitFeaturesTextarea}</textarea>
@@ -2393,13 +2784,58 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
   }));
 });
 
-app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  const { name, capacity, base_price_eur, features_raw } = req.body;
-  const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
+app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  const unitId = Number(req.params.id);
+  const existing = db
+    .prepare('SELECT property_id, address, latitude, longitude FROM units WHERE id = ?')
+    .get(unitId);
+  if (!existing) return res.status(404).send('Unidade não encontrada');
+
+  const property = db.prepare('SELECT locality, district FROM properties WHERE id = ?').get(existing.property_id);
+  const { name, capacity, base_price_eur, features_raw, address } = req.body;
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
+
+  const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
-  db.prepare('UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ? WHERE id = ?')
-    .run(name, Number(capacity), cents, JSON.stringify(features), req.params.id);
-  res.redirect(`/admin/units/${req.params.id}`);
+
+  let latitude = existing.latitude != null ? Number.parseFloat(existing.latitude) : null;
+  let longitude = existing.longitude != null ? Number.parseFloat(existing.longitude) : null;
+  const currentAddress = String(existing.address || '').trim();
+  const hasValidCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+  const shouldGeocode = trimmedAddress !== currentAddress || !hasValidCoords;
+
+  if (shouldGeocode) {
+    try {
+      const queryParts = [trimmedAddress, property && property.locality, property && property.district, 'Portugal'].filter(Boolean);
+      if (queryParts.length) {
+        const coords = await geocodeAddress(queryParts.join(', '));
+        if (coords) {
+          latitude = coords.latitude != null ? coords.latitude : null;
+          longitude = coords.longitude != null ? coords.longitude : null;
+        }
+      }
+    } catch (err) {
+      console.warn(`Falha ao geocodificar unidade #${unitId}:`, err.message);
+    }
+  }
+
+  const finalLatitude = Number.isFinite(latitude) ? latitude : null;
+  const finalLongitude = Number.isFinite(longitude) ? longitude : null;
+
+  db.prepare(
+    'UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ?, address = ?, latitude = ?, longitude = ? WHERE id = ?'
+  ).run(
+    name,
+    Number(capacity),
+    cents,
+    JSON.stringify(features),
+    trimmedAddress,
+    finalLatitude,
+    finalLongitude,
+    unitId
+  );
+  res.redirect(`/admin/units/${unitId}`);
 });
 
 app.post('/admin/units/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {

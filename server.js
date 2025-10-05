@@ -43,7 +43,11 @@ CREATE TABLE IF NOT EXISTS properties (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   location TEXT,
-  description TEXT
+  locality TEXT,
+  district TEXT,
+  description TEXT,
+  latitude REAL,
+  longitude REAL
 );
 
 CREATE TABLE IF NOT EXISTS units (
@@ -54,6 +58,9 @@ CREATE TABLE IF NOT EXISTS units (
   base_price_cents INTEGER NOT NULL DEFAULT 10000,
   features TEXT,
   description TEXT,
+  address TEXT,
+  latitude REAL,
+  longitude REAL,
   UNIQUE(property_id, name)
 );
 
@@ -202,7 +209,66 @@ try {
   ensureColumn('bookings', 'confirmation_token', 'TEXT');
   ensureColumn('blocks', 'updated_at', 'TEXT');
   ensureColumn('unit_images', 'is_primary', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('properties', 'locality', 'TEXT');
+  ensureColumn('properties', 'district', 'TEXT');
+  ensureColumn('properties', 'latitude', 'REAL');
+  ensureColumn('properties', 'longitude', 'REAL');
+  ensureColumn('units', 'address', 'TEXT');
+  ensureColumn('units', 'latitude', 'REAL');
+  ensureColumn('units', 'longitude', 'REAL');
 } catch (_) {}
+
+async function geocodeAddress(query) {
+  const search = typeof query === 'string' ? query.trim() : '';
+  if (!search) return null;
+  const url = new URL('https://nominatim.openstreetmap.org/search');
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('limit', '1');
+  url.searchParams.set('countrycodes', 'pt');
+  url.searchParams.set('addressdetails', '0');
+  url.searchParams.set('q', search);
+
+  const headers = {
+    'User-Agent': 'gestor-de-alojamentos/1.0 (+https://example.com)'
+  };
+
+  return new Promise(resolve => {
+    const req = https.request(url, { headers }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        body += chunk;
+      });
+      res.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          if (Array.isArray(payload) && payload.length) {
+            const match = payload[0];
+            const lat = match && match.lat != null ? Number.parseFloat(match.lat) : NaN;
+            const lon = match && match.lon != null ? Number.parseFloat(match.lon) : NaN;
+            const latitude = Number.isFinite(lat) ? lat : null;
+            const longitude = Number.isFinite(lon) ? lon : null;
+            if (latitude != null || longitude != null) {
+              return resolve({ latitude, longitude });
+            }
+          }
+        } catch (err) {
+          console.warn('Geocoding parse failed:', err.message);
+        }
+        resolve(null);
+      });
+    });
+    req.on('error', err => {
+      console.warn('Geocoding request failed:', err.message);
+      resolve(null);
+    });
+    req.setTimeout(4000, () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
 
 const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
 const blockColumns = db.prepare('PRAGMA table_info(blocks)').all();
@@ -2533,6 +2599,7 @@ const context = {
   logSessionEvent,
   logActivity,
   logChange,
+  geocodeAddress,
   readAutomationState,
   writeAutomationState,
   automationSeverityStyle,
