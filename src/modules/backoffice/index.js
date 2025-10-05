@@ -1401,27 +1401,6 @@ module.exports = function registerBackoffice(app, context) {
       }).join('')
     : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados agregados.</td></tr>';
 
-  const onboardingCard = html`
-      <section class="onboarding-card mb-6">
-        <h2 class="text-lg font-semibold text-slate-800 mb-2">Guia rápido para começar</h2>
-        <p class="text-sm text-slate-600 mb-4">Três ações asseguram que a equipa trabalha com uma experiência consistente e profissional.</p>
-        <ol class="onboarding-steps">
-          <li>
-            <strong>Personalize a identidade.</strong>
-            <p>Ajuste cores e carregue o logotipo em <a class="underline" href="/admin/identidade-visual">Identidade visual</a> para refletir a marca em todo o portal.</p>
-          </li>
-          <li>
-            <strong>Complete propriedades e unidades.</strong>
-            <p>Revise descrições, fotos e tarifas para que cada reserva tenha contexto completo.</p>
-          </li>
-          <li>
-            <strong>Defina a equipa.</strong>
-            <p>Convide utilizadores e atribua permissões em <a class="underline" href="/admin/utilizadores">Utilizadores</a>, garantindo que cada perfil vê apenas o necessário.</p>
-          </li>
-        </ol>
-      </section>
-  `;
-
   const automationCard = html`
       <section class="card p-4 mb-6 space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -1764,8 +1743,6 @@ module.exports = function registerBackoffice(app, context) {
     branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
-
-      ${onboardingCard}
 
       ${automationCard}
 
