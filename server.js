@@ -2717,8 +2717,7 @@ const context = {
   MASTER_ROLE,
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
-  slugify,
-  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || null
+  slugify
 };
 
 registerAuthRoutes(app, context);

@@ -24,7 +24,6 @@ module.exports = function registerBackoffice(app, context) {
     logActivity,
     logChange,
     geocodeAddress,
-    googleMapsApiKey,
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
@@ -1304,33 +1303,6 @@ module.exports = function registerBackoffice(app, context) {
   const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
   const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
 
-  const propertyMarkers = props
-    .map(property => {
-      const lat = property && property.latitude != null ? Number.parseFloat(property.latitude) : NaN;
-      const lon = property && property.longitude != null ? Number.parseFloat(property.longitude) : NaN;
-      const latitude = Number.isFinite(lat) ? lat : null;
-      const longitude = Number.isFinite(lon) ? lon : null;
-      return {
-        id: property.id,
-        name: property.name,
-        address: property.address,
-        locality: property.locality,
-        district: property.district,
-        locationLabel: propertyLocationLabel(property),
-        lat: latitude,
-        lon: longitude,
-        unitCount: units.filter(u => u.property_id === property.id).length
-      };
-    })
-    .filter(marker => marker.lat != null && marker.lon != null);
-
-  const mapSummaryLabel = propertyMarkers.length
-    ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'}`
-    : 'Sem localizações geocodificadas';
-
-  const mapData = { properties: propertyMarkers, apiKey: googleMapsApiKey || null };
-  const mapDataJson = jsonScriptPayload(mapData);
-
   const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b, 'pt', { sensitivity: 'base' })
   );
@@ -1797,174 +1769,6 @@ module.exports = function registerBackoffice(app, context) {
 
       ${automationCard}
 
-      <section class="card p-4 mt-6" data-backoffice-map>
-        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
-          <h2 class="font-semibold">Mapa de propriedades</h2>
-          <span class="text-xs text-slate-500">${esc(mapSummaryLabel)}</span>
-        </div>
-        <div data-map-container class="relative w-full h-80 min-h-[320px] rounded-lg border border-slate-200 overflow-hidden bg-slate-100"></div>
-        <p class="text-xs text-slate-500 mt-2">Defina a morada completa e localidade/distrito de cada alojamento para que apareça no mapa.</p>
-      </section>
-      <script type="application/json" id="backoffice-map-data">${mapDataJson}</script>
-      <script>
-        (function () {
-          const container = document.querySelector('[data-map-container]');
-          const datasetEl = document.getElementById('backoffice-map-data');
-          if (!container || !datasetEl) return;
-          let dataset = { properties: [] };
-          try {
-            dataset = JSON.parse(datasetEl.textContent || '{}');
-          } catch (err) {
-            dataset = { properties: [] };
-          }
-          datasetEl.textContent = '';
-
-          const mapApiKey = typeof dataset.apiKey === 'string' ? dataset.apiKey.trim() : '';
-
-          function escapeHtml(value) {
-            return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
-              switch (ch) {
-                case '&':
-                  return '&amp;';
-                case '<':
-                  return '&lt;';
-                case '>':
-                  return '&gt;';
-                case '"':
-                  return '&quot;';
-                case "'":
-                  return '&#39;';
-                default:
-                  return ch;
-              }
-            });
-          }
-
-          function renderEmptyState(message, options) {
-            const opts = options || {};
-            if (opts.clear !== false) {
-              container.innerHTML = '';
-            }
-            const empty = document.createElement('div');
-            empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60 pointer-events-none text-center px-4';
-            empty.textContent = message;
-            container.appendChild(empty);
-          }
-
-          if (!mapApiKey) {
-            renderEmptyState('Configuração do Google Maps em falta. Defina GOOGLE_MAPS_API_KEY.');
-            return;
-          }
-
-          function initGoogleMaps() {
-            if (!(window.google && window.google.maps)) return;
-            container.innerHTML = '';
-            const map = new google.maps.Map(container, {
-              center: { lat: 39.5, lng: -8 },
-              zoom: 6,
-              mapTypeControl: false,
-              streetViewControl: false,
-              fullscreenControl: false,
-              gestureHandling: 'greedy'
-            });
-
-            const infoWindow = new google.maps.InfoWindow();
-            const bounds = new google.maps.LatLngBounds();
-            let markerCount = 0;
-            const properties = Array.isArray(dataset.properties) ? dataset.properties : [];
-
-            properties.forEach(function (prop) {
-              if (!prop) return;
-              const lat = typeof prop.lat === 'number' ? prop.lat : Number(prop.lat);
-              const lon = typeof prop.lon === 'number' ? prop.lon : Number(prop.lon);
-              if (!isFinite(lat) || !isFinite(lon)) return;
-              const position = { lat: lat, lng: lon };
-              const details = [];
-              if (prop.address) details.push(escapeHtml(prop.address));
-              if (prop.locationLabel) details.push(escapeHtml(prop.locationLabel));
-              const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
-              details.push(unitLabel);
-              const popupHtml =
-                '<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>');
-              const marker = new google.maps.Marker({
-                position,
-                map,
-                title: prop.name || ''
-              });
-              marker.addListener('click', function () {
-                infoWindow.setContent(popupHtml);
-                infoWindow.open(map, marker);
-              });
-              bounds.extend(position);
-              markerCount += 1;
-            });
-
-            if (markerCount === 0) {
-              map.setCenter({ lat: 39.5, lng: -8 });
-              map.setZoom(6);
-              renderEmptyState('Sem moradas geocodificadas ainda.', { clear: false });
-            } else if (markerCount === 1) {
-              map.setCenter(bounds.getCenter());
-              map.setZoom(14);
-            } else {
-              map.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 });
-            }
-          }
-
-          function ensureGoogleMaps(callback) {
-            if (window.google && window.google.maps) {
-              callback();
-              return;
-            }
-
-            const callbacks = (window.__backofficeGoogleMapsCallbacks =
-              window.__backofficeGoogleMapsCallbacks || []);
-            callbacks.push(callback);
-
-            if (window.__backofficeGoogleMapsLoading) {
-              return;
-            }
-
-            window.__backofficeGoogleMapsLoading = true;
-            window.__backofficeGoogleMapsInit = function () {
-              window.__backofficeGoogleMapsLoading = false;
-              const pending = window.__backofficeGoogleMapsCallbacks || [];
-              window.__backofficeGoogleMapsCallbacks = [];
-              pending.forEach(function (cb) {
-                try {
-                  cb();
-                } catch (err) {
-                  console.error(err);
-                }
-              });
-            };
-
-            if (document.querySelector('script[data-backoffice-google-maps]')) {
-              return;
-            }
-
-            const script = document.createElement('script');
-            script.src =
-              'https://maps.googleapis.com/maps/api/js?key=' +
-              encodeURIComponent(mapApiKey) +
-              '&callback=__backofficeGoogleMapsInit';
-            script.async = true;
-            script.defer = true;
-            script.dataset.backofficeGoogleMaps = 'true';
-            script.addEventListener(
-              'error',
-              function () {
-                renderEmptyState('Não foi possível carregar o Google Maps. Verifique a chave configurada.');
-              },
-              { once: true }
-            );
-            document.head.appendChild(script);
-          }
-
-          ensureGoogleMaps(initGoogleMaps);
-        })();
-      </script>
-
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <section class="card p-4">
           <h2 class="font-semibold mb-3">Propriedades</h2>
@@ -2302,7 +2106,7 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
               <span>Descrição</span>
               <textarea name="description" class="input" rows="3" placeholder="Notas internas ou destaques">${esc(p.description || '')}</textarea>
             </label>
-            <p class="text-xs text-slate-500 md:col-span-2">A localização no mapa é atualizada automaticamente após guardar a morada e localidade.</p>
+            <p class="text-xs text-slate-500 md:col-span-2">A morada completa fica disponível para a equipa assim que guardar as alterações.</p>
             <div class="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div class="text-xs text-slate-500 leading-relaxed">
                 ${esc(addressInfo)}
