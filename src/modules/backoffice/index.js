@@ -1817,6 +1817,7 @@ module.exports = function registerBackoffice(app, context) {
             dataset = { properties: [] };
           }
           datasetEl.textContent = '';
+
           function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
               switch (ch) {
@@ -1836,60 +1837,72 @@ module.exports = function registerBackoffice(app, context) {
             });
           }
 
-          function initMap() {
-            if (!window.L) return;
-            const map = L.map(container);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-              attribution: '&copy; OpenStreetMap contribuidores'
-            }).addTo(map);
-            const markerItems = [];
+          function initMapLibre() {
+            if (!window.maplibregl) return;
+            container.innerHTML = '';
+            const map = new maplibregl.Map({
+              container,
+              style: 'https://demotiles.maplibre.org/style.json',
+              center: [-8, 39.5],
+              zoom: 6,
+              attributionControl: true
+            });
+            map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
-            (dataset.properties || []).forEach(function (prop) {
+            const markers = [];
+            const properties = Array.isArray(dataset.properties) ? dataset.properties : [];
+
+            properties.forEach(function (prop) {
               if (prop.lat == null || prop.lon == null) return;
-              const marker = L.marker([prop.lat, prop.lon], {
-                title: prop.name
-              }).addTo(map);
-              const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
               const details = [];
               if (prop.address) details.push(escapeHtml(prop.address));
               if (prop.locationLabel) details.push(escapeHtml(prop.locationLabel));
+              const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
               details.push(unitLabel);
-              marker.bindPopup('<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>'));
-              markerItems.push(marker);
+              const popupHtml =
+                '<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>');
+              const marker = new maplibregl.Marker({ color: '#2563eb' })
+                .setLngLat([prop.lon, prop.lat])
+                .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(popupHtml))
+                .addTo(map);
+              markers.push(marker);
             });
 
-            if (markerItems.length === 1) {
-              map.setView(markerItems[0].getLatLng(), 14);
-            } else if (markerItems.length > 1) {
-              const bounds = L.latLngBounds(markerItems.map(marker => marker.getLatLng()));
-              map.fitBounds(bounds.pad(0.2), { maxZoom: 14 });
-            } else {
-              map.setView([39.5, -8], 6);
-            }
-
-            if (!markerItems.length) {
-              const empty = document.createElement('div');
-              empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60';
-              empty.textContent = 'Sem moradas geocodificadas ainda.';
-              container.appendChild(empty);
-            }
+            map.once('load', function () {
+              if (markers.length === 1) {
+                const target = markers[0].getLngLat();
+                map.easeTo({ center: target, zoom: 14, duration: 0 });
+              } else if (markers.length > 1) {
+                const bounds = new maplibregl.LngLatBounds();
+                markers.forEach(marker => {
+                  bounds.extend(marker.getLngLat());
+                });
+                map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
+              } else {
+                map.easeTo({ center: [-8, 39.5], zoom: 6, duration: 0 });
+                const empty = document.createElement('div');
+                empty.className = 'absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/60 pointer-events-none';
+                empty.textContent = 'Sem moradas geocodificadas ainda.';
+                container.appendChild(empty);
+              }
+            });
           }
 
-          function ensureLeaflet(callback) {
-            if (window.L) {
+          function ensureMapLibre(callback) {
+            if (window.maplibregl) {
               callback();
               return;
             }
 
-            if (!document.querySelector('link[data-leaflet]')) {
+            if (!document.querySelector('link[data-maplibre]')) {
               const link = document.createElement('link');
               link.rel = 'stylesheet';
-              link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-              link.dataset.leaflet = 'true';
+              link.href = 'https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.css';
+              link.dataset.maplibre = 'true';
               document.head.appendChild(link);
             }
 
-            const existing = document.querySelector('script[data-leaflet]');
+            const existing = document.querySelector('script[data-maplibre]');
             if (existing) {
               if (existing.dataset.loaded === 'true') {
                 callback();
@@ -1903,8 +1916,8 @@ module.exports = function registerBackoffice(app, context) {
             }
 
             const script = document.createElement('script');
-            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-            script.dataset.leaflet = 'true';
+            script.src = 'https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.js';
+            script.dataset.maplibre = 'true';
             script.addEventListener('load', function () {
               script.dataset.loaded = 'true';
               callback();
@@ -1912,7 +1925,7 @@ module.exports = function registerBackoffice(app, context) {
             document.head.appendChild(script);
           }
 
-          ensureLeaflet(initMap);
+          ensureMapLibre(initMapLibre);
         })();
       </script>
 
