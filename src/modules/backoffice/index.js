@@ -1312,6 +1312,7 @@ module.exports = function registerBackoffice(app, context) {
       return {
         id: property.id,
         name: property.name,
+        address: property.address,
         locality: property.locality,
         district: property.district,
         locationLabel: propertyLocationLabel(property),
@@ -1322,25 +1323,11 @@ module.exports = function registerBackoffice(app, context) {
     })
     .filter(marker => marker.lat != null && marker.lon != null);
 
-  const unitMarkers = units
-    .filter(u => u.latitude != null && u.longitude != null)
-    .map(u => ({
-      id: u.id,
-      name: u.name,
-      propertyId: u.property_id,
-      propertyName: u.property_name,
-      propertyLocality: u.property_locality,
-      propertyDistrict: u.property_district,
-      address: u.address,
-      lat: u.latitude,
-      lon: u.longitude
-    }));
-
-  const mapSummaryLabel = propertyMarkers.length || unitMarkers.length
-    ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'} · ${unitMarkers.length} unidade${unitMarkers.length === 1 ? '' : 's'}`
+  const mapSummaryLabel = propertyMarkers.length
+    ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'}`
     : 'Sem localizações geocodificadas';
 
-  const mapData = { properties: propertyMarkers, units: unitMarkers };
+  const mapData = { properties: propertyMarkers };
   const mapDataJson = jsonScriptPayload(mapData);
 
   const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
@@ -1811,11 +1798,11 @@ module.exports = function registerBackoffice(app, context) {
 
       <section class="card p-4 mt-6" data-backoffice-map>
         <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
-          <h2 class="font-semibold">Mapa de propriedades e unidades</h2>
+          <h2 class="font-semibold">Mapa de propriedades</h2>
           <span class="text-xs text-slate-500">${esc(mapSummaryLabel)}</span>
         </div>
         <div data-map-container class="relative w-full h-80 min-h-[320px] rounded-lg border border-slate-200 overflow-hidden bg-slate-100"></div>
-        <p class="text-xs text-slate-500 mt-2">Adicione localidade/distrito aos alojamentos e moradas completas às unidades para visualizá-las aqui.</p>
+        <p class="text-xs text-slate-500 mt-2">Defina a morada completa e localidade/distrito de cada alojamento para que apareça no mapa.</p>
       </section>
       <script type="application/json" id="backoffice-map-data">${mapDataJson}</script>
       <script>
@@ -1823,14 +1810,14 @@ module.exports = function registerBackoffice(app, context) {
           const container = document.querySelector('[data-map-container]');
           const datasetEl = document.getElementById('backoffice-map-data');
           if (!container || !datasetEl) return;
-          let dataset = { properties: [], units: [] };
+          let dataset = { properties: [] };
           try {
             dataset = JSON.parse(datasetEl.textContent || '{}');
           } catch (err) {
-            dataset = { properties: [], units: [] };
+            dataset = { properties: [] };
           }
           datasetEl.textContent = '';
-          const hasMarkers = Boolean((dataset.properties && dataset.properties.length) || (dataset.units && dataset.units.length));
+          const hasMarkers = Boolean(dataset.properties && dataset.properties.length);
 
           function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
@@ -1870,20 +1857,10 @@ module.exports = function registerBackoffice(app, context) {
               }).addTo(map);
               const unitLabel = prop.unitCount === 1 ? '1 unidade' : (prop.unitCount || 0) + ' unidades';
               const details = [];
+              if (prop.address) details.push(escapeHtml(prop.address));
               if (prop.locationLabel) details.push(escapeHtml(prop.locationLabel));
               details.push(unitLabel);
               marker.bindPopup('<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>'));
-              markerItems.push(marker);
-            });
-
-            (dataset.units || []).forEach(function (unit) {
-              if (unit.lat == null || unit.lon == null) return;
-              const marker = L.marker([unit.lat, unit.lon]).addTo(map);
-              const lines = ['<strong>' + escapeHtml(unit.propertyName) + ' · ' + escapeHtml(unit.name) + '</strong>'];
-              if (unit.address) lines.push(escapeHtml(unit.address));
-              const localityParts = [unit.propertyLocality, unit.propertyDistrict].filter(Boolean);
-              if (localityParts.length) lines.push(escapeHtml(localityParts.join(', ')));
-              marker.bindPopup(lines.join('<br/>'));
               markerItems.push(marker);
             });
 
@@ -1953,6 +1930,7 @@ module.exports = function registerBackoffice(app, context) {
           </ul>
           <form method="post" action="/admin/properties/create" class="grid gap-2">
             <input required name="name" class="input" placeholder="Nome"/>
+            <input required name="address" class="input" placeholder="Morada completa"/>
             <div class="grid gap-2 sm:grid-cols-2">
               <input required name="locality" class="input" placeholder="Localidade"/>
               <input required name="district" class="input" placeholder="Distrito"/>
@@ -1992,8 +1970,7 @@ module.exports = function registerBackoffice(app, context) {
             <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade"/>
             <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade"/>
             <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Preço base €/noite"/>
-            <input required name="address" class="input md:col-span-6" placeholder="Morada completa"/>
-            <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="Características (uma por linha). Ex: 
+            <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="Características (uma por linha). Ex:
 bed|3 camas
 wifi
 kitchen|Kitchenette"></textarea>
@@ -2150,15 +2127,17 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
 });
 
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
-  const { name, locality, district, description } = req.body;
+  const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
   const trimmedDistrict = String(district || '').trim();
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
   const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
   let latitude = null;
   let longitude = null;
 
   try {
-    const queryParts = [trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+    const queryParts = [trimmedAddress, trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
     if (queryParts.length) {
       const coords = await geocodeAddress(queryParts.join(', '));
       if (coords) {
@@ -2171,12 +2150,13 @@ app.post('/admin/properties/create', requireLogin, requirePermission('properties
   }
 
   db.prepare(
-    'INSERT INTO properties(name, location, locality, district, description, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO properties(name, location, locality, district, address, description, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     name,
     locationLabel,
     trimmedLocality || null,
     trimmedDistrict || null,
+    trimmedAddress,
     description ? String(description) : null,
     latitude,
     longitude
@@ -2196,11 +2176,13 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Propriedade não encontrada');
 
+  const addressDisplay = typeof p.address === 'string' ? p.address.trim() : '';
   const locationDisplay = propertyLocationLabel(p);
   const latNum = p.latitude != null ? Number.parseFloat(p.latitude) : NaN;
   const lonNum = p.longitude != null ? Number.parseFloat(p.longitude) : NaN;
   const coordsDisplay = Number.isFinite(latNum) && Number.isFinite(lonNum) ? `${latNum.toFixed(5)}, ${lonNum.toFixed(5)}` : '';
-  const locationInfo = locationDisplay ? `Localização atual: ${locationDisplay}` : 'Sem localidade registada.';
+  const addressInfo = addressDisplay ? `Morada atual: ${addressDisplay}` : 'Sem morada registada.';
+  const locationInfo = locationDisplay ? `Localidade atual: ${locationDisplay}` : 'Sem localidade registada.';
   const coordinateInfo = coordsDisplay ? `Coordenadas: ${coordsDisplay}` : '';
 
   const units = db.prepare('SELECT * FROM units WHERE property_id = ? ORDER BY name').all(p.id);
@@ -2217,7 +2199,6 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
                 </div>
                 <div class="text-xs text-slate-500">${esc(priceLabel)}</div>
               </div>
-              ${u.address ? `<div class="text-xs text-slate-500 mt-1">${esc(u.address)}</div>` : ''}
             </li>`;
         })
         .join('')
@@ -2244,9 +2225,10 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 class="text-2xl font-semibold">${esc(p.name)}</h1>
-            ${locationDisplay
-              ? `<p class="text-slate-600 mt-1">${esc(locationDisplay)}</p>`
-              : '<p class="text-slate-400 mt-1">Localidade não definida</p>'}
+            ${addressDisplay
+              ? `<p class="text-slate-600 mt-1">${esc(addressDisplay)}</p>`
+              : '<p class="text-slate-400 mt-1">Morada não definida</p>'}
+            ${locationDisplay ? `<p class="text-slate-500 mt-1">${esc(locationDisplay)}</p>` : ''}
             ${p.description ? `<p class="text-sm text-slate-500 mt-2 whitespace-pre-line">${esc(p.description)}</p>` : ''}
             ${coordsDisplay ? `<p class="text-xs text-slate-500 mt-1">Coordenadas: ${esc(coordsDisplay)}</p>` : ''}
           </div>
@@ -2262,6 +2244,10 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
               <span>Nome</span>
               <input required name="name" class="input" value="${esc(p.name)}" />
             </label>
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Morada completa</span>
+              <input required name="address" class="input" value="${esc(addressDisplay)}" placeholder="Rua, número, código postal" />
+            </label>
             <label class="grid gap-1 text-sm text-slate-600">
               <span>Localidade</span>
               <input required name="locality" class="input" value="${esc(p.locality || '')}" placeholder="Ex.: Lagos" />
@@ -2274,10 +2260,11 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
               <span>Descrição</span>
               <textarea name="description" class="input" rows="3" placeholder="Notas internas ou destaques">${esc(p.description || '')}</textarea>
             </label>
-            <p class="text-xs text-slate-500 md:col-span-2">As coordenadas são atualizadas automaticamente após guardar.</p>
+            <p class="text-xs text-slate-500 md:col-span-2">As coordenadas são atualizadas automaticamente após guardar a morada e localidade.</p>
             <div class="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div class="text-xs text-slate-500 leading-relaxed">
-                ${esc(locationInfo)}
+                ${esc(addressInfo)}
+                ${locationInfo ? `<br/><span>${esc(locationInfo)}</span>` : ''}
                 ${coordinateInfo ? `<br/><span>${esc(coordinateInfo)}</span>` : ''}
               </div>
               <button class="btn btn-primary w-full sm:w-auto">Guardar alterações</button>
@@ -2312,20 +2299,23 @@ app.post('/admin/properties/:id/update', requireLogin, requirePermission('proper
   const existing = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
   if (!existing) return res.status(404).send('Propriedade não encontrada');
 
-  const { name, locality, district, description } = req.body;
+  const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
   const trimmedDistrict = String(district || '').trim();
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
   const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
 
   let latitude = existing.latitude != null ? Number.parseFloat(existing.latitude) : null;
   let longitude = existing.longitude != null ? Number.parseFloat(existing.longitude) : null;
+  const addressChanged = trimmedAddress !== String(existing.address || '').trim();
   const localityChanged = trimmedLocality !== String(existing.locality || '').trim();
   const districtChanged = trimmedDistrict !== String(existing.district || '').trim();
   const hasValidCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
 
-  if (localityChanged || districtChanged || !hasValidCoords) {
+  if (addressChanged || localityChanged || districtChanged || !hasValidCoords) {
     try {
-      const queryParts = [trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+      const queryParts = [trimmedAddress, trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
       if (queryParts.length) {
         const coords = await geocodeAddress(queryParts.join(', '));
         if (coords) {
@@ -2342,12 +2332,13 @@ app.post('/admin/properties/:id/update', requireLogin, requirePermission('proper
   const finalLongitude = Number.isFinite(longitude) ? longitude : null;
 
   db.prepare(
-    'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
+    'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, address = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
   ).run(
     name,
     locationLabel,
     trimmedLocality || null,
     trimmedDistrict || null,
+    trimmedAddress,
     description ? String(description) : null,
     finalLatitude,
     finalLongitude,
@@ -2357,31 +2348,13 @@ app.post('/admin/properties/:id/update', requireLogin, requirePermission('proper
   res.redirect(`/admin/properties/${propertyId}`);
 });
 
-app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
-  let { property_id, name, capacity, base_price_eur, features_raw, address } = req.body;
-  const property = db.prepare('SELECT locality, district FROM properties WHERE id = ?').get(property_id);
+app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(property_id);
   if (!property) return res.status(400).send('Propriedade inválida');
-
-  const trimmedAddress = String(address || '').trim();
-  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
 
   const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
-
-  let latitude = null;
-  let longitude = null;
-  try {
-    const queryParts = [trimmedAddress, property.locality, property.district, 'Portugal'].filter(Boolean);
-    if (queryParts.length) {
-      const coords = await geocodeAddress(queryParts.join(', '));
-      if (coords) {
-        latitude = coords.latitude != null ? coords.latitude : null;
-        longitude = coords.longitude != null ? coords.longitude : null;
-      }
-    }
-  } catch (err) {
-    console.warn('Falha ao geocodificar unidade nova:', err.message);
-  }
 
   db.prepare(
     'INSERT INTO units(property_id, name, capacity, base_price_cents, features, address, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
@@ -2391,16 +2364,16 @@ app.post('/admin/units/create', requireLogin, requirePermission('properties.mana
     Number(capacity),
     cents,
     JSON.stringify(features),
-    trimmedAddress,
-    latitude,
-    longitude
+    null,
+    null,
+    null
   );
   res.redirect('/admin');
 });
 
 app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const u = db.prepare(
-    `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
+    `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district, p.address as property_address
        FROM units u
        JOIN properties p ON p.id = u.property_id
       WHERE u.id = ?`
@@ -2410,11 +2383,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
   const unitFeatures = parseFeaturesStored(u.features);
   const unitFeaturesTextarea = esc(featuresToTextarea(unitFeatures));
   const propertyLocation = propertyLocationLabel({ locality: u.property_locality, district: u.property_district, location: null });
-  const unitLatNum = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
-  const unitLonNum = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
-  const unitCoordsDisplay = Number.isFinite(unitLatNum) && Number.isFinite(unitLonNum)
-    ? `${unitLatNum.toFixed(5)}, ${unitLonNum.toFixed(5)}`
-    : '';
+  const propertyAddress = typeof u.property_address === 'string' ? u.property_address.trim() : '';
   const unitFeaturesPreview = featureChipsHtml(unitFeatures, {
     className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
     badgeClass: 'inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 px-2 py-1 rounded-full',
@@ -2439,10 +2408,10 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
       <div class="text-sm text-slate-500 mb-4 leading-relaxed">
-        ${u.address ? esc(u.address) : 'Morada não registada'}
+        ${propertyAddress ? esc(propertyAddress) : 'Morada do alojamento não definida'}
         ${propertyLocation ? `<br/><span>${esc(`Localidade: ${propertyLocation}`)}</span>` : ''}
-        ${unitCoordsDisplay ? `<br/><span>${esc(`Coordenadas: ${unitCoordsDisplay}`)}</span>` : ''}
       </div>
+      <p class="text-xs text-slate-500 mb-4">A morada e geolocalização são geridas na página do alojamento.</p>
       ${unitFeaturesPreview}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2534,13 +2503,10 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
             <label class="text-sm">Preço base €/noite</label>
             <input type="number" step="0.01" name="base_price_eur" class="input" value="${eur(u.base_price_cents)}"/>
 
-            <label class="text-sm">Morada</label>
-            <input required name="address" class="input" value="${esc(u.address || '')}" placeholder="Morada completa"/>
-            <p class="text-xs text-slate-500">Localidade da propriedade: ${esc(propertyLocation || 'Não definida')}.</p>
-
             <label class="text-sm">Características</label>
             <textarea name="features_raw" rows="6" class="input">${unitFeaturesTextarea}</textarea>
             <div class="text-xs text-slate-500">Uma por linha no formato <code>icon|texto</code> ou apenas o ícone. Ícones: ${FEATURE_ICON_KEYS.join(', ')}.</div>
+            <div class="text-xs text-slate-500">Morada e localidade são configuradas na página do alojamento.</div>
 
             <button class="btn btn-primary">Guardar</button>
           </form>
@@ -2784,55 +2750,22 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
   }));
 });
 
-app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const unitId = Number(req.params.id);
-  const existing = db
-    .prepare('SELECT property_id, address, latitude, longitude FROM units WHERE id = ?')
-    .get(unitId);
+  const existing = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
   if (!existing) return res.status(404).send('Unidade não encontrada');
 
-  const property = db.prepare('SELECT locality, district FROM properties WHERE id = ?').get(existing.property_id);
-  const { name, capacity, base_price_eur, features_raw, address } = req.body;
-  const trimmedAddress = String(address || '').trim();
-  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
-
+  const { name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
 
-  let latitude = existing.latitude != null ? Number.parseFloat(existing.latitude) : null;
-  let longitude = existing.longitude != null ? Number.parseFloat(existing.longitude) : null;
-  const currentAddress = String(existing.address || '').trim();
-  const hasValidCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
-  const shouldGeocode = trimmedAddress !== currentAddress || !hasValidCoords;
-
-  if (shouldGeocode) {
-    try {
-      const queryParts = [trimmedAddress, property && property.locality, property && property.district, 'Portugal'].filter(Boolean);
-      if (queryParts.length) {
-        const coords = await geocodeAddress(queryParts.join(', '));
-        if (coords) {
-          latitude = coords.latitude != null ? coords.latitude : null;
-          longitude = coords.longitude != null ? coords.longitude : null;
-        }
-      }
-    } catch (err) {
-      console.warn(`Falha ao geocodificar unidade #${unitId}:`, err.message);
-    }
-  }
-
-  const finalLatitude = Number.isFinite(latitude) ? latitude : null;
-  const finalLongitude = Number.isFinite(longitude) ? longitude : null;
-
   db.prepare(
-    'UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ?, address = ?, latitude = ?, longitude = ? WHERE id = ?'
+    'UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ?, address = NULL, latitude = NULL, longitude = NULL WHERE id = ?'
   ).run(
     name,
     Number(capacity),
     cents,
     JSON.stringify(features),
-    trimmedAddress,
-    finalLatitude,
-    finalLongitude,
     unitId
   );
   res.redirect(`/admin/units/${unitId}`);
