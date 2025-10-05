@@ -2718,7 +2718,7 @@ const context = {
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
   slugify,
-  mapboxAccessToken: process.env.MAPBOX_ACCESS_TOKEN || null
+  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || null
 };
 
 registerAuthRoutes(app, context);

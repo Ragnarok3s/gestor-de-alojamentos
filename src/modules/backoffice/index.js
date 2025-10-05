@@ -24,7 +24,7 @@ module.exports = function registerBackoffice(app, context) {
     logActivity,
     logChange,
     geocodeAddress,
-    mapboxAccessToken,
+    googleMapsApiKey,
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
@@ -1328,7 +1328,7 @@ module.exports = function registerBackoffice(app, context) {
     ? `${propertyMarkers.length} alojamento${propertyMarkers.length === 1 ? '' : 's'}`
     : 'Sem localizações geocodificadas';
 
-  const mapData = { properties: propertyMarkers, token: mapboxAccessToken || null };
+  const mapData = { properties: propertyMarkers, apiKey: googleMapsApiKey || null };
   const mapDataJson = jsonScriptPayload(mapData);
 
   const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
@@ -1819,7 +1819,7 @@ module.exports = function registerBackoffice(app, context) {
           }
           datasetEl.textContent = '';
 
-          const mapToken = typeof dataset.token === 'string' ? dataset.token.trim() : '';
+          const mapApiKey = typeof dataset.apiKey === 'string' ? dataset.apiKey.trim() : '';
 
           function escapeHtml(value) {
             return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
@@ -1851,31 +1851,34 @@ module.exports = function registerBackoffice(app, context) {
             container.appendChild(empty);
           }
 
-          if (!mapToken) {
-            renderEmptyState('Configuração do Mapbox em falta. Defina MAPBOX_ACCESS_TOKEN.');
+          if (!mapApiKey) {
+            renderEmptyState('Configuração do Google Maps em falta. Defina GOOGLE_MAPS_API_KEY.');
             return;
           }
 
-          function initMapbox() {
-            if (!window.mapboxgl) return;
+          function initGoogleMaps() {
+            if (!(window.google && window.google.maps)) return;
             container.innerHTML = '';
-            mapboxgl.accessToken = mapToken;
-            const map = new mapboxgl.Map({
-              container,
-              style: 'mapbox://styles/mapbox/streets-v12',
-              center: [-8, 39.5],
+            const map = new google.maps.Map(container, {
+              center: { lat: 39.5, lng: -8 },
               zoom: 6,
-              attributionControl: true
+              mapTypeControl: false,
+              streetViewControl: false,
+              fullscreenControl: false,
+              gestureHandling: 'greedy'
             });
-            map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 
-            const markers = [];
-            const bounds = new mapboxgl.LngLatBounds();
-            let hasBounds = false;
+            const infoWindow = new google.maps.InfoWindow();
+            const bounds = new google.maps.LatLngBounds();
+            let markerCount = 0;
             const properties = Array.isArray(dataset.properties) ? dataset.properties : [];
 
             properties.forEach(function (prop) {
-              if (prop.lat == null || prop.lon == null) return;
+              if (!prop) return;
+              const lat = typeof prop.lat === 'number' ? prop.lat : Number(prop.lat);
+              const lon = typeof prop.lon === 'number' ? prop.lon : Number(prop.lon);
+              if (!isFinite(lat) || !isFinite(lon)) return;
+              const position = { lat: lat, lng: lon };
               const details = [];
               if (prop.address) details.push(escapeHtml(prop.address));
               if (prop.locationLabel) details.push(escapeHtml(prop.locationLabel));
@@ -1883,66 +1886,82 @@ module.exports = function registerBackoffice(app, context) {
               details.push(unitLabel);
               const popupHtml =
                 '<strong>' + escapeHtml(prop.name) + '</strong><br/>' + details.join('<br/>');
-              const marker = new mapboxgl.Marker({ color: '#2563eb' })
-                .setLngLat([prop.lon, prop.lat])
-                .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
-                .addTo(map);
-              markers.push(marker);
-              bounds.extend([prop.lon, prop.lat]);
-              hasBounds = true;
+              const marker = new google.maps.Marker({
+                position,
+                map,
+                title: prop.name || ''
+              });
+              marker.addListener('click', function () {
+                infoWindow.setContent(popupHtml);
+                infoWindow.open(map, marker);
+              });
+              bounds.extend(position);
+              markerCount += 1;
             });
 
-            map.once('load', function () {
-              if (markers.length === 1) {
-                const target = markers[0].getLngLat();
-                map.easeTo({ center: target, zoom: 14, duration: 0 });
-              } else if (markers.length > 1 && hasBounds) {
-                map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-              } else if (!hasBounds) {
-                map.easeTo({ center: [-8, 39.5], zoom: 6, duration: 0 });
-                renderEmptyState('Sem moradas geocodificadas ainda.', { clear: false });
-              }
-            });
+            if (markerCount === 0) {
+              map.setCenter({ lat: 39.5, lng: -8 });
+              map.setZoom(6);
+              renderEmptyState('Sem moradas geocodificadas ainda.', { clear: false });
+            } else if (markerCount === 1) {
+              map.setCenter(bounds.getCenter());
+              map.setZoom(14);
+            } else {
+              map.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 });
+            }
           }
 
-          function ensureMapbox(callback) {
-            if (window.mapboxgl) {
+          function ensureGoogleMaps(callback) {
+            if (window.google && window.google.maps) {
               callback();
               return;
             }
 
-            if (!document.querySelector('link[data-mapbox]')) {
-              const link = document.createElement('link');
-              link.rel = 'stylesheet';
-              link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
-              link.dataset.mapbox = 'true';
-              document.head.appendChild(link);
+            const callbacks = (window.__backofficeGoogleMapsCallbacks =
+              window.__backofficeGoogleMapsCallbacks || []);
+            callbacks.push(callback);
+
+            if (window.__backofficeGoogleMapsLoading) {
+              return;
             }
 
-            const existing = document.querySelector('script[data-mapbox]');
-            if (existing) {
-              if (existing.dataset.loaded === 'true') {
-                callback();
-              } else {
-                existing.addEventListener('load', function () {
-                  existing.dataset.loaded = 'true';
-                  callback();
-                }, { once: true });
-              }
+            window.__backofficeGoogleMapsLoading = true;
+            window.__backofficeGoogleMapsInit = function () {
+              window.__backofficeGoogleMapsLoading = false;
+              const pending = window.__backofficeGoogleMapsCallbacks || [];
+              window.__backofficeGoogleMapsCallbacks = [];
+              pending.forEach(function (cb) {
+                try {
+                  cb();
+                } catch (err) {
+                  console.error(err);
+                }
+              });
+            };
+
+            if (document.querySelector('script[data-backoffice-google-maps]')) {
               return;
             }
 
             const script = document.createElement('script');
-            script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
-            script.dataset.mapbox = 'true';
-            script.addEventListener('load', function () {
-              script.dataset.loaded = 'true';
-              callback();
-            }, { once: true });
+            script.src =
+              'https://maps.googleapis.com/maps/api/js?key=' +
+              encodeURIComponent(mapApiKey) +
+              '&callback=__backofficeGoogleMapsInit';
+            script.async = true;
+            script.defer = true;
+            script.dataset.backofficeGoogleMaps = 'true';
+            script.addEventListener(
+              'error',
+              function () {
+                renderEmptyState('Não foi possível carregar o Google Maps. Verifique a chave configurada.');
+              },
+              { once: true }
+            );
             document.head.appendChild(script);
           }
 
-          ensureMapbox(initMapbox);
+          ensureGoogleMaps(initGoogleMaps);
         })();
       </script>
 
