@@ -2362,28 +2362,36 @@ module.exports = function registerBackoffice(app, context) {
                 function render() {
                   if (!entries.length) {
                     list.innerHTML = emptyText
-                      ? `<li class="feature-builder__empty">${escapeHtml(emptyText)}</li>`
+                      ? '<li class="feature-builder__empty">' + escapeHtml(emptyText) + '</li>'
                       : '';
                     return;
                   }
                   list.innerHTML = entries
-                    .map((entry, index) => {
+                    .map(function (entry, index) {
                       if (entry.raw) {
-                        return `
-                          <li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="${index}">
-                            <span>${escapeHtml(entry.raw)}</span>
-                            <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>
-                          </li>
-                        `;
+                        return (
+                          '<li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="' +
+                          index +
+                          '">' +
+                          '<span>' + escapeHtml(entry.raw) + '</span>' +
+                          '<button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>' +
+                          '</li>'
+                        );
                       }
                       const label = formatPresetLabel(entry.icon, entry.quantity);
-                      return `
-                        <li class="feature-builder__item" data-feature-item data-index="${index}">
-                          <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${entry.icon}"></i></span>
-                          <span>${escapeHtml(label)}</span>
-                          <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ${escapeHtml(label)}">×</button>
-                        </li>
-                      `;
+                      return (
+                        '<li class="feature-builder__item" data-feature-item data-index="' +
+                        index +
+                        '">' +
+                        '<span class="feature-builder__icon" aria-hidden="true"><i data-lucide="' +
+                        entry.icon +
+                        '"></i></span>' +
+                        '<span>' + escapeHtml(label) + '</span>' +
+                        '<button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ' +
+                        escapeHtml(label) +
+                        '">×</button>' +
+                        '</li>'
+                      );
                     })
                     .join('');
                   if (window.lucide && typeof window.lucide.createIcons === 'function') {
@@ -3102,7 +3110,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
                     return '&gt;';
                   case '"':
                     return '&quot;';
-                  case ''':
+                  case '\'':
                     return '&#39;';
                   default:
                     return char;
@@ -3135,28 +3143,36 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
               function render() {
                 if (!entries.length) {
                   list.innerHTML = emptyText
-                    ? `<li class="feature-builder__empty">${escapeHtml(emptyText)}</li>`
+                    ? '<li class="feature-builder__empty">' + escapeHtml(emptyText) + '</li>'
                     : '';
                   return;
                 }
                 list.innerHTML = entries
-                  .map((entry, index) => {
+                  .map(function (entry, index) {
                     if (entry.raw) {
-                      return `
-                        <li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="${index}">
-                          <span>${escapeHtml(entry.raw)}</span>
-                          <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>
-                        </li>
-                      `;
+                      return (
+                        '<li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="' +
+                        index +
+                        '">' +
+                        '<span>' + escapeHtml(entry.raw) + '</span>' +
+                        '<button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>' +
+                        '</li>'
+                      );
                     }
                     const label = formatPresetLabel(entry.icon, entry.quantity);
-                    return `
-                      <li class="feature-builder__item" data-feature-item data-index="${index}">
-                        <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${entry.icon}"></i></span>
-                        <span>${escapeHtml(label)}</span>
-                        <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ${escapeHtml(label)}">×</button>
-                      </li>
-                    `;
+                    return (
+                      '<li class="feature-builder__item" data-feature-item data-index="' +
+                      index +
+                      '">' +
+                      '<span class="feature-builder__icon" aria-hidden="true"><i data-lucide="' +
+                      entry.icon +
+                      '"></i></span>' +
+                      '<span>' + escapeHtml(label) + '</span>' +
+                      '<button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ' +
+                      escapeHtml(label) +
+                      '">×</button>' +
+                      '</li>'
+                    );
                   })
                   .join('');
                 if (window.lucide && typeof window.lucide.createIcons === 'function') {
@@ -3280,11 +3296,11 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
             function showFlash(message, variant) {
               if (!flash) return;
-              flash.textContent = message;
-              flash.setAttribute('data-variant', variant || 'info');
-              flash.hidden = false;
-              if (flashTimer) window.clearTimeout(flashTimer);
-              flashTimer = window.setTimeout(() => {
+              return fetch('/admin/units/' + unitId + '/images/reorder', {
+              const button = manager.querySelector('[data-image-id="' + imageId + '"] [data-gallery-action="primary"]');
+              fetch('/admin/units/' + unitId + '/images/' + imageId + '/primary', {
+              fetch('/admin/units/' + unitId + '/images/' + imageId + '/delete', {
+                  const tile = manager.querySelector('[data-gallery-tile][data-image-id="' + imageId + '"]');
                 flash.hidden = true;
               }, 2600);
             }
