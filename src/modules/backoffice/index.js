@@ -2342,7 +2342,7 @@ module.exports = function registerBackoffice(app, context) {
                 const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
                 if (!preset) return String(safeQuantity);
                 const noun = safeQuantity === 1 ? preset.singular : preset.plural;
-                return `${safeQuantity} ${noun}`;
+                return safeQuantity + ' ' + noun;
               }
 
               function initFeatureBuilder(root) {
@@ -2393,7 +2393,7 @@ module.exports = function registerBackoffice(app, context) {
 
                 function serializeEntry(entry) {
                   if (entry.raw) return entry.raw;
-                  return `${entry.icon}|${formatPresetLabel(entry.icon, entry.quantity)}`;
+                  return entry.icon + '|' + formatPresetLabel(entry.icon, entry.quantity);
                 }
 
                 function sync() {
@@ -3115,7 +3115,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
               const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
               if (!preset) return String(safeQuantity);
               const noun = safeQuantity === 1 ? preset.singular : preset.plural;
-              return `${safeQuantity} ${noun}`;
+              return safeQuantity + ' ' + noun;
             }
 
             function initFeatureBuilder(root) {
@@ -3166,7 +3166,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
               function serializeEntry(entry) {
                 if (entry.raw) return entry.raw;
-                return `${entry.icon}|${formatPresetLabel(entry.icon, entry.quantity)}`;
+                return entry.icon + '|' + formatPresetLabel(entry.icon, entry.quantity);
               }
 
               function sync() {
