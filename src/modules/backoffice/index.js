@@ -1,3 +1,24 @@
+const FEATURE_PRESETS = [
+  {
+    icon: 'shower-head',
+    label: 'Casas de banho',
+    singular: 'casa de banho',
+    plural: 'casas de banho'
+  },
+  {
+    icon: 'sun-snow',
+    label: 'Ar condicionado',
+    singular: 'equipamento de ar condicionado',
+    plural: 'equipamentos de ar condicionado'
+  },
+  {
+    icon: 'bed',
+    label: 'Quartos',
+    singular: 'quarto',
+    plural: 'quartos'
+  }
+];
+
 module.exports = function registerBackoffice(app, context) {
   const {
     db,
@@ -56,7 +77,6 @@ module.exports = function registerBackoffice(app, context) {
     ROLE_PERMISSIONS,
     ALL_PERMISSIONS,
     MASTER_ROLE,
-    FEATURE_ICON_KEYS,
     UNIT_TYPE_ICON_HINTS,
     runAutomationSweep,
     readAutomationState,
@@ -95,6 +115,42 @@ module.exports = function registerBackoffice(app, context) {
   };
   const HOUSEKEEPING_PRIORITIES = new Set(['alta', 'normal', 'baixa']);
   const HOUSEKEEPING_PRIORITY_ORDER = { alta: 0, normal: 1, baixa: 2 };
+
+  const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(item => `<option value="${item.icon}">${esc(item.label)}</option>`).join('');
+  const FEATURE_PRESETS_JSON = JSON.stringify(FEATURE_PRESETS).replace(/</g, '\\u003c');
+
+  function renderFeatureBuilderField({ name, value, helperText, label } = {}) {
+    const fieldName = name ? esc(name) : 'features_raw';
+    const safeValue = value ? esc(value) : '';
+    const helper = helperText ? `<p class="form-hint">${esc(helperText)}</p>` : '';
+    const heading = label ? `<span class="form-label">${esc(label)}</span>` : '';
+    return `
+      <div class="feature-builder form-field" data-feature-builder>
+        ${heading}
+        <div class="feature-builder__controls">
+          <label class="feature-builder__control feature-builder__control--select">
+            <span class="feature-builder__control-label">Característica</span>
+            <select class="input feature-builder__select" data-feature-select>
+              <option value="">Selecionar característica</option>
+              ${FEATURE_PRESET_OPTIONS_HTML}
+            </select>
+          </label>
+          <div class="feature-builder__control feature-builder__control--counter">
+            <span class="feature-builder__control-label">Quantidade</span>
+            <div class="feature-builder__counter" data-feature-counter>
+              <button type="button" class="feature-builder__step" data-feature-decrement aria-label="Diminuir quantidade">−</button>
+              <input type="number" inputmode="numeric" min="1" value="1" class="feature-builder__quantity" data-feature-quantity />
+              <button type="button" class="feature-builder__step" data-feature-increment aria-label="Aumentar quantidade">+</button>
+            </div>
+          </div>
+          <button type="button" class="btn btn-light feature-builder__add" data-feature-add>Adicionar</button>
+        </div>
+        <ul class="feature-builder__list" data-feature-list data-empty-text="Sem características adicionadas."></ul>
+        ${helper}
+        <textarea name="${fieldName}" data-feature-output hidden>${safeValue}</textarea>
+      </div>
+    `;
+  }
 
   const HOUSEKEEPING_TASK_BASE = `
     SELECT
@@ -1514,7 +1570,7 @@ module.exports = function registerBackoffice(app, context) {
               <td data-label="Unidade"><span class="table-cell-value">${esc(u.name)}</span></td>
               <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
               <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
-              <td data-label="Ações"><div class="table-cell-actions"><a class="text-slate-600 hover:text-slate-900 underline" href="/admin/units/${u.id}">Gerir</a></div></td>
+              <td data-label="Ações"><div class="table-cell-actions"><a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a></div></td>
             </tr>`)
           .join('')
       : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
@@ -2064,23 +2120,36 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                   <hr class="my-4" />
                   <h3 class="bo-section-title">Adicionar unidade</h3>
-                  <form method="post" action="/admin/units/create" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
-                    <fieldset class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 md:col-span-6"${canManageProperties ? '' : ' disabled'}>
-                      <select required name="property_id" class="input md:col-span-2">
-                        ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-                      </select>
-                      <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade" />
-                      <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade" />
-                      <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Preço base €/noite" />
-                      <textarea name="features_raw" class="input md:col-span-6" rows="3" placeholder="Características (uma por linha). Ex:
-bed|3 camas
-wifi
-kitchen|Kitchenette"></textarea>
-                      <div class="text-xs text-slate-500 md:col-span-6">
-                        Ícones Lucide disponíveis: ${FEATURE_ICON_KEYS.join(', ')}. Usa <code>icon|texto</code> ou só o ícone.
+                  <form method="post" action="/admin/units/create" class="grid gap-3">
+                    <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
+                      <label class="form-field md:col-span-2 lg:col-span-2">
+                        <span class="form-label">Propriedade</span>
+                        <select required name="property_id" class="input">
+                          <option value="" disabled selected hidden>Seleciona um alojamento</option>
+                          ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+                        </select>
+                      </label>
+                      <label class="form-field md:col-span-2 lg:col-span-2">
+                        <span class="form-label">Nome da unidade</span>
+                        <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Capacidade</span>
+                        <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Preço base €/noite</span>
+                        <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
+                      </label>
+                      <div class="md:col-span-2 lg:col-span-4">
+                        ${renderFeatureBuilderField({
+                          name: 'features_raw',
+                          label: 'Características',
+                          helperText: 'Seleciona uma característica e indica quantas existem nesta unidade.'
+                        })}
                       </div>
                     </fieldset>
-                    <div class="md:col-span-6">
+                    <div>
                       <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
                     </div>
                   </form>
@@ -2242,39 +2311,213 @@ kitchen|Kitchenette"></textarea>
             </div>
           </div>
           <script>
-            document.addEventListener('DOMContentLoaded', function () {
-              const tabs = Array.from(document.querySelectorAll('[data-bo-target]'));
-              const panes = Array.from(document.querySelectorAll('[data-bo-pane]'));
-              function activate(id) {
-                panes.forEach(pane => {
-                  if (pane.dataset.boPane === id) {
-                    pane.classList.add('is-active');
-                  } else {
-                    pane.classList.remove('is-active');
+            (function () {
+              const featurePresets = ${FEATURE_PRESETS_JSON};
+              const featurePresetMap = featurePresets.reduce((acc, item) => {
+                acc[item.icon] = item;
+                return acc;
+              }, {});
+
+              function escapeHtml(value) {
+                return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+                  switch (char) {
+                    case '&':
+                      return '&amp;';
+                    case '<':
+                      return '&lt;';
+                    case '>':
+                      return '&gt;';
+                    case '"':
+                      return '&quot;';
+                    case '\'':
+                      return '&#39;';
+                    default:
+                      return char;
                   }
                 });
-                tabs.forEach(tab => {
-                  if (tab.dataset.boTarget === id) {
-                    tab.classList.add('is-active');
-                  } else {
-                    tab.classList.remove('is-active');
-                  }
-                });
-                if (id) {
-                  history.replaceState(null, '', '#' + id);
+              }
+
+              function formatPresetLabel(icon, quantity) {
+                const preset = featurePresetMap[icon];
+                const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+                if (!preset) return String(safeQuantity);
+                const noun = safeQuantity === 1 ? preset.singular : preset.plural;
+                return `${safeQuantity} ${noun}`;
+              }
+
+              function initFeatureBuilder(root) {
+                if (!root || root.dataset.featureBuilderReady === 'true') return;
+                const select = root.querySelector('[data-feature-select]');
+                const quantityInput = root.querySelector('[data-feature-quantity]');
+                const addButton = root.querySelector('[data-feature-add]');
+                const list = root.querySelector('[data-feature-list]');
+                const output = root.querySelector('[data-feature-output]');
+                if (!select || !quantityInput || !addButton || !list || !output) {
+                  return;
                 }
+
+                const emptyText = list.getAttribute('data-empty-text') || '';
+                const entries = [];
+
+                function render() {
+                  if (!entries.length) {
+                    list.innerHTML = emptyText
+                      ? `<li class="feature-builder__empty">${escapeHtml(emptyText)}</li>`
+                      : '';
+                    return;
+                  }
+                  list.innerHTML = entries
+                    .map((entry, index) => {
+                      if (entry.raw) {
+                        return `
+                          <li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="${index}">
+                            <span>${escapeHtml(entry.raw)}</span>
+                            <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>
+                          </li>
+                        `;
+                      }
+                      const label = formatPresetLabel(entry.icon, entry.quantity);
+                      return `
+                        <li class="feature-builder__item" data-feature-item data-index="${index}">
+                          <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${entry.icon}"></i></span>
+                          <span>${escapeHtml(label)}</span>
+                          <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ${escapeHtml(label)}">×</button>
+                        </li>
+                      `;
+                    })
+                    .join('');
+                  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                    window.lucide.createIcons({ root: list });
+                  }
+                }
+
+                function serializeEntry(entry) {
+                  if (entry.raw) return entry.raw;
+                  return `${entry.icon}|${formatPresetLabel(entry.icon, entry.quantity)}`;
+                }
+
+                function sync() {
+                  output.value = entries.map(serializeEntry).join('\n');
+                  render();
+                }
+
+                function upsertEntry(icon, quantity) {
+                  if (!icon) return;
+                  const safeIcon = String(icon).toLowerCase();
+                  const parsedQuantity = Number.parseInt(quantity, 10);
+                  const safeQuantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
+                  const existingIndex = entries.findIndex(entry => !entry.raw && entry.icon === safeIcon);
+                  if (existingIndex >= 0) {
+                    entries[existingIndex].quantity = safeQuantity;
+                  } else {
+                    entries.push({ icon: safeIcon, quantity: safeQuantity });
+                  }
+                }
+
+                const initialRaw = String(output.value || '');
+                if (initialRaw.trim()) {
+                  initialRaw
+                    .split(/\r?\n/)
+                    .map(line => line.trim())
+                    .filter(Boolean)
+                    .forEach(line => {
+                      const pipeIndex = line.indexOf('|');
+                      if (pipeIndex > -1) {
+                        const icon = line.slice(0, pipeIndex).trim().toLowerCase();
+                        const label = line.slice(pipeIndex + 1).trim();
+                        if (featurePresetMap[icon]) {
+                          const match = label.match(/^(\d+)/);
+                          const quantity = match ? Number.parseInt(match[1], 10) : 1;
+                          upsertEntry(icon, quantity);
+                          return;
+                        }
+                      }
+                      entries.push({ raw: line });
+                    });
+                  sync();
+                } else {
+                  render();
+                }
+
+                addButton.addEventListener('click', () => {
+                  const icon = select.value;
+                  if (!icon) {
+                    select.focus();
+                    return;
+                  }
+                  const quantity = Number.parseInt(quantityInput.value, 10);
+                  upsertEntry(icon, quantity);
+                  sync();
+                  select.value = '';
+                  quantityInput.value = '1';
+                });
+
+                quantityInput.addEventListener('change', () => {
+                  const parsed = Number.parseInt(quantityInput.value, 10);
+                  if (!Number.isFinite(parsed) || parsed < 1) {
+                    quantityInput.value = '1';
+                  }
+                });
+
+                list.addEventListener('click', event => {
+                  const trigger = event.target.closest('[data-feature-remove]');
+                  if (!trigger) return;
+                  const item = trigger.closest('[data-feature-item]');
+                  if (!item) return;
+                  const index = Number.parseInt(item.getAttribute('data-index'), 10);
+                  if (Number.isInteger(index)) {
+                    entries.splice(index, 1);
+                    sync();
+                  }
+                });
+
+                root.dataset.featureBuilderReady = 'true';
               }
-              const initialHash = window.location.hash.replace('#', '');
-              if (initialHash && panes.some(p => p.dataset.boPane === initialHash)) {
-                activate(initialHash);
-              } else {
-                activate('${defaultPane}');
+
+              function initFeatureBuilders() {
+                document.querySelectorAll('[data-feature-builder]').forEach(initFeatureBuilder);
               }
-              tabs.forEach(tab => {
-                if (tab.hasAttribute('disabled')) return;
-                tab.addEventListener('click', () => activate(tab.dataset.boTarget));
+
+              if (!window.__featureBuilderPresets) {
+                window.__featureBuilderPresets = featurePresets;
+              }
+              window.__initFeatureBuilders = initFeatureBuilders;
+
+              document.addEventListener('DOMContentLoaded', function () {
+                const tabs = Array.from(document.querySelectorAll('[data-bo-target]'));
+                const panes = Array.from(document.querySelectorAll('[data-bo-pane]'));
+                function activate(id) {
+                  panes.forEach(pane => {
+                    if (pane.dataset.boPane === id) {
+                      pane.classList.add('is-active');
+                    } else {
+                      pane.classList.remove('is-active');
+                    }
+                  });
+                  tabs.forEach(tab => {
+                    if (tab.dataset.boTarget === id) {
+                      tab.classList.add('is-active');
+                    } else {
+                      tab.classList.remove('is-active');
+                    }
+                  });
+                  if (id) {
+                    history.replaceState(null, '', '#' + id);
+                  }
+                }
+                const initialHash = window.location.hash.replace('#', '');
+                if (initialHash && panes.some(p => p.dataset.boPane === initialHash)) {
+                  activate(initialHash);
+                } else {
+                  activate('${defaultPane}');
+                }
+                tabs.forEach(tab => {
+                  if (tab.hasAttribute('disabled')) return;
+                  tab.addEventListener('click', () => activate(tab.dataset.boTarget));
+                });
+                initFeatureBuilders();
               });
-            });
+            })();
           </script>
         `
       })
@@ -2765,9 +3008,12 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
             <label class="text-sm">Preço base €/noite</label>
             <input type="number" step="0.01" name="base_price_eur" class="input" value="${eur(u.base_price_cents)}"/>
 
-            <label class="text-sm">Características</label>
-            <textarea name="features_raw" rows="6" class="input">${unitFeaturesTextarea}</textarea>
-            <div class="text-xs text-slate-500">Uma por linha no formato <code>icon|texto</code> ou apenas o ícone. Ícones: ${FEATURE_ICON_KEYS.join(', ')}.</div>
+            ${renderFeatureBuilderField({
+              name: 'features_raw',
+              value: unitFeaturesTextarea,
+              label: 'Características',
+              helperText: 'Utiliza o seletor para indicar quantas casas de banho, equipamentos de ar condicionado e quartos existem.'
+            })}
             <div class="text-xs text-slate-500">Morada e localidade são configuradas na página do alojamento.</div>
 
             <button class="btn btn-primary">Guardar</button>
@@ -2837,177 +3083,400 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
       </div>
 
       <script>
-        document.addEventListener('DOMContentLoaded', () => {
-          const manager = document.querySelector('[data-gallery-manager]');
-          if (!manager) return;
-          const list = manager.querySelector('[data-gallery-list]');
-          const emptyState = manager.querySelector('[data-gallery-empty]');
-          const flash = manager.querySelector('[data-gallery-flash]');
-          const unitId = manager.getAttribute('data-unit-id');
-          let flashTimer = null;
-          let dragItem = null;
-          let lastOrderKey = list
-            ? JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId))
-            : '[]';
+        (function () {
+          const featurePresets = ${FEATURE_PRESETS_JSON};
+          if (typeof window.__initFeatureBuilders !== 'function') {
+            const featurePresetMap = featurePresets.reduce((acc, item) => {
+              acc[item.icon] = item;
+              return acc;
+            }, {});
 
-          function showFlash(message, variant) {
-            if (!flash) return;
-            flash.textContent = message;
-            flash.setAttribute('data-variant', variant || 'info');
-            flash.hidden = false;
-            if (flashTimer) window.clearTimeout(flashTimer);
-            flashTimer = window.setTimeout(() => { flash.hidden = true; }, 2600);
-          }
-
-          function syncEmpty() {
-            if (!list || !emptyState) return;
-            const isEmpty = list.querySelectorAll('[data-gallery-tile]').length === 0;
-            list.classList.toggle('hidden', isEmpty);
-            emptyState.classList.toggle('hidden', !isEmpty);
-          }
-
-          function refreshOrderKey() {
-            if (!list) {
-              lastOrderKey = '[]';
-              return lastOrderKey;
-            }
-            lastOrderKey = JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId));
-            return lastOrderKey;
-          }
-
-          function updatePrimary(id) {
-            if (!list) return;
-            const tiles = list.querySelectorAll('[data-gallery-tile]');
-            tiles.forEach(tile => {
-              const btn = tile.querySelector('[data-gallery-action="primary"]');
-              const isPrimary = tile.dataset.imageId === String(id);
-              tile.classList.toggle('is-primary', isPrimary);
-              if (btn) {
-                btn.disabled = isPrimary;
-                btn.textContent = isPrimary ? 'Em destaque' : 'Tornar destaque';
-              }
-            });
-          }
-
-          function request(url, options) {
-            const baseHeaders = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
-            const merged = Object.assign({}, options || {});
-            merged.headers = Object.assign({}, baseHeaders, merged.headers || {});
-            return fetch(url, merged).then(resp => {
-              if (!resp.ok) {
-                return resp.json().catch(() => ({})).then(data => {
-                  const message = data && data.message ? data.message : 'Ocorreu um erro inesperado.';
-                  throw new Error(message);
-                });
-              }
-              return resp.json().catch(() => ({}));
-            });
-          }
-
-          function persistOrder() {
-            if (!list) return;
-            const tiles = Array.from(list.querySelectorAll('[data-gallery-tile]'));
-            if (!tiles.length) {
-              refreshOrderKey();
-              return;
-            }
-            const payload = tiles.map((tile, index) => ({ id: Number(tile.dataset.imageId), position: index + 1 }));
-            const key = JSON.stringify(payload.map(item => item.id));
-            if (key === lastOrderKey) return;
-            lastOrderKey = key;
-            request('/admin/units/' + unitId + '/images/reorder', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ order: payload })
-            })
-              .then(data => {
-                refreshOrderKey();
-                showFlash(data && data.message ? data.message : 'Ordem atualizada.', 'success');
-                if (data && data.primaryId) updatePrimary(data.primaryId);
-              })
-              .catch(err => {
-                refreshOrderKey();
-                showFlash(err.message || 'Não foi possível atualizar a ordem.', 'danger');
+            function escapeHtml(value) {
+              return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+                switch (char) {
+                  case '&':
+                    return '&amp;';
+                  case '<':
+                    return '&lt;';
+                  case '>':
+                    return '&gt;';
+                  case '"':
+                    return '&quot;';
+                  case ''':
+                    return '&#39;';
+                  default:
+                    return char;
+                }
               });
+            }
+
+            function formatPresetLabel(icon, quantity) {
+              const preset = featurePresetMap[icon];
+              const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+              if (!preset) return String(safeQuantity);
+              const noun = safeQuantity === 1 ? preset.singular : preset.plural;
+              return `${safeQuantity} ${noun}`;
+            }
+
+            function initFeatureBuilder(root) {
+              if (!root || root.dataset.featureBuilderReady === 'true') return;
+              const select = root.querySelector('[data-feature-select]');
+              const quantityInput = root.querySelector('[data-feature-quantity]');
+              const addButton = root.querySelector('[data-feature-add]');
+              const list = root.querySelector('[data-feature-list]');
+              const output = root.querySelector('[data-feature-output]');
+              if (!select || !quantityInput || !addButton || !list || !output) {
+                return;
+              }
+
+              const emptyText = list.getAttribute('data-empty-text') || '';
+              const entries = [];
+
+              function render() {
+                if (!entries.length) {
+                  list.innerHTML = emptyText
+                    ? `<li class="feature-builder__empty">${escapeHtml(emptyText)}</li>`
+                    : '';
+                  return;
+                }
+                list.innerHTML = entries
+                  .map((entry, index) => {
+                    if (entry.raw) {
+                      return `
+                        <li class="feature-builder__item feature-builder__item--legacy" data-feature-item data-index="${index}">
+                          <span>${escapeHtml(entry.raw)}</span>
+                          <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover entrada personalizada">×</button>
+                        </li>
+                      `;
+                    }
+                    const label = formatPresetLabel(entry.icon, entry.quantity);
+                    return `
+                      <li class="feature-builder__item" data-feature-item data-index="${index}">
+                        <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${entry.icon}"></i></span>
+                        <span>${escapeHtml(label)}</span>
+                        <button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ${escapeHtml(label)}">×</button>
+                      </li>
+                    `;
+                  })
+                  .join('');
+                if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                  window.lucide.createIcons({ root: list });
+                }
+              }
+
+              function serializeEntry(entry) {
+                if (entry.raw) return entry.raw;
+                return `${entry.icon}|${formatPresetLabel(entry.icon, entry.quantity)}`;
+              }
+
+              function sync() {
+                output.value = entries.map(serializeEntry).join('
+');
+                render();
+              }
+
+              function upsertEntry(icon, quantity) {
+                if (!icon) return;
+                const safeIcon = String(icon).toLowerCase();
+                const parsedQuantity = Number.parseInt(quantity, 10);
+                const safeQuantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
+                const existingIndex = entries.findIndex(entry => !entry.raw && entry.icon === safeIcon);
+                if (existingIndex >= 0) {
+                  entries[existingIndex].quantity = safeQuantity;
+                } else {
+                  entries.push({ icon: safeIcon, quantity: safeQuantity });
+                }
+              }
+
+              const initialRaw = String(output.value || '');
+              if (initialRaw.trim()) {
+                initialRaw
+                  .split(/?
+/)
+                  .map(line => line.trim())
+                  .filter(Boolean)
+                  .forEach(line => {
+                    const pipeIndex = line.indexOf('|');
+                    if (pipeIndex > -1) {
+                      const icon = line.slice(0, pipeIndex).trim().toLowerCase();
+                      const label = line.slice(pipeIndex + 1).trim();
+                      if (featurePresetMap[icon]) {
+                        const match = label.match(/^(\d+)/);
+                        const quantity = match ? Number.parseInt(match[1], 10) : 1;
+                        upsertEntry(icon, quantity);
+                        return;
+                      }
+                    }
+                    entries.push({ raw: line });
+                  });
+                sync();
+              } else {
+                render();
+              }
+
+              addButton.addEventListener('click', () => {
+                const icon = select.value;
+                if (!icon) {
+                  select.focus();
+                  return;
+                }
+                const quantity = Number.parseInt(quantityInput.value, 10);
+                upsertEntry(icon, quantity);
+                sync();
+                select.value = '';
+                quantityInput.value = '1';
+              });
+
+              quantityInput.addEventListener('change', () => {
+                const parsed = Number.parseInt(quantityInput.value, 10);
+                if (!Number.isFinite(parsed) || parsed < 1) {
+                  quantityInput.value = '1';
+                }
+              });
+
+              list.addEventListener('click', event => {
+                const trigger = event.target.closest('[data-feature-remove]');
+                if (!trigger) return;
+                const item = trigger.closest('[data-feature-item]');
+                if (!item) return;
+                const index = Number.parseInt(item.getAttribute('data-index'), 10);
+                if (Number.isInteger(index)) {
+                  entries.splice(index, 1);
+                  sync();
+                }
+              });
+
+              root.dataset.featureBuilderReady = 'true';
+            }
+
+            function initFeatureBuilders() {
+              document.querySelectorAll('[data-feature-builder]').forEach(initFeatureBuilder);
+            }
+
+            window.__initFeatureBuilders = initFeatureBuilders;
+            if (!window.__featureBuilderPresets) {
+              window.__featureBuilderPresets = featurePresets;
+            }
+          } else if (!window.__featureBuilderPresets) {
+            window.__featureBuilderPresets = featurePresets;
           }
 
-          if (list) {
-            list.addEventListener('dragstart', event => {
+          document.addEventListener('DOMContentLoaded', () => {
+            if (typeof window.__initFeatureBuilders === 'function') {
+              window.__initFeatureBuilders();
+            }
+
+            const manager = document.querySelector('[data-gallery-manager]');
+            if (!manager) return;
+            const list = manager.querySelector('[data-gallery-list]');
+            const emptyState = manager.querySelector('[data-gallery-empty]');
+            const flash = manager.querySelector('[data-gallery-flash]');
+            const unitId = manager.getAttribute('data-unit-id');
+            let flashTimer = null;
+            let dragItem = null;
+            let lastOrderKey = list
+              ? JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId))
+              : '[]';
+
+            function showFlash(message, variant) {
+              if (!flash) return;
+              flash.textContent = message;
+              flash.setAttribute('data-variant', variant || 'info');
+              flash.hidden = false;
+              if (flashTimer) window.clearTimeout(flashTimer);
+              flashTimer = window.setTimeout(() => {
+                flash.hidden = true;
+              }, 2600);
+            }
+
+            function syncEmpty() {
+              if (!list || !emptyState) return;
+              const isEmpty = list.querySelectorAll('[data-gallery-tile]').length === 0;
+              list.classList.toggle('hidden', isEmpty);
+              emptyState.classList.toggle('hidden', !isEmpty);
+            }
+
+            function refreshOrderKey() {
+              if (!list) {
+                lastOrderKey = '[]';
+                return;
+              }
+              lastOrderKey = JSON.stringify(Array.from(list.querySelectorAll('[data-gallery-tile]')).map(el => el.dataset.imageId));
+            }
+
+            function persistOrder(newOrder) {
+              if (!Array.isArray(newOrder) || !newOrder.length) return Promise.resolve();
+              return fetch(`/admin/units/${unitId}/images/reorder`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Requested-With': 'fetch'
+                },
+                body: JSON.stringify({ order: newOrder })
+              })
+                .then(res => {
+                  if (!res.ok) throw new Error('Falha ao guardar a ordenação');
+                  return res.json();
+                })
+                .then(data => {
+                  if (data && data.success) {
+                    showFlash('Ordem atualizada com sucesso.', 'success');
+                  } else {
+                    throw new Error('Resposta inválida do servidor');
+                  }
+                })
+                .catch(err => {
+                  showFlash(err.message || 'Erro ao guardar a ordenação.', 'danger');
+                  refreshOrderKey();
+                });
+            }
+
+            function handlePrimary(imageId) {
+              const button = manager.querySelector(`[data-image-id="${imageId}"] [data-gallery-action="primary"]`);
+              if (button) button.disabled = true;
+              fetch(`/admin/units/${unitId}/images/${imageId}/primary`, {
+                method: 'POST',
+                headers: {
+                  'X-Requested-With': 'fetch'
+                }
+              })
+                .then(res => {
+                  if (!res.ok) throw new Error('Não foi possível atualizar o destaque');
+                  return res.json();
+                })
+                .then(data => {
+                  if (!data || !data.success) throw new Error('Resposta inválida do servidor');
+                  Array.from(manager.querySelectorAll('[data-gallery-tile]')).forEach(tile => {
+                    tile.classList.toggle('is-primary', tile.dataset.imageId === imageId);
+                    const primaryButton = tile.querySelector('[data-gallery-action="primary"]');
+                    if (!primaryButton) return;
+                    if (tile.dataset.imageId === imageId) {
+                      primaryButton.textContent = 'Em destaque';
+                      primaryButton.disabled = true;
+                    } else {
+                      primaryButton.textContent = 'Tornar destaque';
+                      primaryButton.disabled = false;
+                    }
+                  });
+                  showFlash('Imagem destacada atualizada.', 'success');
+                })
+                .catch(err => {
+                  showFlash(err.message || 'Falha ao atualizar destaque.', 'danger');
+                  if (button) button.disabled = false;
+                });
+            }
+
+            function handleDelete(imageId) {
+              if (!window.confirm('Remover esta imagem?')) return;
+              fetch(`/admin/units/${unitId}/images/${imageId}/delete`, {
+                method: 'POST',
+                headers: {
+                  'X-Requested-With': 'fetch'
+                }
+              })
+                .then(res => {
+                  if (!res.ok) throw new Error('Não foi possível remover a imagem');
+                  return res.json();
+                })
+                .then(data => {
+                  if (!data || !data.success) throw new Error('Resposta inválida do servidor');
+                  const tile = manager.querySelector(`[data-gallery-tile][data-image-id="${imageId}"]`);
+                  if (tile) tile.remove();
+                  showFlash('Imagem removida.', 'success');
+                  syncEmpty();
+                  refreshOrderKey();
+                })
+                .catch(err => {
+                  showFlash(err.message || 'Erro ao remover imagem.', 'danger');
+                });
+            }
+
+            function handleDragStart(event) {
               const tile = event.target.closest('[data-gallery-tile]');
               if (!tile) return;
               dragItem = tile;
               tile.classList.add('dragging');
               event.dataTransfer.effectAllowed = 'move';
-              try { event.dataTransfer.setData('text/plain', tile.dataset.imageId); } catch (_) {}
-            });
+              event.dataTransfer.setData('text/plain', tile.dataset.imageId);
+            }
 
-            list.addEventListener('dragover', event => {
-              if (!dragItem) return;
+            function handleDragOver(event) {
               event.preventDefault();
-              const target = event.target.closest('[data-gallery-tile]');
-              if (!target || target === dragItem) return;
-              const rect = target.getBoundingClientRect();
-              const after = (event.clientY - rect.top) > rect.height / 2 || (event.clientX - rect.left) > rect.width / 2;
-              if (after) {
-                target.after(dragItem);
+              if (!dragItem || !list) return;
+              const tile = event.target.closest('[data-gallery-tile]');
+              if (!tile || tile === dragItem) return;
+              const tiles = Array.from(list.querySelectorAll('[data-gallery-tile]'));
+              const dragIndex = tiles.indexOf(dragItem);
+              const hoverIndex = tiles.indexOf(tile);
+              if (dragIndex < hoverIndex) {
+                list.insertBefore(tile, dragItem);
               } else {
-                target.before(dragItem);
+                list.insertBefore(dragItem, tile);
               }
-            });
+            }
 
-            list.addEventListener('drop', event => {
-              if (!dragItem) return;
+            function handleDragEnd(event) {
               event.preventDefault();
-            });
-
-            list.addEventListener('dragend', () => {
               if (!dragItem) return;
               dragItem.classList.remove('dragging');
               dragItem = null;
-              syncEmpty();
-              persistOrder();
-            });
-          }
-
-          manager.addEventListener('click', event => {
-            const actionBtn = event.target.closest('[data-gallery-action]');
-            if (!actionBtn) return;
-            const tile = actionBtn.closest('[data-gallery-tile]');
-            if (!tile) return;
-            const imageId = tile.dataset.imageId;
-            const action = actionBtn.getAttribute('data-gallery-action');
-            if (action === 'delete') {
-              if (!window.confirm('Remover esta imagem da galeria?')) return;
-              actionBtn.disabled = true;
-              request('/admin/images/' + imageId + '/delete', { method: 'POST' })
-                .then(data => {
-                  tile.remove();
-                  syncEmpty();
-                  refreshOrderKey();
-                  showFlash(data && data.message ? data.message : 'Imagem removida.', 'info');
-                  if (data && data.primaryId) updatePrimary(data.primaryId);
-                })
-                .catch(err => {
-                  actionBtn.disabled = false;
-                  showFlash(err.message || 'Não foi possível remover a imagem.', 'danger');
-                });
-            } else if (action === 'primary') {
-              actionBtn.disabled = true;
-              request('/admin/images/' + imageId + '/primary', { method: 'POST' })
-                .then(data => {
-                  updatePrimary(imageId);
-                  showFlash(data && data.message ? data.message : 'Imagem definida como destaque.', 'success');
-                })
-                .catch(err => {
-                  actionBtn.disabled = false;
-                  showFlash(err.message || 'Não foi possível atualizar a imagem.', 'danger');
-                });
+              if (!list) return;
+              const newOrder = Array.from(list.querySelectorAll('[data-gallery-tile]')).map(tile => tile.dataset.imageId);
+              const newOrderKey = JSON.stringify(newOrder);
+              if (newOrderKey === lastOrderKey) return;
+              lastOrderKey = newOrderKey;
+              persistOrder(newOrder).then(syncEmpty);
             }
-          });
 
-          syncEmpty();
-        });
+            function handleKeydown(event) {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              const tile = event.target.closest('[data-gallery-tile]');
+              if (!tile || !list) return;
+              const tiles = Array.from(list.querySelectorAll('[data-gallery-tile]'));
+              const currentIndex = tiles.indexOf(tile);
+              const direction = event.shiftKey ? -1 : 1;
+              const swapIndex = currentIndex + direction;
+              if (swapIndex < 0 || swapIndex >= tiles.length) return;
+              event.preventDefault();
+              const swapTile = tiles[swapIndex];
+              if (!swapTile) return;
+              if (direction > 0) {
+                list.insertBefore(swapTile, tile);
+              } else {
+                list.insertBefore(tile, swapTile);
+              }
+              const newOrder = Array.from(list.querySelectorAll('[data-gallery-tile]')).map(t => t.dataset.imageId);
+              const newOrderKey = JSON.stringify(newOrder);
+              if (newOrderKey !== lastOrderKey) {
+                lastOrderKey = newOrderKey;
+                persistOrder(newOrder).then(syncEmpty);
+              }
+            }
+
+            manager.addEventListener('click', event => {
+              const action = event.target.closest('[data-gallery-action]');
+              if (!action) return;
+              const tile = action.closest('[data-gallery-tile]');
+              if (!tile) return;
+              const imageId = tile.dataset.imageId;
+              if (!imageId) return;
+              const type = action.getAttribute('data-gallery-action');
+              if (type === 'primary') {
+                handlePrimary(imageId);
+              } else if (type === 'delete') {
+                handleDelete(imageId);
+              }
+            });
+
+            manager.addEventListener('dragstart', handleDragStart);
+            manager.addEventListener('dragover', handleDragOver);
+            manager.addEventListener('dragend', handleDragEnd);
+            manager.addEventListener('keydown', handleKeydown);
+            syncEmpty();
+          });
+        })();
       </script>
+
     `
   }));
 });
