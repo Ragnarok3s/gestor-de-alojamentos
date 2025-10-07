@@ -3296,10 +3296,30 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
             function showFlash(message, variant) {
               if (!flash) return;
-              return fetch('/admin/units/' + unitId + '/images/reorder', {
+              if (!unitId) {
+                showFlash('Unidade inválida.', 'danger');
+                return Promise.resolve();
+              }
+              const reorderUrl = '/admin/units/' + encodeURIComponent(unitId) + '/images/reorder';
+              return fetch(reorderUrl, {
               const button = manager.querySelector('[data-image-id="' + imageId + '"] [data-gallery-action="primary"]');
-              fetch('/admin/units/' + unitId + '/images/' + imageId + '/primary', {
-              fetch('/admin/units/' + unitId + '/images/' + imageId + '/delete', {
+              if (!unitId) {
+                showFlash('Unidade inválida.', 'danger');
+                if (button) button.disabled = false;
+                return;
+              }
+              const encodedImageId = encodeURIComponent(imageId);
+              const primaryUrl =
+                '/admin/units/' + encodeURIComponent(unitId) + '/images/' + encodedImageId + '/primary';
+              fetch(primaryUrl, {
+              if (!unitId) {
+                showFlash('Unidade inválida.', 'danger');
+                return;
+              }
+              const encodedImageId = encodeURIComponent(imageId);
+              const deleteUrl =
+                '/admin/units/' + encodeURIComponent(unitId) + '/images/' + encodedImageId + '/delete';
+              fetch(deleteUrl, {
                   const tile = manager.querySelector('[data-gallery-tile][data-image-id="' + imageId + '"]');
                 flash.hidden = true;
               }, 2600);
