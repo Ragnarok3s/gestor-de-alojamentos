@@ -23,6 +23,7 @@ module.exports = function registerBackoffice(app, context) {
     userCan,
     logActivity,
     logChange,
+    geocodeAddress,
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
@@ -189,6 +190,17 @@ module.exports = function registerBackoffice(app, context) {
       .replace(/&/g, '\\u0026')
       .replace(/\u2028/g, '\\u2028')
       .replace(/\u2029/g, '\\u2029');
+  }
+
+  function propertyLocationLabel(property) {
+    if (!property) return '';
+    const parts = [];
+    const locality = typeof property.locality === 'string' ? property.locality.trim() : '';
+    const district = typeof property.district === 'string' ? property.district.trim() : '';
+    if (locality) parts.push(locality);
+    if (district) parts.push(district);
+    if (parts.length) return parts.join(', ');
+    return property.location || '';
   }
 
   function defaultHousekeepingTitle(taskType, booking) {
@@ -1253,160 +1265,288 @@ module.exports = function registerBackoffice(app, context) {
     res.redirect(resolveHousekeepingRedirect(req, '/admin/limpeza'));
   });
 
+  
   app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
-  const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
-  const unitsRaw = db.prepare(
-    `SELECT u.*, p.name as property_name
-       FROM units u
-       JOIN properties p ON p.id = u.property_id
-      ORDER BY p.name, u.name`
-  ).all();
-  const units = unitsRaw.map(u => ({ ...u, unit_type: deriveUnitType(u) }));
-  const recentBookings = db.prepare(
-    `SELECT b.*, u.name as unit_name, p.name as property_name
-       FROM bookings b
-       JOIN units u ON u.id = b.unit_id
-       JOIN properties p ON p.id = u.property_id
-      ORDER BY b.created_at DESC
-      LIMIT 12`
-  ).all();
+    const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
+    const unitsRaw = db
+      .prepare(
+        `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
+         FROM units u
+         JOIN properties p ON p.id = u.property_id
+        ORDER BY p.name, u.name`
+      )
+      .all();
+    const units = unitsRaw.map(u => {
+      const lat = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
+      const lon = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
+      return {
+        ...u,
+        unit_type: deriveUnitType(u),
+        latitude: Number.isFinite(lat) ? lat : null,
+        longitude: Number.isFinite(lon) ? lon : null
+      };
+    });
+    const propertyUnitMap = new Map();
+    props.forEach(p => propertyUnitMap.set(p.id, []));
+    units.forEach(u => {
+      if (!propertyUnitMap.has(u.property_id)) propertyUnitMap.set(u.property_id, []);
+      propertyUnitMap.get(u.property_id).push(u);
+    });
 
-  const automationData = ensureAutomationFresh(5) || automationCache;
-  const automationMetrics = automationData.metrics || {};
-  const automationNotifications = automationData.notifications || [];
-  const automationSuggestions = automationData.tariffSuggestions || [];
-  const automationBlocks = automationData.generatedBlocks || [];
-  const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
-  const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
-  const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
-  const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
-  const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
+    const propertyRevenueRows = db
+      .prepare(
+        `SELECT p.id,
+                p.name,
+                p.locality,
+                p.district,
+                SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END) AS confirmed_revenue_cents,
+                SUM(CASE WHEN b.status = 'PENDING' THEN b.total_cents ELSE 0 END) AS pending_revenue_cents,
+                COUNT(DISTINCT u.id) AS unit_count
+           FROM properties p
+           LEFT JOIN units u ON u.property_id = p.id
+           LEFT JOIN bookings b ON b.unit_id = u.id
+          GROUP BY p.id
+          ORDER BY p.name`
+      )
+      .all();
 
-  const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b, 'pt', { sensitivity: 'base' })
-  );
-  const monthOptions = [];
-  const monthBase = dayjs().startOf('month');
-  for (let i = 0; i < 12; i++) {
-    const m = monthBase.subtract(i, 'month');
-    monthOptions.push({ value: m.format('YYYY-MM'), label: capitalizeMonth(m.format('MMMM YYYY')) });
-  }
-  const defaultMonthValue = monthOptions.length ? monthOptions[0].value : dayjs().format('YYYY-MM');
-  const operationalDefault = computeOperationalDashboard({ month: defaultMonthValue });
-  const operationalConfig = {
-    filters: {
-      months: monthOptions,
-      properties: props.map(p => ({ id: p.id, name: p.name })),
-      unitTypes: unitTypeOptions
-    },
-    defaults: {
-      month: operationalDefault.month,
-      propertyId: operationalDefault.filters.propertyId ? String(operationalDefault.filters.propertyId) : '',
-      unitType: operationalDefault.filters.unitType || ''
-    },
-    initialData: operationalDefault
-  };
-  const operationalConfigJson = jsonScriptPayload(operationalConfig);
+    const recentBookings = db
+      .prepare(
+        `SELECT b.*, u.name as unit_name, p.name as property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          ORDER BY b.created_at DESC
+          LIMIT 12`
+      )
+      .all();
 
-  const notificationsHtml = automationNotifications.length
-    ? `<ul class="space-y-3">${automationNotifications.map(n => {
-        const styles = automationSeverityStyle(n.severity);
-        const ts = n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun;
-        return `
-          <li class="border-l-4 pl-3 ${styles.border} bg-white/40 rounded-sm">
-            <div class="text-[11px] text-slate-400">${esc(ts)}</div>
-            <div class="text-sm font-semibold text-slate-800">${esc(n.title || '')}</div>
-            <div class="text-sm text-slate-600">${esc(n.message || '')}</div>
-          </li>`;
-      }).join('')}</ul>`
-    : '<p class="text-sm text-slate-500">Sem alertas no momento.</p>';
+    const automationData = ensureAutomationFresh(5) || automationCache;
+    const automationMetrics = automationData.metrics || {};
+    const automationNotifications = automationData.notifications || [];
+    const automationSuggestions = automationData.tariffSuggestions || [];
+    const automationBlocks = automationData.generatedBlocks || [];
+    const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
+    const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
+    const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
+    const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
+    const automationRevenue30 = automationData.revenue ? automationData.revenue.next30 || 0 : 0;
+    const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
 
-  const suggestionsHtml = automationSuggestions.length
-    ? `<ul class="space-y-2">${automationSuggestions.map(s => {
-        const occPct = Math.round((s.occupancyRate || 0) * 100);
-        const pendLabel = s.pendingCount ? ` <span class=\"text-xs text-slate-500\">(+${s.pendingCount} pend)</span>` : '';
-        return `
-          <li class="border rounded-lg p-3 bg-slate-50">
-            <div class="flex items-center justify-between text-sm font-semibold text-slate-700">
-              <span>${dayjs(s.date).format('DD/MM')}</span>
-              <span>${occPct}% ocup.</span>
-            </div>
-            <div class="text-sm text-slate-600">Sugerir +${s.suggestedIncreasePct}% no preço base · ${s.confirmedCount}/${totalUnitsCount} confirmadas${pendLabel}</div>
-          </li>`;
-      }).join('')}</ul>`
-    : '<p class="text-sm text-slate-500">Sem datas de alta procura.</p>';
+    const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'pt', { sensitivity: 'base' })
+    );
+    const monthOptions = [];
+    const monthBase = dayjs().startOf('month');
+    for (let i = 0; i < 12; i++) {
+      const m = monthBase.subtract(i, 'month');
+      monthOptions.push({ value: m.format('YYYY-MM'), label: capitalizeMonth(m.format('MMMM YYYY')) });
+    }
+    const defaultMonthValue = monthOptions.length ? monthOptions[0].value : dayjs().format('YYYY-MM');
+    const operationalDefault = computeOperationalDashboard({ month: defaultMonthValue });
+    const operationalConfig = {
+      filters: {
+        months: monthOptions,
+        properties: props.map(p => ({ id: p.id, name: p.name })),
+        unitTypes: unitTypeOptions
+      },
+      defaults: {
+        month: operationalDefault.month,
+        propertyId: operationalDefault.filters.propertyId ? String(operationalDefault.filters.propertyId) : '',
+        unitType: operationalDefault.filters.unitType || ''
+      },
+      initialData: operationalDefault
+    };
+    const operationalConfigJson = jsonScriptPayload(operationalConfig);
 
-  const blockEventsHtml = automationBlocks.length
-    ? `<ul class="space-y-2">${automationBlocks.slice(-6).reverse().map(evt => {
-        const label = evt.type === 'minstay' ? 'Estadia mínima' : 'Sequência cheia';
-        const extra = evt.extra_nights ? ` · +${evt.extra_nights} noite(s)` : '';
-        return `
-          <li class="border rounded-lg p-3 bg-white/40">
-            <div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(label)}</div>
-            <div class="text-sm font-semibold text-slate-800">${esc(evt.property_name)} · ${esc(evt.unit_name)}</div>
-            <div class="text-sm text-slate-600">${esc(formatDateRangeShort(evt.start, evt.end))}${extra}</div>
-          </li>`;
-      }).join('')}</ul>`
-    : '<p class="text-sm text-slate-500">Nenhum bloqueio automático recente.</p>';
+    const financialTotals =
+      db
+        .prepare(
+          `SELECT
+              SUM(CASE WHEN status = 'CONFIRMED' THEN total_cents ELSE 0 END) AS confirmed_cents,
+              SUM(CASE WHEN status = 'PENDING' THEN total_cents ELSE 0 END) AS pending_cents,
+              SUM(CASE WHEN status = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed_count,
+              SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count
+           FROM bookings`
+        )
+        .get() || {};
+    const confirmedRevenueCents = financialTotals.confirmed_cents || 0;
+    const pendingRevenueCents = financialTotals.pending_cents || 0;
+    const confirmedBookingsCount = financialTotals.confirmed_count || 0;
+    const pendingBookingsCount = financialTotals.pending_count || 0;
+    const averageTicketCents = confirmedBookingsCount ? Math.round(confirmedRevenueCents / confirmedBookingsCount) : 0;
 
-  const dailyRows = automationDaily.length
-    ? automationDaily.map(d => {
-        const occPct = Math.round((d.occupancyRate || 0) * 100);
-        const arrLabel = d.arrivalsPending ? `${d.arrivalsConfirmed} <span class=\"text-xs text-slate-500\">(+${d.arrivalsPending} pend)</span>` : String(d.arrivalsConfirmed);
-        const depLabel = d.departuresPending ? `${d.departuresConfirmed} <span class=\"text-xs text-slate-500\">(+${d.departuresPending} pend)</span>` : String(d.departuresConfirmed);
-        const pendingBadge = d.pendingCount ? `<span class=\"text-xs text-slate-500 ml-1\">(+${d.pendingCount} pend)</span>` : '';
-        return `
-          <tr>
-            <td class="py-2 text-sm" data-label="Dia"><span class="table-cell-value">${dayjs(d.date).format('DD/MM')}</span></td>
-            <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
-            <td class="py-2 text-sm" data-label="Reservas"><span class="table-cell-value">${d.confirmedCount}${pendingBadge}</span></td>
-            <td class="py-2 text-sm" data-label="Check-in"><span class="table-cell-value">${arrLabel}</span></td>
-            <td class="py-2 text-sm" data-label="Check-out"><span class="table-cell-value">${depLabel}</span></td>
-          </tr>`;
-      }).join('')
-    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados para o período.</td></tr>';
+    const pendingBookings = db
+      .prepare(
+        `SELECT b.id, b.guest_name, b.created_at, b.checkin, b.checkout, u.name AS unit_name, p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.status = 'PENDING'
+          ORDER BY b.created_at DESC
+          LIMIT 10`
+      )
+      .all();
 
-  const weeklyRows = automationWeekly.length
-    ? automationWeekly.map(w => {
-        const occPct = Math.round((w.occupancyRate || 0) * 100);
-        const pending = w.pendingNights ? ` <span class=\"text-xs text-slate-500\">(+${w.pendingNights} pend)</span>` : '';
-        const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
-        return `
-          <tr>
-            <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} → ${endLabel}</span></td>
-            <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
-            <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
-          </tr>`;
-      }).join('')
-    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados agregados.</td></tr>';
+    const canManageProperties = userCan(req.user, 'properties.manage');
+    const canViewAutomation = userCan(req.user, 'automation.view');
+    const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
+    const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
+    const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
+    const canManageUsers = userCan(req.user, 'users.manage');
+    const canViewCalendar = userCan(req.user, 'calendar.view');
 
-  const onboardingCard = html`
-      <section class="onboarding-card mb-6">
-        <h2 class="text-lg font-semibold text-slate-800 mb-2">Guia rápido para começar</h2>
-        <p class="text-sm text-slate-600 mb-4">Três ações asseguram que a equipa trabalha com uma experiência consistente e profissional.</p>
-        <ol class="onboarding-steps">
-          <li>
-            <strong>Personalize a identidade.</strong>
-            <p>Ajuste cores e carregue o logotipo em <a class="underline" href="/admin/identidade-visual">Identidade visual</a> para refletir a marca em todo o portal.</p>
-          </li>
-          <li>
-            <strong>Complete propriedades e unidades.</strong>
-            <p>Revise descrições, fotos e tarifas para que cada reserva tenha contexto completo.</p>
-          </li>
-          <li>
-            <strong>Defina a equipa.</strong>
-            <p>Convide utilizadores e atribua permissões em <a class="underline" href="/admin/utilizadores">Utilizadores</a>, garantindo que cada perfil vê apenas o necessário.</p>
-          </li>
-        </ol>
-      </section>
-  `;
+    let housekeepingSummary = null;
+    let housekeepingCounts = null;
+    let housekeepingPending = [];
+    let housekeepingInProgress = [];
+    let housekeepingCompleted = [];
+    if (canSeeHousekeeping) {
+      housekeepingSummary = computeHousekeepingBoard({ horizonDays: 3, futureWindowDays: 21 });
+      const tasks = Array.isArray(housekeepingSummary.tasks) ? housekeepingSummary.tasks : [];
+      housekeepingCounts = {
+        pending: tasks.filter(task => task.status === 'pending').length,
+        inProgress: tasks.filter(task => task.status === 'in_progress').length,
+        highPriority: tasks.filter(task => task.priority === 'alta' && task.status !== 'completed').length,
+        completedRecent: 0
+      };
+      housekeepingPending = tasks.filter(task => task.status === 'pending').slice(0, 6);
+      housekeepingInProgress = tasks.filter(task => task.status === 'in_progress').slice(0, 6);
+      housekeepingCompleted = getHousekeepingTasks({
+        statuses: ['completed'],
+        includeCompleted: true,
+        limit: 40,
+        order: 'completed_desc'
+      })
+        .filter(task => task.completed_at && dayjs(task.completed_at).isAfter(dayjs().subtract(7, 'day')))
+        .slice(0, 6);
+      housekeepingCounts.completedRecent = housekeepingCompleted.length;
+    }
 
-  const automationCard = html`
-      <section class="card p-4 mb-6 space-y-6">
+    const userRows = canManageUsers
+      ? db.prepare('SELECT id, username, role FROM users ORDER BY username').all()
+      : [];
+
+    const calendarPreview = canViewCalendar
+      ? db
+          .prepare(
+            `SELECT b.id, b.guest_name, b.checkin, b.checkout, b.status, u.name AS unit_name, p.name AS property_name
+               FROM bookings b
+               JOIN units u ON u.id = b.unit_id
+               JOIN properties p ON p.id = u.property_id
+              WHERE b.status IN ('CONFIRMED','PENDING')
+                AND b.checkout >= date('now')
+              ORDER BY b.checkin
+              LIMIT 12`
+          )
+          .all()
+      : [];
+
+    const notifications = [];
+    pendingBookings.forEach(b => {
+      notifications.push({
+        title: 'Reserva pendente',
+        message: `${b.guest_name || 'Sem hóspede'} · ${b.property_name} · ${b.unit_name}`,
+        meta: dayjs(b.created_at).format('DD/MM HH:mm'),
+        href: `/admin/bookings/${b.id}`,
+        severity: 'warning'
+      });
+    });
+    automationNotifications.slice(0, 5).forEach(n => {
+      notifications.push({
+        title: n.title || 'Alerta operacional',
+        message: n.message || '',
+        meta: n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun,
+        href: '#estatisticas',
+        severity: n.severity === 'danger' || n.severity === 'critical' ? 'danger' : n.severity === 'warning' ? 'warning' : ''
+      });
+    });
+
+    const navItems = [
+      { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
+      { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
+      { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
+      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', allowed: canSeeHousekeeping },
+      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
+      { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
+      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
+    ];
+    const defaultPane = navItems.find(item => item.allowed)?.id || 'overview';
+    const navButtonsHtml = navItems
+      .map(item => {
+        const classes = ['bo-tab'];
+        if (item.id === defaultPane) classes.push('is-active');
+        const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
+        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}><i data-lucide="${item.icon}" class="w-5 h-5"></i><span>${esc(item.label)}</span></button>`;
+      })
+      .join('');
+
+    const propertiesListHtml = props.length
+      ? `<ul class="space-y-3">${props
+          .map(p => {
+            const location = propertyLocationLabel(p);
+            const propertyUnits = propertyUnitMap.get(p.id) || [];
+            const revenueRow = propertyRevenueRows.find(row => row.id === p.id);
+            const revenueLabel = revenueRow ? eur(revenueRow.confirmed_revenue_cents || 0) : '0,00';
+            return `
+              <li class="rounded-xl border border-amber-200 bg-white/80 p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="font-semibold text-slate-800">${esc(p.name)}</div>
+                    ${location ? `<div class="text-xs text-amber-700">${esc(location)}</div>` : ''}
+                  </div>
+                  <a class="btn btn-light text-sm" href="/admin/properties/${p.id}">Abrir</a>
+                </div>
+                <div class="text-xs text-amber-700 mt-2 flex flex-wrap gap-2">
+                  <span>Unidades: ${propertyUnits.length}</span>
+                  <span>Receita: € ${revenueLabel}</span>
+                </div>
+              </li>`;
+          })
+          .join('')}</ul>`
+      : '<p class="bo-empty">Sem propriedades registadas.</p>';
+
+    const unitsTableRows = units.length
+      ? units
+          .map(u => `
+            <tr>
+              <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
+              <td data-label="Unidade"><span class="table-cell-value">${esc(u.name)}</span></td>
+              <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
+              <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
+              <td data-label="Ações"><div class="table-cell-actions"><a class="text-slate-600 hover:text-slate-900 underline" href="/admin/units/${u.id}">Gerir</a></div></td>
+            </tr>`)
+          .join('')
+      : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
+
+    const propertiesRevenueTable = propertyRevenueRows.length
+      ? propertyRevenueRows
+          .map(row => {
+            const propertyUnits = propertyUnitMap.get(row.id) || [];
+            const unitList = propertyUnits.length
+              ? `<ul class="bo-property-units">${propertyUnits
+                  .map(unit => `<li>${esc(unit.name)} · € ${eur(unit.base_price_cents)}</li>`)
+                  .join('')}</ul>`
+              : '<div class="bo-empty">Sem unidades associadas.</div>';
+            return `
+              <tr>
+                <td data-label="Propriedade">
+                  <span class="table-cell-value font-semibold">${esc(row.name)}</span>
+                  ${row.locality || row.district ? `<span class="table-cell-muted">${esc(propertyLocationLabel(row))}</span>` : ''}
+                  ${unitList}
+                </td>
+                <td data-label="Receita total"><span class="table-cell-value">€ ${eur(row.confirmed_revenue_cents || 0)}</span></td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem dados de receita.</td></tr>';
+
+    const statisticsCard = html`
+      <div class="bo-card space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 class="text-lg font-semibold text-slate-800">Dashboard operacional</h2>
-            <p class="text-sm text-slate-600">Transforma os dados de ocupação em decisões imediatas.</p>
+            <h2 class="text-lg font-semibold text-slate-800">Painel estatístico</h2>
+            <p class="text-sm text-slate-600">Analisa ocupação, receita e tendências operacionais.</p>
             <div class="text-xs text-slate-400 mt-1">Última análise automática: ${automationLastRun}</div>
           </div>
           <form id="operational-filters" class="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
@@ -1420,20 +1560,24 @@ module.exports = function registerBackoffice(app, context) {
               <span>Propriedade</span>
               <select name="property_id" id="operational-filter-property" class="input">
                 <option value="">Todas</option>
-                ${props.map(p => {
-                  const selected = operationalDefault.filters.propertyId === p.id ? ' selected' : '';
-                  return `<option value="${p.id}"${selected}>${esc(p.name)}</option>`;
-                }).join('')}
+                ${props
+                  .map(p => {
+                    const selected = operationalDefault.filters.propertyId === p.id ? ' selected' : '';
+                    return `<option value="${p.id}"${selected}>${esc(p.name)}</option>`;
+                  })
+                  .join('')}
               </select>
             </label>
             <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
               <span>Tipo de unidade</span>
               <select name="unit_type" id="operational-filter-type" class="input">
                 <option value="">Todos</option>
-                ${unitTypeOptions.map(type => {
-                  const selected = operationalDefault.filters.unitType === type ? ' selected' : '';
-                  return `<option value="${esc(type)}"${selected}>${esc(type)}</option>`;
-                }).join('')}
+                ${unitTypeOptions
+                  .map(type => {
+                    const selected = operationalDefault.filters.unitType === type ? ' selected' : '';
+                    return `<option value="${esc(type)}"${selected}>${esc(type)}</option>`;
+                  })
+                  .join('')}
               </select>
             </label>
           </form>
@@ -1487,7 +1631,30 @@ module.exports = function registerBackoffice(app, context) {
                       <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
                     </tr>
                   </thead>
-                  <tbody>${dailyRows}</tbody>
+                  <tbody>${automationDaily.length
+                    ? automationDaily
+                        .map(d => {
+                          const occPct = Math.round((d.occupancyRate || 0) * 100);
+                          const arrLabel = d.arrivalsPending
+                            ? `${d.arrivalsConfirmed} <span class="text-xs text-slate-500">(+${d.arrivalsPending} pend)</span>`
+                            : String(d.arrivalsConfirmed);
+                          const depLabel = d.departuresPending
+                            ? `${d.departuresConfirmed} <span class="text-xs text-slate-500">(+${d.departuresPending} pend)</span>`
+                            : String(d.departuresConfirmed);
+                          const pendingBadge = d.pendingCount
+                            ? `<span class="text-xs text-slate-500 ml-1">(+${d.pendingCount} pend)</span>`
+                            : '';
+                          return `
+                            <tr>
+                              <td class="py-2 text-sm" data-label="Dia"><span class="table-cell-value">${dayjs(d.date).format('DD/MM')}</span></td>
+                              <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
+                              <td class="py-2 text-sm" data-label="Reservas"><span class="table-cell-value">${d.confirmedCount}${pendingBadge}</span></td>
+                              <td class="py-2 text-sm" data-label="Check-in"><span class="table-cell-value">${arrLabel}</span></td>
+                              <td class="py-2 text-sm" data-label="Check-out"><span class="table-cell-value">${depLabel}</span></td>
+                            </tr>`;
+                        })
+                        .join('')
+                    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados para o período.</td></tr>'}</tbody>
                 </table>
               </div>
             </section>
@@ -1504,7 +1671,21 @@ module.exports = function registerBackoffice(app, context) {
                       <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
                     </tr>
                   </thead>
-                  <tbody>${weeklyRows}</tbody>
+                  <tbody>${automationWeekly.length
+                    ? automationWeekly
+                        .map(w => {
+                          const occPct = Math.round((w.occupancyRate || 0) * 100);
+                          const pending = w.pendingNights ? ` <span class="text-xs text-slate-500">(+${w.pendingNights} pend)</span>` : '';
+                          const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
+                          return `
+                            <tr>
+                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} → ${endLabel}</span></td>
+                              <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
+                              <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
+                            </tr>`;
+                        })
+                        .join('')
+                    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados agregados.</td></tr>'}</tbody>
                 </table>
               </div>
             </section>
@@ -1513,19 +1694,62 @@ module.exports = function registerBackoffice(app, context) {
           <div class="space-y-6">
             <section class="rounded-xl border border-slate-200 bg-white p-4">
               <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
-              ${notificationsHtml}
+              ${automationNotifications.length
+                ? `<ul class="space-y-3">${automationNotifications
+                    .map(n => {
+                      const styles = automationSeverityStyle(n.severity);
+                      const ts = n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun;
+                      return `
+                        <li class="border-l-4 pl-3 ${styles.border} bg-white/40 rounded-sm">
+                          <div class="text-[11px] text-slate-400">${esc(ts)}</div>
+                          <div class="text-sm font-semibold text-slate-800">${esc(n.title || '')}</div>
+                          <div class="text-sm text-slate-600">${esc(n.message || '')}</div>
+                        </li>`;
+                    })
+                    .join('')}</ul>`
+                : '<p class="text-sm text-slate-500">Sem alertas no momento.</p>'}
             </section>
             <section class="rounded-xl border border-slate-200 bg-white p-4">
               <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
-              ${suggestionsHtml}
+              ${automationSuggestions.length
+                ? `<ul class="space-y-2">${automationSuggestions
+                    .map(s => {
+                      const occPct = Math.round((s.occupancyRate || 0) * 100);
+                      const pendLabel = s.pendingCount ? ` <span class="text-xs text-slate-500">(+${s.pendingCount} pend)</span>` : '';
+                      return `
+                        <li class="border rounded-lg p-3 bg-slate-50">
+                          <div class="flex items-center justify-between text-sm font-semibold text-slate-700">
+                            <span>${dayjs(s.date).format('DD/MM')}</span>
+                            <span>${occPct}% ocup.</span>
+                          </div>
+                          <div class="text-sm text-slate-600">Sugerir +${s.suggestedIncreasePct}% no preço base · ${s.confirmedCount}/${totalUnitsCount} confirmadas${pendLabel}</div>
+                        </li>`;
+                    })
+                    .join('')}</ul>`
+                : '<p class="text-sm text-slate-500">Sem datas de alta procura.</p>'}
             </section>
             <section class="rounded-xl border border-slate-200 bg-white p-4">
               <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
-              ${blockEventsHtml}
+              ${automationBlocks.length
+                ? `<ul class="space-y-2">${automationBlocks
+                    .slice(-6)
+                    .reverse()
+                    .map(evt => {
+                      const label = evt.type === 'minstay' ? 'Estadia mínima' : 'Sequência cheia';
+                      const extra = evt.extra_nights ? ` · +${evt.extra_nights} noite(s)` : '';
+                      return `
+                        <li class="border rounded-lg p-3 bg-white/40">
+                          <div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(label)}</div>
+                          <div class="text-sm font-semibold text-slate-800">${esc(evt.property_name)} · ${esc(evt.unit_name)}</div>
+                          <div class="text-sm text-slate-600">${esc(formatDateRangeShort(evt.start, evt.end))}${extra}</div>
+                        </li>`;
+                    })
+                    .join('')}</ul>`
+                : '<p class="text-sm text-slate-500">Nenhum bloqueio automático recente.</p>'}
             </section>
           </div>
         </div>
-      </section>
+      </div>
       <script type="application/json" id="operational-dashboard-data">${operationalConfigJson}</script>
       <script>
         document.addEventListener('DOMContentLoaded', function () {
@@ -1571,7 +1795,7 @@ module.exports = function registerBackoffice(app, context) {
           function slug(value) {
             return String(value || '')
               .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[̀-ͯ]/g, '')
               .replace(/[^a-z0-9]+/gi, '-')
               .replace(/^-+|-+$/g, '')
               .toLowerCase();
@@ -1596,96 +1820,82 @@ module.exports = function registerBackoffice(app, context) {
           function renderTopUnits(units, totalNights) {
             if (!Array.isArray(units) || !units.length) return '';
             const nightsLabel = Math.max(1, Number(totalNights) || 0);
-            return units.map((unit, index) => {
-              const occPct = percentFormatter.format(unit.occupancyRate || 0);
-              const revenueLabel = currencyFormatter.format((unit.revenueCents || 0) / 100);
-              const bookingsText = unit.bookingsCount === 1 ? '1 reserva' : (unit.bookingsCount || 0) + ' reservas';
-              const nightsText = (unit.occupiedNights || 0) + ' / ' + nightsLabel + ' noites';
-              const typeLabel = unit.unitType ? ' · ' + unit.unitType : '';
-              return '<li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-slate-200 rounded-lg px-3 py-2">' +
-                '<div>' +
+            return units
+              .map((unit, index) => {
+                const occPct = percentFormatter.format(unit.occupancyRate || 0);
+                const revenueLabel = currencyFormatter.format((unit.revenueCents || 0) / 100);
+                const bookingsText = unit.bookingsCount === 1 ? '1 reserva' : (unit.bookingsCount || 0) + ' reservas';
+                const nightsText = (unit.occupiedNights || 0) + ' / ' + nightsLabel + ' noites';
+                const typeLabel = unit.unitType ? ' · ' + unit.unitType : '';
+                return '<li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-slate-200 rounded-lg px-3 py-2">' +
+                  '<div>' +
                   '<div class="text-sm font-semibold text-slate-800">' + escHtml((index + 1) + '. ' + unit.propertyName + ' · ' + unit.unitName) + '</div>' +
                   '<div class="text-xs text-slate-500">' + escHtml(bookingsText + ' · ' + nightsText + typeLabel) + '</div>' +
-                '</div>' +
-                '<div class="text-right space-y-1">' +
+                  '</div>' +
+                  '<div class="text-right space-y-1">' +
                   '<div class="text-sm font-semibold text-slate-900">' + occPct + '</div>' +
                   '<div class="text-xs text-slate-500">' + escHtml(revenueLabel) + '</div>' +
-                '</div>' +
-              '</li>';
-            }).join('');
+                  '</div>' +
+                  '</li>';
+              })
+              .join('');
           }
 
           function buildExportUrl(data) {
             const params = new URLSearchParams();
-            const monthVal = data && data.month ? data.month : (monthSelect ? monthSelect.value : '');
-            if (monthVal) params.set('month', monthVal);
-            if (data && data.filters) {
-              if (data.filters.propertyId) params.set('property_id', data.filters.propertyId);
-              if (data.filters.unitType) params.set('unit_type', data.filters.unitType);
-            }
+            if (data && data.month) params.set('month', data.month);
+            if (data && data.filters && data.filters.propertyId) params.set('property_id', data.filters.propertyId);
+            if (data && data.filters && data.filters.unitType) params.set('unit_type', data.filters.unitType);
             return '/admin/automation/export.csv?' + params.toString();
           }
 
           function buildExportFilename(data) {
-            const parts = ['dashboard', data.month || ''];
-            if (data.filters) {
-              if (data.filters.propertyLabel) {
-                parts.push('prop-' + slug(data.filters.propertyLabel));
-              } else if (data.filters.propertyId) {
-                parts.push('prop-' + data.filters.propertyId);
-              }
-              if (data.filters.unitType) {
-                parts.push('tipo-' + slug(data.filters.unitType));
-              }
-            }
-            return parts.filter(Boolean).join('_') + '.csv';
+            const month = data && data.month ? data.month : dayjs().format('YYYY-MM');
+            const propertySlug = data && data.filters && data.filters.propertyLabel ? slug(data.filters.propertyLabel) : 'todas';
+            const unitTypeSlug = data && data.filters && data.filters.unitType ? slug(data.filters.unitType) : 'todos';
+            return 'dashboard-operacional-' + month + '-' + propertySlug + '-' + unitTypeSlug + '.csv';
           }
 
-          function setLoading(state) {
-            if (!wrapperEl) return;
-            wrapperEl.classList.toggle('opacity-50', state);
+          function setLoading(isLoading) {
+            if (wrapperEl) wrapperEl.dataset.loading = isLoading ? 'true' : 'false';
           }
 
           function applyData(data) {
-            if (!data) return;
             setLoading(false);
-            const summary = data.summary || {};
-            if (summary.availableNights > 0) {
-              occupancyEl.textContent = percentFormatter.format(summary.occupancyRate || 0);
-            } else {
-              occupancyEl.textContent = '—';
+            if (!data || !data.summary) return;
+            const summary = data.summary;
+            if (occupancyEl) occupancyEl.textContent = percentFormatter.format(summary.occupancyRate || 0);
+            if (revenueEl) revenueEl.textContent = currencyFormatter.format((summary.revenueCents || 0) / 100);
+            if (averageEl) averageEl.textContent = nightsFormatter.format(summary.averageNights || 0);
+            if (periodLabelEl) periodLabelEl.textContent = formatRange(data.range);
+            if (filtersLabelEl) filtersLabelEl.textContent = describeFilters(data);
+            if (summaryEl) {
+              summaryEl.textContent =
+                'Unidades analisadas: ' +
+                (summary.totalUnits || 0) +
+                ' · Reservas confirmadas: ' +
+                summary.bookingsCount +
+                ' · Noites ocupadas: ' +
+                summary.occupiedNights +
+                '/' +
+                (summary.availableNights || summary.occupiedNights);
             }
-            revenueEl.textContent = currencyFormatter.format((summary.revenueCents || 0) / 100);
-            averageEl.textContent = summary.bookingsCount ? (nightsFormatter.format(summary.averageNights || 0) + ' noites') : '—';
-            periodLabelEl.textContent = data.monthLabel + ' · ' + formatRange(data.range);
-            const filtersDesc = describeFilters(data);
-            filtersLabelEl.textContent = filtersDesc ? 'Filtros: ' + filtersDesc : '';
-            const summaryParts = [];
-            const bookingsCount = summary.bookingsCount || 0;
-            summaryParts.push(bookingsCount === 1 ? '1 reserva confirmada' : bookingsCount + ' reservas confirmadas');
-            if (summary.availableNights > 0) {
-              summaryParts.push((summary.occupiedNights || 0) + '/' + summary.availableNights + ' noites ocupadas');
+            if (Array.isArray(data.topUnits) && data.topUnits.length) {
+              if (listEl) {
+                listEl.innerHTML = renderTopUnits(data.topUnits, summary.availableNights);
+                listEl.classList.remove('hidden');
+              }
+              if (emptyEl) emptyEl.classList.add('hidden');
             } else {
-              summaryParts.push('Sem unidades para o filtro selecionado');
+              if (listEl) {
+                listEl.innerHTML = '';
+                listEl.classList.add('hidden');
+              }
+              if (emptyEl) emptyEl.classList.remove('hidden');
             }
-            if (filtersDesc) summaryParts.push(filtersDesc);
-            summaryEl.textContent = summaryParts.join(' · ');
-
-            const topUnitsHtml = renderTopUnits(data.topUnits || [], data.range ? data.range.nights : 0);
-            if (topUnitsHtml) {
-              listEl.innerHTML = topUnitsHtml;
-              listEl.classList.remove('hidden');
-              emptyEl.classList.add('hidden');
-            } else {
-              listEl.innerHTML = '';
-              listEl.classList.add('hidden');
-              emptyEl.classList.remove('hidden');
-            }
-
             if (monthSelect && data.month) monthSelect.value = data.month;
             if (propertySelect) propertySelect.value = data.filters && data.filters.propertyId ? String(data.filters.propertyId) : '';
             if (typeSelect) typeSelect.value = data.filters && data.filters.unitType ? data.filters.unitType : '';
-
             if (exportBtn) {
               exportBtn.href = buildExportUrl(data);
               exportBtn.setAttribute('download', buildExportFilename(data));
@@ -1734,110 +1944,342 @@ module.exports = function registerBackoffice(app, context) {
           configEl.textContent = '';
         });
       </script>
-  `;
+    `;
 
-  res.send(layout({
-    title: 'Backoffice',
-    user: req.user,
-    activeNav: 'backoffice',
-    branding: resolveBrandingForRequest(req),
-    body: html`
-      <h1 class="text-2xl font-semibold mb-6">Backoffice</h1>
+    const housekeepingPendingHtml = housekeepingPending.length
+      ? `<ul class="space-y-3">${housekeepingPending
+          .map(task => `
+            <li class="rounded-xl border border-amber-200 bg-white/70 p-3">
+              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
+              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
+              <div class="text-xs text-amber-600 mt-1">Previsto: ${task.due_date ? dayjs(task.due_date).format('DD/MM') : '—'}${task.due_time ? ' às ' + task.due_time : ''}</div>
+            </li>`)
+          .join('')}</ul>`
+      : '<p class="bo-empty">Sem tarefas pendentes.</p>';
 
-      ${onboardingCard}
+    const housekeepingInProgressHtml = housekeepingInProgress.length
+      ? `<ul class="space-y-3">${housekeepingInProgress
+          .map(task => `
+            <li class="rounded-xl border border-amber-200 bg-white/70 p-3">
+              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
+              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
+              <div class="text-xs text-amber-600 mt-1">Em curso por ${task.started_by_username ? esc(task.started_by_username) : '—'}</div>
+            </li>`)
+          .join('')}</ul>`
+      : '<p class="bo-empty">Sem tarefas em curso.</p>';
 
-      ${automationCard}
+    const housekeepingCompletedHtml = housekeepingCompleted.length
+      ? `<ul class="space-y-3">${housekeepingCompleted
+          .map(task => `
+            <li class="rounded-xl border border-amber-200 bg-white/60 p-3">
+              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
+              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
+              <div class="text-xs text-amber-600 mt-1">Concluída ${task.completed_at ? dayjs(task.completed_at).format('DD/MM HH:mm') : '—'}</div>
+            </li>`)
+          .join('')}</ul>`
+      : '<p class="bo-empty">Sem tarefas concluídas nos últimos dias.</p>';
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <section class="card p-4">
-          <h2 class="font-semibold mb-3">Propriedades</h2>
-          <ul class="space-y-2 mb-3">
-            ${props.map(p => `
-              <li class="flex items-center justify-between">
-                <span>${esc(p.name)}</span>
-                <a class="text-slate-600 hover:text-slate-900 underline" href="/admin/properties/${p.id}">Abrir</a>
-              </li>`).join('')}
-          </ul>
-          <form method="post" action="/admin/properties/create" class="grid gap-2">
-            <input required name="name" class="input" placeholder="Nome"/>
-            <input name="location" class="input" placeholder="Localização"/>
-            <textarea name="description" class="input" placeholder="Descrição"></textarea>
-            <button class="btn btn-primary">Adicionar Propriedade</button>
-          </form>
-        </section>
+    const usersTableRows = userRows.length
+      ? userRows
+          .map(u => {
+            const role = ROLE_LABELS[normalizeRole(u.role)] || u.role;
+            return `
+              <tr>
+                <td data-label="Utilizador"><span class="table-cell-value">${esc(u.username)}</span></td>
+                <td data-label="Perfil"><span class="table-cell-value">${esc(role)}</span></td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem utilizadores adicionais.</td></tr>';
 
-        <section class="card p-4 md:col-span-2">
-          <h2 class="font-semibold mb-3">Unidades</h2>
-          <div class="responsive-table">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${units.map(u => `
-                  <tr>
-                    <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
-                    <td data-label="Unidade"><span class="table-cell-value">${esc(u.name)}</span></td>
-                    <td data-label="Capacidade"><span class="table-cell-value">${u.capacity}</span></td>
-                    <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
-                    <td data-label="Ações"><div class="table-cell-actions"><a class="text-slate-600 hover:text-slate-900 underline" href="/admin/units/${u.id}">Gerir</a></div></td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
+    const calendarPreviewRows = calendarPreview.length
+      ? calendarPreview
+          .map(b => {
+            return `
+              <tr>
+                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                <td data-label="Propriedade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
+                <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name || '—')}</span></td>
+                <td data-label="Estado"><span class="table-cell-value">${b.status === 'PENDING' ? 'PENDENTE' : 'CONFIRMADA'}</span></td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="4" class="text-sm text-center text-slate-500">Sem reservas futuras.</td></tr>';
 
-          <hr class="my-4"/>
-          <form method="post" action="/admin/units/create" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
-            <select required name="property_id" class="input md:col-span-2">
-              ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-            </select>
-            <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade"/>
-            <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade"/>
-            <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Preço base €/noite"/>
-            <textarea name="features_raw" class="input md:col-span-6" rows="4" placeholder="Características (uma por linha). Ex: 
+    const theme = resolveBrandingForRequest(req);
+
+    res.send(
+      layout({
+        title: 'Backoffice',
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        notifications,
+        pageClass: 'page-backoffice',
+        body: html`
+          <div class="bo-shell">
+            <aside class="bo-sidebar">
+              <div class="bo-sidebar__title">Menu principal</div>
+              <div class="bo-nav">${navButtonsHtml}</div>
+            </aside>
+            <div class="bo-main">
+              <header class="bo-header">
+                <h1>Gestor Operacional</h1>
+                <p>Todos os dados essenciais de gestão em formato compacto.</p>
+              </header>
+
+              <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                <div class="bo-card">
+                  <h2>Propriedades</h2>
+                  <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
+                  ${propertiesListHtml}
+                  <hr class="my-4" />
+                  <h3 class="bo-section-title">Adicionar propriedade</h3>
+                  <form method="post" action="/admin/properties/create" class="grid gap-3">
+                    <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
+                      <input required name="name" class="input" placeholder="Nome" />
+                      <input required name="address" class="input" placeholder="Morada completa" />
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        <input required name="locality" class="input" placeholder="Localidade" />
+                        <input required name="district" class="input" placeholder="Distrito" />
+                      </div>
+                      <textarea name="description" class="input" placeholder="Descrição"></textarea>
+                    </fieldset>
+                    ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
+                    <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
+                  </form>
+                </div>
+
+                <div class="bo-card">
+                  <h2>Unidades</h2>
+                  <div class="bo-table responsive-table">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-slate-500">
+                          <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
+                        </tr>
+                      </thead>
+                      <tbody>${unitsTableRows}</tbody>
+                    </table>
+                  </div>
+                  <hr class="my-4" />
+                  <h3 class="bo-section-title">Adicionar unidade</h3>
+                  <form method="post" action="/admin/units/create" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
+                    <fieldset class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 md:col-span-6"${canManageProperties ? '' : ' disabled'}>
+                      <select required name="property_id" class="input md:col-span-2">
+                        ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+                      </select>
+                      <input required name="name" class="input md:col-span-2" placeholder="Nome da unidade" />
+                      <input required type="number" min="1" name="capacity" class="input" placeholder="Capacidade" />
+                      <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Preço base €/noite" />
+                      <textarea name="features_raw" class="input md:col-span-6" rows="3" placeholder="Características (uma por linha). Ex:
 bed|3 camas
 wifi
 kitchen|Kitchenette"></textarea>
-            <div class="text-xs text-slate-500 md:col-span-6">
-              Ícones Lucide disponíveis: ${FEATURE_ICON_KEYS.join(', ')}. Usa <code>icon|texto</code> ou só o ícone.
-            </div>
-            <div class="md:col-span-6">
-              <button class="btn btn-primary">Adicionar Unidade</button>
-            </div>
-          </form>
-        </section>
-      </div>
+                      <div class="text-xs text-slate-500 md:col-span-6">
+                        Ícones Lucide disponíveis: ${FEATURE_ICON_KEYS.join(', ')}. Usa <code>icon|texto</code> ou só o ícone.
+                      </div>
+                    </fieldset>
+                    <div class="md:col-span-6">
+                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
+                    </div>
+                  </form>
+                </div>
 
-      <section class="card p-4 mt-6">
-        <h2 class="font-semibold mb-3">Reservas recentes</h2>
-        <div class="responsive-table">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-slate-500">
-                <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${recentBookings.map(b => `
-                <tr title="${esc(b.guest_name||'')}">
-                  <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
-                  <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
-                  <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
-                  <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone||'-')}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
-                  <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                  <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')}</span></td>
-                  <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    `
-  }));
-});
+                <div class="bo-card bo-span-all">
+                  <h2>Listagem de propriedades</h2>
+                  <div class="bo-table responsive-table">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-slate-500">
+                          <th>Propriedade · Unidades</th><th>Receita total</th>
+                        </tr>
+                      </thead>
+                      <tbody>${propertiesRevenueTable}</tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
 
+              <section class="bo-pane" data-bo-pane="finance">
+                <div class="bo-card">
+                  <h2>Resumo financeiro</h2>
+                  <div class="bo-metrics">
+                    <div class="bo-metric"><strong>€ ${eur(confirmedRevenueCents)}</strong><span>Receita confirmada (histórico)</span></div>
+                    <div class="bo-metric"><strong>€ ${eur(pendingRevenueCents)}</strong><span>Receita pendente (${pendingBookingsCount} reservas)</span></div>
+                    <div class="bo-metric"><strong>€ ${eur(automationRevenue7)}</strong><span>Receita prevista (próximos 7 dias)</span></div>
+                    <div class="bo-metric"><strong>€ ${eur(automationRevenue30)}</strong><span>Receita prevista (próximos 30 dias)</span></div>
+                    <div class="bo-metric"><strong>€ ${eur(averageTicketCents)}</strong><span>Ticket médio confirmado</span></div>
+                  </div>
+                </div>
+                <div class="bo-card">
+                  <h2>Reservas recentes</h2>
+                  <div class="bo-table responsive-table">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-slate-500">
+                          <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>${recentBookings
+                        .map(b => `
+                          <tr>
+                            <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
+                            <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
+                            <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
+                            <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
+                            <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                            <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
+                          </tr>`)
+                        .join('')}</tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
+                ${canViewAutomation ? statisticsCard : '<div class="bo-card"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
+              </section>
+
+              <section class="bo-pane" data-bo-pane="housekeeping">
+                ${canSeeHousekeeping
+                  ? html`
+                      <div class="bo-card">
+                        <h2>Resumo de limpeza</h2>
+                        <div class="bo-metrics">
+                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.pending : 0}</strong><span>Tarefas pendentes</span></div>
+                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.inProgress : 0}</strong><span>Em curso</span></div>
+                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.highPriority : 0}</strong><span>Prioridade alta</span></div>
+                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.completedRecent : 0}</strong><span>Concluídas 7 dias</span></div>
+                        </div>
+                      </div>
+                      <div class="bo-card">
+                        <h2>Tarefas pendentes</h2>
+                        ${housekeepingPendingHtml}
+                      </div>
+                      <div class="bo-card">
+                        <h2>Em curso</h2>
+                        ${housekeepingInProgressHtml}
+                      </div>
+                      <div class="bo-card">
+                        <h2>Concluídas recentemente</h2>
+                        ${housekeepingCompletedHtml}
+                      </div>
+                      <div class="bo-card">
+                        <a class="btn btn-primary" href="/admin/limpeza">Abrir gestão de limpezas</a>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
+              </section>
+
+              <section class="bo-pane" data-bo-pane="branding">
+                <div class="bo-card">
+                  <h2>Identidade visual</h2>
+                  <p class="bo-subtitle">Cores e imagem aplicadas ao portal</p>
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="rounded-xl border border-amber-200 p-4">
+                      <div class="text-xs uppercase text-amber-600">Nome</div>
+                      <div class="text-lg font-semibold text-amber-900">${esc(theme.brandName)}</div>
+                      ${theme.tagline ? `<div class="text-sm text-amber-700 mt-2">${esc(theme.tagline)}</div>` : ''}
+                    </div>
+                    <div class="rounded-xl border border-amber-200 p-4 flex gap-3 items-center">
+                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.primaryColor)}"></span>
+                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.secondaryColor)}"></span>
+                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.highlightColor)}"></span>
+                    </div>
+                  </div>
+                  ${canManageUsers
+                    ? '<div class="mt-4"><a class="btn btn-primary" href="/admin/identidade-visual">Gerir identidade visual</a></div>'
+                    : '<p class="bo-empty mt-4">Sem permissões para editar a identidade.</p>'}
+                </div>
+              </section>
+
+              <section class="bo-pane" data-bo-pane="users">
+                ${canManageUsers
+                  ? html`
+                      <div class="bo-card">
+                        <h2>Utilizadores</h2>
+                        <div class="bo-table responsive-table">
+                          <table class="w-full text-sm">
+                            <thead>
+                              <tr class="text-left text-slate-500">
+                                <th>Utilizador</th><th>Perfil</th>
+                              </tr>
+                            </thead>
+                            <tbody>${usersTableRows}</tbody>
+                          </table>
+                        </div>
+                        <div class="mt-4 flex gap-3 flex-wrap">
+                          <a class="btn btn-primary" href="/admin/utilizadores">Gerir utilizadores</a>
+                        </div>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
+              </section>
+
+              <section class="bo-pane" data-bo-pane="calendar">
+                ${canViewCalendar
+                  ? html`
+                      <div class="bo-card">
+                        <h2>Agenda de reservas</h2>
+                        <p class="bo-subtitle">Próximas reservas confirmadas ou pendentes</p>
+                        <div class="bo-table responsive-table">
+                          <table class="w-full text-sm">
+                            <thead>
+                              <tr class="text-left text-slate-500">
+                                <th>Datas</th><th>Propriedade</th><th>Hóspede</th><th>Estado</th>
+                              </tr>
+                            </thead>
+                            <tbody>${calendarPreviewRows}</tbody>
+                          </table>
+                        </div>
+                        <div class="mt-4"><a class="btn btn-primary" href="/calendar">Abrir calendário completo</a></div>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
+              </section>
+            </div>
+          </div>
+          <script>
+            document.addEventListener('DOMContentLoaded', function () {
+              const tabs = Array.from(document.querySelectorAll('[data-bo-target]'));
+              const panes = Array.from(document.querySelectorAll('[data-bo-pane]'));
+              function activate(id) {
+                panes.forEach(pane => {
+                  if (pane.dataset.boPane === id) {
+                    pane.classList.add('is-active');
+                  } else {
+                    pane.classList.remove('is-active');
+                  }
+                });
+                tabs.forEach(tab => {
+                  if (tab.dataset.boTarget === id) {
+                    tab.classList.add('is-active');
+                  } else {
+                    tab.classList.remove('is-active');
+                  }
+                });
+                if (id) {
+                  history.replaceState(null, '', '#' + id);
+                }
+              }
+              const initialHash = window.location.hash.replace('#', '');
+              if (initialHash && panes.some(p => p.dataset.boPane === initialHash)) {
+                activate(initialHash);
+              } else {
+                activate('${defaultPane}');
+              }
+              tabs.forEach(tab => {
+                if (tab.hasAttribute('disabled')) return;
+                tab.addEventListener('click', () => activate(tab.dataset.boTarget));
+              });
+            });
+          </script>
+        `
+      })
+    );
+  });
 app.get('/admin/automation/operational.json', requireLogin, requirePermission('automation.view'), (req, res) => {
   const data = computeOperationalDashboard(req.query || {});
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1952,9 +2394,41 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   res.send('\ufeff' + csv);
 });
 
-app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  const { name, location, description } = req.body;
-  db.prepare('INSERT INTO properties(name, location, description) VALUES (?, ?, ?)').run(name, location, description);
+app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  const { name, locality, district, address, description } = req.body;
+  const trimmedLocality = String(locality || '').trim();
+  const trimmedDistrict = String(district || '').trim();
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
+  const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
+  let latitude = null;
+  let longitude = null;
+
+  try {
+    const queryParts = [trimmedAddress, trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+    if (queryParts.length) {
+      const coords = await geocodeAddress(queryParts.join(', '));
+      if (coords) {
+        latitude = coords.latitude != null ? coords.latitude : null;
+        longitude = coords.longitude != null ? coords.longitude : null;
+      }
+    }
+  } catch (err) {
+    console.warn('Falha ao geocodificar nova propriedade:', err.message);
+  }
+
+  db.prepare(
+    'INSERT INTO properties(name, location, locality, district, address, description, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    name,
+    locationLabel,
+    trimmedLocality || null,
+    trimmedDistrict || null,
+    trimmedAddress,
+    description ? String(description) : null,
+    latitude,
+    longitude
+  );
   res.redirect('/admin');
 });
 
@@ -1970,7 +2444,29 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
   const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Propriedade não encontrada');
 
+  const addressDisplay = typeof p.address === 'string' ? p.address.trim() : '';
+  const locationDisplay = propertyLocationLabel(p);
+  const addressInfo = addressDisplay ? `Morada atual: ${addressDisplay}` : 'Sem morada registada.';
+  const locationInfo = locationDisplay ? `Localidade atual: ${locationDisplay}` : 'Sem localidade registada.';
+
   const units = db.prepare('SELECT * FROM units WHERE property_id = ? ORDER BY name').all(p.id);
+  const unitsListHtml = units.length
+    ? units
+        .map(u => {
+          const priceLabel = `€ ${eur(u.base_price_cents)}`;
+          return `
+            <li class="border-b border-slate-200 last:border-0 pb-2">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                <div class="font-medium text-slate-700">
+                  <a class="text-slate-700 underline" href="/admin/units/${u.id}">${esc(u.name)}</a>
+                  <span class="text-xs text-slate-500 ml-2">cap ${u.capacity}</span>
+                </div>
+                <div class="text-xs text-slate-500">${esc(priceLabel)}</div>
+              </div>
+            </li>`;
+        })
+        .join('')
+    : '<li class="text-sm text-slate-500">Sem unidades</li>';
   const bookings = db.prepare(
     `SELECT b.*, u.name as unit_name
        FROM bookings b
@@ -1989,42 +2485,157 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
     branding: theme,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
-        <div>
-          <h1 class="text-2xl font-semibold">${esc(p.name)}</h1>
-          <p class="text-slate-600 mt-1">${esc(p.location||'')}</p>
+      <div class="flex flex-col gap-6">
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 class="text-2xl font-semibold">${esc(p.name)}</h1>
+            ${addressDisplay
+              ? `<p class="text-slate-600 mt-1">${esc(addressDisplay)}</p>`
+              : '<p class="text-slate-400 mt-1">Morada não definida</p>'}
+            ${locationDisplay ? `<p class="text-slate-500 mt-1">${esc(locationDisplay)}</p>` : ''}
+            ${p.description ? `<p class="text-sm text-slate-500 mt-2 whitespace-pre-line">${esc(p.description)}</p>` : ''}
+          </div>
+          <form method="post" action="/admin/properties/${p.id}/delete" class="shrink-0" onsubmit="return confirm('Tem a certeza que quer eliminar esta propriedade? Isto remove unidades e reservas associadas.');">
+            <button type="submit" class="text-rose-600 hover:text-rose-800 underline">Eliminar propriedade</button>
+          </form>
         </div>
-        <form method="post" action="/admin/properties/${p.id}/delete" class="shrink-0" onsubmit="return confirm('Tem a certeza que quer eliminar esta propriedade? Isto remove unidades e reservas associadas.');">
-          <button type="submit" class="text-rose-600 hover:text-rose-800 underline">Eliminar propriedade</button>
-        </form>
-      </div>
-      <h2 class="font-semibold mb-2">Unidades</h2>
-      <ul class="mb-6">
-        ${units.map(u => `<li><a class="text-slate-700 underline" href="/admin/units/${u.id}">${esc(u.name)}</a> (cap ${u.capacity})</li>`).join('')}
-      </ul>
 
-      <h2 class="font-semibold mb-2">Reservas</h2>
-      <ul class="space-y-1">
-        ${bookings.length ? bookings.map(b => `
-          <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} · ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
-        `).join('') : '<em>Sem reservas</em>'}
-      </ul>
+        <section class="card p-4 grid gap-3">
+          <h2 class="text-lg font-semibold text-slate-800">Editar alojamento</h2>
+          <form method="post" action="/admin/properties/${p.id}/update" class="grid gap-3 md:grid-cols-2">
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Nome</span>
+              <input required name="name" class="input" value="${esc(p.name)}" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Morada completa</span>
+              <input required name="address" class="input" value="${esc(addressDisplay)}" placeholder="Rua, número, código postal" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600">
+              <span>Localidade</span>
+              <input required name="locality" class="input" value="${esc(p.locality || '')}" placeholder="Ex.: Lagos" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600">
+              <span>Distrito</span>
+              <input required name="district" class="input" value="${esc(p.district || '')}" placeholder="Ex.: Faro" />
+            </label>
+            <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
+              <span>Descrição</span>
+              <textarea name="description" class="input" rows="3" placeholder="Notas internas ou destaques">${esc(p.description || '')}</textarea>
+            </label>
+            <p class="text-xs text-slate-500 md:col-span-2">A morada completa fica disponível para a equipa assim que guardar as alterações.</p>
+            <div class="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div class="text-xs text-slate-500 leading-relaxed">
+                ${esc(addressInfo)}
+                ${locationInfo ? `<br/><span>${esc(locationInfo)}</span>` : ''}
+              </div>
+              <button class="btn btn-primary w-full sm:w-auto">Guardar alterações</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card p-4">
+          <h2 class="font-semibold mb-2">Unidades</h2>
+          <ul class="space-y-2">${unitsListHtml}</ul>
+        </section>
+
+        <section class="card p-4">
+          <h2 class="font-semibold mb-2">Reservas</h2>
+          <ul class="space-y-1">
+            ${bookings.length
+              ? bookings
+                  .map(b => `
+                    <li>${esc(b.unit_name)}: ${dayjs(b.checkin).format('DD/MM')} &rarr; ${dayjs(b.checkout).format('DD/MM')} · ${esc(b.guest_name)} (${b.adults}A+${b.children}C)</li>
+                  `)
+                  .join('')
+              : '<li class="text-sm text-slate-500">Sem reservas</li>'}
+          </ul>
+        </section>
+      </div>
     `
   }));
 });
 
+app.post('/admin/properties/:id/update', requireLogin, requirePermission('properties.manage'), async (req, res) => {
+  const propertyId = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
+  if (!existing) return res.status(404).send('Propriedade não encontrada');
+
+  const { name, locality, district, address, description } = req.body;
+  const trimmedLocality = String(locality || '').trim();
+  const trimmedDistrict = String(district || '').trim();
+  const trimmedAddress = String(address || '').trim();
+  if (!trimmedAddress) return res.status(400).send('Morada obrigatória');
+  const locationLabel = [trimmedLocality, trimmedDistrict].filter(Boolean).join(', ');
+
+  let latitude = existing.latitude != null ? Number.parseFloat(existing.latitude) : null;
+  let longitude = existing.longitude != null ? Number.parseFloat(existing.longitude) : null;
+  const addressChanged = trimmedAddress !== String(existing.address || '').trim();
+  const localityChanged = trimmedLocality !== String(existing.locality || '').trim();
+  const districtChanged = trimmedDistrict !== String(existing.district || '').trim();
+  const hasValidCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  if (addressChanged || localityChanged || districtChanged || !hasValidCoords) {
+    try {
+      const queryParts = [trimmedAddress, trimmedLocality, trimmedDistrict, 'Portugal'].filter(Boolean);
+      if (queryParts.length) {
+        const coords = await geocodeAddress(queryParts.join(', '));
+        if (coords) {
+          latitude = coords.latitude != null ? coords.latitude : null;
+          longitude = coords.longitude != null ? coords.longitude : null;
+        }
+      }
+    } catch (err) {
+      console.warn(`Falha ao geocodificar propriedade #${propertyId}:`, err.message);
+    }
+  }
+
+  const finalLatitude = Number.isFinite(latitude) ? latitude : null;
+  const finalLongitude = Number.isFinite(longitude) ? longitude : null;
+
+  db.prepare(
+    'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, address = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
+  ).run(
+    name,
+    locationLabel,
+    trimmedLocality || null,
+    trimmedDistrict || null,
+    trimmedAddress,
+    description ? String(description) : null,
+    finalLatitude,
+    finalLongitude,
+    propertyId
+  );
+
+  res.redirect(`/admin/properties/${propertyId}`);
+});
+
 app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
-  const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(property_id);
+  if (!property) return res.status(400).send('Propriedade inválida');
+
+  const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
-  db.prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, features) VALUES (?, ?, ?, ?, ?)')
-    .run(property_id, name, Number(capacity), cents, JSON.stringify(features));
+
+  db.prepare(
+    'INSERT INTO units(property_id, name, capacity, base_price_cents, features, address, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    property_id,
+    name,
+    Number(capacity),
+    cents,
+    JSON.stringify(features),
+    null,
+    null,
+    null
+  );
   res.redirect('/admin');
 });
 
 app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
   const u = db.prepare(
-    `SELECT u.*, p.name as property_name
+    `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district, p.address as property_address
        FROM units u
        JOIN properties p ON p.id = u.property_id
       WHERE u.id = ?`
@@ -2033,6 +2644,8 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 
   const unitFeatures = parseFeaturesStored(u.features);
   const unitFeaturesTextarea = esc(featuresToTextarea(unitFeatures));
+  const propertyLocation = propertyLocationLabel({ locality: u.property_locality, district: u.property_district, location: null });
+  const propertyAddress = typeof u.property_address === 'string' ? u.property_address.trim() : '';
   const unitFeaturesPreview = featureChipsHtml(unitFeatures, {
     className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
     badgeClass: 'inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 px-2 py-1 rounded-full',
@@ -2056,6 +2669,11 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
+      <div class="text-sm text-slate-500 mb-4 leading-relaxed">
+        ${propertyAddress ? esc(propertyAddress) : 'Morada do alojamento não definida'}
+        ${propertyLocation ? `<br/><span>${esc(`Localidade: ${propertyLocation}`)}</span>` : ''}
+      </div>
+      <p class="text-xs text-slate-500 mb-4">A morada e geolocalização são geridas na página do alojamento.</p>
       ${unitFeaturesPreview}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2150,6 +2768,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
             <label class="text-sm">Características</label>
             <textarea name="features_raw" rows="6" class="input">${unitFeaturesTextarea}</textarea>
             <div class="text-xs text-slate-500">Uma por linha no formato <code>icon|texto</code> ou apenas o ícone. Ícones: ${FEATURE_ICON_KEYS.join(', ')}.</div>
+            <div class="text-xs text-slate-500">Morada e localidade são configuradas na página do alojamento.</div>
 
             <button class="btn btn-primary">Guardar</button>
           </form>
@@ -2394,12 +3013,24 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
 });
 
 app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  const unitId = Number(req.params.id);
+  const existing = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
+  if (!existing) return res.status(404).send('Unidade não encontrada');
+
   const { name, capacity, base_price_eur, features_raw } = req.body;
-  const cents = Math.round(parseFloat(String(base_price_eur||'0').replace(',', '.'))*100);
+  const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
   const features = parseFeaturesInput(features_raw);
-  db.prepare('UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ? WHERE id = ?')
-    .run(name, Number(capacity), cents, JSON.stringify(features), req.params.id);
-  res.redirect(`/admin/units/${req.params.id}`);
+
+  db.prepare(
+    'UPDATE units SET name = ?, capacity = ?, base_price_cents = ?, features = ?, address = NULL, latitude = NULL, longitude = NULL WHERE id = ?'
+  ).run(
+    name,
+    Number(capacity),
+    cents,
+    JSON.stringify(features),
+    unitId
+  );
+  res.redirect(`/admin/units/${unitId}`);
 });
 
 app.post('/admin/units/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
