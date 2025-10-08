@@ -620,11 +620,125 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const prev = month.subtract(1, 'month').format('YYYY-MM');
   const next = month.add(1, 'month').format('YYYY-MM');
 
-  const units = db.prepare(
-    'SELECT u.*, p.name as property_name ' +
-    'FROM units u JOIN properties p ON p.id = u.property_id ' +
-    'ORDER BY p.name, u.name'
-  ).all();
+  const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const propertyMap = new Map(properties.map(p => [p.id, p.name]));
+  let propertyId = req.query.property ? Number(req.query.property) : (properties[0] ? properties[0].id : null);
+  if (Number.isNaN(propertyId)) propertyId = properties[0] ? properties[0].id : null;
+
+  const units = propertyId
+    ? db.prepare('SELECT id, name FROM units WHERE property_id = ? ORDER BY name').all(propertyId)
+    : [];
+
+  const rawFilters = {
+    start: req.query.start && String(req.query.start),
+    end: req.query.end && String(req.query.end),
+    unit: req.query.unit && String(req.query.unit),
+    q: req.query.q && String(req.query.q).trim()
+  };
+
+  let startDate = rawFilters.start && dayjs(rawFilters.start, 'YYYY-MM-DD', true).isValid()
+    ? dayjs(rawFilters.start)
+    : month;
+  let endDate = rawFilters.end && dayjs(rawFilters.end, 'YYYY-MM-DD', true).isValid()
+    ? dayjs(rawFilters.end)
+    : month.endOf('month');
+
+  if (endDate.isBefore(startDate)) {
+    endDate = startDate;
+  }
+
+  startDate = startDate.startOf('day');
+  endDate = endDate.startOf('day');
+
+  const startInputValue = startDate.format('YYYY-MM-DD');
+  const endInputValue = endDate.format('YYYY-MM-DD');
+
+  const endExclusive = endDate.add(1, 'day');
+
+  let selectedUnitId = null;
+  if (rawFilters.unit) {
+    const parsedUnit = Number(rawFilters.unit);
+    if (!Number.isNaN(parsedUnit) && units.some(u => u.id === parsedUnit)) {
+      selectedUnitId = parsedUnit;
+    }
+  }
+
+  const searchTerm = rawFilters.q ? rawFilters.q.toLowerCase() : '';
+
+  let bookings = [];
+  if (propertyId) {
+    const params = {
+      propertyId,
+      start: startDate.format('YYYY-MM-DD'),
+      end: endExclusive.format('YYYY-MM-DD')
+    };
+    let where = `u.property_id = @propertyId AND NOT (b.checkout <= @start OR b.checkin >= @end) AND b.status IN ('CONFIRMED','PENDING')`;
+    if (selectedUnitId) {
+      params.unitId = selectedUnitId;
+      where += ' AND b.unit_id = @unitId';
+    }
+    if (searchTerm) {
+      params.search = '%' + searchTerm + '%';
+      where += " AND (LOWER(b.guest_name) LIKE @search OR LOWER(IFNULL(b.guest_email, '')) LIKE @search OR LOWER(IFNULL(b.agency, '')) LIKE @search)";
+    }
+    bookings = db.prepare(`
+      SELECT b.*, u.name AS unit_name, p.name AS property_name
+        FROM bookings b
+        JOIN units u ON u.id = b.unit_id
+        JOIN properties p ON p.id = u.property_id
+       WHERE ${where}
+       ORDER BY b.checkin, b.checkout, b.id
+    `).all(params).map(row => ({
+      ...row,
+      nights: Math.max(1, dayjs(row.checkout).diff(dayjs(row.checkin), 'day')),
+      checkin_iso: dayjs(row.checkin).format('YYYY-MM-DD'),
+      checkout_iso: dayjs(row.checkout).format('YYYY-MM-DD'),
+      checkin_label: dayjs(row.checkin).format('DD/MM'),
+      checkout_label: dayjs(row.checkout).format('DD/MM')
+    }));
+  }
+
+  const confirmedCount = bookings.filter(b => (b.status || '').toUpperCase() === 'CONFIRMED').length;
+  const pendingCount = bookings.filter(b => (b.status || '').toUpperCase() === 'PENDING').length;
+  const totalNights = bookings.reduce((sum, b) => sum + (b.nights || 0), 0);
+  const uniqueUnits = new Set(bookings.map(b => b.unit_id)).size;
+
+  const activeYm = month.format('YYYY-MM');
+  const queryState = {
+    ym: activeYm,
+    property: propertyId ? String(propertyId) : '',
+    unit: selectedUnitId ? String(selectedUnitId) : '',
+    q: rawFilters.q || '',
+    start: rawFilters.start || '',
+    end: rawFilters.end || ''
+  };
+
+  function buildQuery(overrides) {
+    const params = new URLSearchParams();
+    if (queryState.property) params.set('property', queryState.property);
+    if (queryState.unit) params.set('unit', queryState.unit);
+    if (queryState.q) params.set('q', queryState.q);
+    if (queryState.start) params.set('start', queryState.start);
+    if (queryState.end) params.set('end', queryState.end);
+    if (queryState.ym) params.set('ym', queryState.ym);
+    if (overrides) {
+      Object.keys(overrides).forEach(key => {
+        const value = overrides[key];
+        if (value === null || value === undefined || value === '') {
+          params.delete(key);
+        } else {
+          params.set(key, value);
+        }
+      });
+    }
+    const search = params.toString();
+    return search ? `?${search}` : '';
+  }
+
+  const prevLink = '/calendar' + buildQuery({ ym: prev, start: '', end: '' });
+  const nextLink = '/calendar' + buildQuery({ ym: next, start: '', end: '' });
+
+  const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
   const canExportCalendar = userCan(req.user, 'bookings.export');
 
   res.send(layout({
@@ -633,655 +747,191 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     activeNav: 'calendar',
     branding: resolveBrandingForRequest(req),
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
-      <div class="flex items-center justify-between mb-4">
-        <a class="btn btn-muted" href="/calendar?ym=${prev}">Mês anterior: ${formatMonthYear(prev + '-01')}</a>
-        <div class="text-slate-600">Mês de ${formatMonthYear(month)}</div>
-        <a class="btn btn-muted" href="/calendar?ym=${next}">Mês seguinte: ${formatMonthYear(next + '-01')}</a>
+      <div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
+        <aside class="bg-white border border-slate-200 rounded-lg shadow-sm p-6 space-y-6">
+          <form method="get" class="space-y-6">
+            <input type="hidden" name="ym" value="${esc(activeYm)}">
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Propriedade</label>
+              <select name="property" class="form-select mt-1" ${properties.length ? '' : 'disabled'}>
+                ${properties.length
+                  ? properties.map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')
+                  : '<option value="">Sem propriedades</option>'}
+              </select>
+              ${properties.length ? '' : '<p class="mt-2 text-xs text-slate-500">Crie uma propriedade para começar.</p>'}
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Intervalo de datas</label>
+              <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <input type="date" name="start" value="${esc(startInputValue)}" class="form-input">
+                <input type="date" name="end" value="${esc(endInputValue)}" class="form-input">
+              </div>
+              <p class="mt-1 text-xs text-slate-500">Mostra reservas que ocorram entre as datas selecionadas.</p>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Unidade</label>
+              <select name="unit" class="form-select mt-1" ${units.length ? '' : 'disabled'}>
+                <option value="">Todas as unidades</option>
+                ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+              </select>
+              ${units.length ? '' : '<p class="mt-1 text-xs text-slate-500">Sem unidades disponíveis.</p>'}
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Nome do hóspede</label>
+              <input type="search" name="q" value="${esc(rawFilters.q || '')}" placeholder="Procurar por nome, email ou agência" class="form-input mt-1">
+            </div>
+            <div class="flex flex-col gap-3">
+              <button type="submit" class="btn btn-primary w-full">Aplicar filtros</button>
+              <a class="btn btn-muted w-full" href="/calendar">Limpar filtros</a>
+            </div>
+          </form>
+        </aside>
+        <section class="space-y-6">
+          <div>
+            <h1 class="text-2xl font-semibold text-slate-900">Mapa de Reservas</h1>
+            <p class="text-sm text-slate-500 mt-1">Visualize todas as reservas${propertyLabel ? ` da propriedade ${esc(propertyLabel)}` : ''} num único calendário.</p>
+          </div>
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div class="flex items-center gap-3">
+              <a class="btn btn-muted" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
+              <div class="text-sm font-medium uppercase tracking-wide text-slate-600">${formatMonthYear(month.format('YYYY-MM-DD'))}</div>
+              <a class="btn btn-muted" href="${esc(nextLink)}">${formatMonthYear(next + '-01')} &rarr;</a>
+            </div>
+            <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+              <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>Confirmada</span>
+              <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-amber-400"></span>Pendente</span>
+              ${canExportCalendar ? `<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>` : ''}
+            </div>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas no período</div>
+              <div class="mt-2 text-2xl font-semibold text-slate-900">${bookings.length}</div>
+              <div class="text-xs text-slate-500 mt-1">Total de reservas que coincidem com os filtros aplicados.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas confirmadas</div>
+              <div class="mt-2 text-2xl font-semibold text-slate-900">${confirmedCount}</div>
+              <div class="text-xs text-slate-500 mt-1">Reservas com estado confirmado.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas pendentes</div>
+              <div class="mt-2 text-2xl font-semibold text-slate-900">${pendingCount}</div>
+              <div class="text-xs text-slate-500 mt-1">Reservas que aguardam confirmação.</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div class="text-xs uppercase tracking-wide text-slate-500">Noites reservadas</div>
+              <div class="mt-2 text-2xl font-semibold text-slate-900">${totalNights}</div>
+              <div class="text-xs text-slate-500 mt-1">Envolvem ${uniqueUnits} ${uniqueUnits === 1 ? 'unidade' : 'unidades'}.</div>
+            </div>
+          </div>
+          ${propertyId
+            ? (bookings.length
+              ? renderReservationCalendarGrid({ month, bookings, dayjs, esc })
+              : '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">Não foram encontradas reservas para os filtros selecionados.</div>')
+            : '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">Configure uma propriedade para começar a acompanhar as reservas.</div>'}
+        </section>
       </div>
-      <div class="text-sm mb-3 flex gap-3 items-center">
-        <span class="inline-block w-3 h-3 rounded bg-emerald-500"></span> Livre
-        <span class="inline-block w-3 h-3 rounded bg-rose-500"></span> Ocupado
-        <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
-        <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
-        <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
-        ${canExportCalendar ? `<a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>` : ''}
-      </div>
-      <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
-        ${units.map(u => unitCalendarCard(u, month)).join('')}
-      </div>
-      <div class="calendar-action" data-calendar-action hidden></div>
-      <div class="calendar-toast" data-calendar-toast hidden><span class="calendar-toast__dot"></span><span data-calendar-toast-message></span></div>
-      <script>
-        (function(){
-          const root = document.querySelector('[data-calendar]');
-          if (!root) return;
-          const actionEl = document.querySelector('[data-calendar-action]');
-          const toastEl = document.querySelector('[data-calendar-toast]');
-          const toastMessage = toastEl ? toastEl.querySelector('[data-calendar-toast-message]') : null;
-          const fetchTemplate = root.getAttribute('data-calendar-fetch');
-          const month = root.getAttribute('data-month');
-          let actionCtx = null;
-          let dragCtx = null;
-          let selectionCtx = null;
-          let toastTimer = null;
-          const CAN_RESCHEDULE = userCanClient('calendar.reschedule');
-          const CAN_CANCEL_CALENDAR = userCanClient('calendar.cancel');
-          const CAN_CREATE_BLOCK = userCanClient('calendar.block.create');
-          const CAN_DELETE_BLOCK = userCanClient('calendar.block.delete');
-          const CAN_MANAGE_BLOCK = userCanClient('calendar.block.manage');
-          const CAN_VIEW_BOOKING = userCanClient('bookings.view');
-
-          function isPrimaryPointer(e) {
-            if (e.pointerType === 'mouse') {
-              return typeof e.button === 'number' ? e.button === 0 : e.isPrimary !== false;
-            }
-            return true;
-          }
-
-          function parseDate(str) {
-            if (!str) return null;
-            const parts = str.split('-').map(Number);
-            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-            return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-          }
-
-          function toISO(date) {
-            return date.toISOString().slice(0, 10);
-          }
-
-          function shiftDate(str, delta) {
-            const base = parseDate(str);
-            if (!base) return null;
-            base.setUTCDate(base.getUTCDate() + delta);
-            return toISO(base);
-          }
-
-          function diffDays(start, end) {
-            const a = parseDate(start);
-            const b = parseDate(end);
-            if (!a || !b) return 0;
-            return Math.round((b - a) / 86400000);
-          }
-
-          function formatHuman(str) {
-            const date = parseDate(str);
-            if (!date) return str;
-            return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
-          }
-
-          function clearHighlight(className) {
-            root.querySelectorAll('.' + className).forEach(function(cell){
-              cell.classList.remove(className);
-            });
-          }
-
-          function releaseCapture(ctx) {
-            if (!ctx || !ctx.captureTarget || typeof ctx.pointerId !== 'number') return;
-            if (typeof ctx.captureTarget.releasePointerCapture === 'function') {
-              try { ctx.captureTarget.releasePointerCapture(ctx.pointerId); } catch (_) {}
-            }
-          }
-
-          function highlightRange(unitId, start, endExclusive, className) {
-            clearHighlight(className);
-            if (!start || !endExclusive) return;
-            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
-            cells.forEach(function(cell){
-              const date = cell.getAttribute('data-date');
-              if (date && date >= start && date < endExclusive) {
-                cell.classList.add(className);
-              }
-            });
-          }
-
-          function rangeHasConflicts(unitId, start, endExclusive, currentId, currentKind) {
-            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
-            return cells.some(function(cell){
-              const date = cell.getAttribute('data-date');
-              if (!date || date < start || date >= endExclusive) return false;
-              const otherId = cell.getAttribute('data-entry-id');
-              if (!otherId) return false;
-              const otherKind = cell.getAttribute('data-entry-kind');
-              if (otherId === currentId && otherKind === currentKind) return false;
-              return true;
-            });
-          }
-
-          function showToast(message, variant) {
-            if (!toastEl || !toastMessage) return;
-            toastEl.setAttribute('data-variant', variant || 'success');
-            toastMessage.textContent = message;
-            toastEl.hidden = false;
-            if (toastTimer) window.clearTimeout(toastTimer);
-            toastTimer = window.setTimeout(function(){ toastEl.hidden = true; }, 3200);
-          }
-
-          function hideAction() {
-            if (!actionEl) return;
-            actionEl.hidden = true;
-            actionEl.innerHTML = '';
-            actionCtx = null;
-          }
-
-          function showAction(config) {
-            if (!actionEl) return;
-            actionCtx = config;
-            actionEl.style.left = config.clientX + 'px';
-            actionEl.style.top = (config.clientY - 12) + 'px';
-            actionEl.innerHTML = config.html;
-            actionEl.hidden = false;
-          }
-
-          function refreshUnitCard(unitId) {
-            const card = root.querySelector('[data-unit-card="' + unitId + '"]');
-            if (!card || !fetchTemplate) return;
-            card.setAttribute('data-loading', 'true');
-            const url = fetchTemplate.replace(':id', unitId) + '?ym=' + month;
-            fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
-              .then(function(res){ return res.text(); })
-              .then(function(html){
-                const wrapper = document.createElement('div');
-                wrapper.innerHTML = html.trim();
-                const nextCard = wrapper.firstElementChild;
-                if (nextCard) {
-                  card.replaceWith(nextCard);
-                } else {
-                  card.removeAttribute('data-loading');
-                }
-                hideAction();
-              })
-              .catch(function(){
-                card.removeAttribute('data-loading');
-                showToast('Não foi possível atualizar o calendário.', 'danger');
-                hideAction();
-              });
-          }
-
-          function submitReschedule(ctx, range) {
-            let url;
-            let payload;
-            if (ctx.entryKind === 'BOOKING') {
-              url = '/calendar/booking/' + ctx.entryId + '/reschedule';
-              payload = { checkin: range.start, checkout: range.end };
-            } else {
-              url = '/calendar/block/' + ctx.entryId + '/reschedule';
-              payload = { start_date: range.start, end_date: range.end };
-            }
-            fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Atualizado com sucesso', 'success');
-                  refreshUnitCard(result.data.unit_id || ctx.unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível reagendar.', 'danger');
-                  refreshUnitCard(ctx.unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro de rede ao guardar.', 'danger');
-                refreshUnitCard(ctx.unitId);
-              });
-          }
-
-          function submitBlock(unitId, start, endExclusive) {
-            fetch('/calendar/unit/' + unitId + '/block', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ start_date: start, end_date: endExclusive })
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Bloqueio criado.', 'success');
-                  refreshUnitCard(unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível bloquear estas datas.', 'danger');
-                  refreshUnitCard(unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro de rede ao bloquear datas.', 'danger');
-                refreshUnitCard(unitId);
-              });
-          }
-
-          function submitBlockRemoval(blockId, unitId) {
-            fetch('/calendar/block/' + blockId, {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' }
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Bloqueio removido.', 'success');
-                  refreshUnitCard(unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível remover o bloqueio.', 'danger');
-                  refreshUnitCard(unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro ao remover bloqueio.', 'danger');
-                refreshUnitCard(unitId);
-              });
-          }
-
-          function escapeHtml(str) {
-            return String(str == null ? '' : str)
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;');
-          }
-
-          function formatStatusLabel(status) {
-            switch ((status || '').toUpperCase()) {
-              case 'CONFIRMED':
-                return 'Reserva confirmada';
-              case 'PENDING':
-                return 'Reserva pendente';
-              case 'BLOCK':
-                return 'Bloqueio';
-              default:
-                return status ? 'Estado: ' + status : '';
-            }
-          }
-
-          function formatGuestSummary(adults, children) {
-            const parts = [];
-            if (adults > 0) parts.push(adults + ' ' + (adults === 1 ? 'adulto' : 'adultos'));
-            if (children > 0) parts.push(children + ' ' + (children === 1 ? 'criança' : 'crianças'));
-            return parts.join(' · ');
-          }
-
-          function showEntryActions(cell) {
-            if (!cell) return;
-            const entryId = cell.getAttribute('data-entry-id');
-            if (!entryId) return;
-            const entryKind = cell.getAttribute('data-entry-kind');
-            const status = cell.getAttribute('data-entry-status') || '';
-            const guest = cell.getAttribute('data-entry-guest') || '';
-            const label = cell.getAttribute('data-entry-label') || '';
-            const start = cell.getAttribute('data-entry-start');
-            const end = cell.getAttribute('data-entry-end');
-            const url = cell.getAttribute('data-entry-url');
-            const cancelUrl = cell.getAttribute('data-entry-cancel-url');
-            const historyUrl = '/admin/auditoria?entity=' + encodeURIComponent(entryKind === 'BOOKING' ? 'booking' : 'block') + '&id=' + encodeURIComponent(entryId);
-            const rect = cell.getBoundingClientRect();
-            let html = '<div class="calendar-action__card">';
-            if (entryKind === 'BOOKING') {
-              const email = cell.getAttribute('data-entry-email') || '';
-              const phone = cell.getAttribute('data-entry-phone') || '';
-              const adults = Number(cell.getAttribute('data-entry-adults') || '0');
-              const children = Number(cell.getAttribute('data-entry-children') || '0');
-              const guestSummary = formatGuestSummary(adults, children);
-              const nights = diffDays(start, end);
-              const statusLabel = formatStatusLabel(status);
-              html += '<div class="calendar-action__title">' + escapeHtml(guest || 'Reserva') + '</div>';
-              if (statusLabel) {
-                html += '<div class="text-xs text-slate-300 uppercase tracking-wide">' + escapeHtml(statusLabel) + '</div>';
-              }
-              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1));
-              if (nights > 0) {
-                html += ' · ' + nights + ' ' + (nights === 1 ? 'noite' : 'noites');
-              }
-              html += '</div>';
-              if (guestSummary) {
-                html += '<div class="text-sm text-slate-200">' + escapeHtml(guestSummary) + '</div>';
-              }
-              if (email || phone) {
-                html += '<div class="text-xs text-slate-300 leading-relaxed">';
-                if (email) {
-                  const mailHref = 'mailto:' + encodeURIComponent(email.trim());
-                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Email</span> <a class="text-white underline" href="' + mailHref + '">' + escapeHtml(email) + '</a></div>';
-                }
-                if (phone) {
-                  const telHref = 'tel:' + encodeURIComponent(phone.replace(/\s+/g, ''));
-                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Telefone</span> <a class="text-white underline" href="' + telHref + '">' + escapeHtml(phone) + '</a></div>';
-                }
-                html += '</div>';
-              }
-              if (label) {
-                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
-              }
-              const noteCount = Number(cell.getAttribute('data-entry-note-count') || '0');
-              const notePreview = cell.getAttribute('data-entry-note-preview') || '';
-              const noteMeta = cell.getAttribute('data-entry-note-meta') || '';
-              if (noteCount > 0 && notePreview) {
-                html += '<div class="text-xs text-slate-200 bg-slate-900/30 rounded-lg p-2 leading-relaxed">';
-                html += '<div class="font-semibold">Última nota (' + escapeHtml(noteMeta || noteCount + (noteCount === 1 ? ' nota' : ' notas')) + ')</div>';
-                html += '<div class="text-slate-100 whitespace-pre-line mt-1">' + escapeHtml(notePreview) + (notePreview.length >= 180 ? '…' : '') + '</div>';
-                if (noteCount > 1) {
-                  html += '<div class="mt-1 text-slate-400">' + noteCount + ' notas no total.</div>';
-                }
-                html += '</div>';
-              }
-              html += '<div class="calendar-action__buttons">';
-              if (url && CAN_VIEW_BOOKING) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
-              if (CAN_CANCEL_CALENDAR) {
-                html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
-              }
-              html += '</div>';
-              html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
-              if (status !== 'CONFIRMED') {
-                html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
-              } else if (!CAN_RESCHEDULE) {
-                html += '<p class="text-xs text-amber-200">Não tem permissões para reagendar arrastando.</p>';
-              } else {
-                html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
-              }
-            } else {
-              html += '<div class="calendar-action__title">Bloqueio</div>';
-              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
-              if (label) {
-                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
-              }
-              html += '<div class="calendar-action__buttons">';
-              html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
-              if (CAN_DELETE_BLOCK) {
-                html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
-              }
-              html += '</div>';
-              if (CAN_MANAGE_BLOCK) {
-                html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
-              } else {
-                html += '<p class="text-xs text-amber-200">Não tem permissões para mover este bloqueio.</p>';
-              }
-            }
-            html += '</div>';
-            showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
-            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit'), cancelUrl: cancelUrl };
-          }
-
-          function normalizeRange(a, b) {
-            if (!a || !b) return { start: a, endExclusive: shiftDate(a, 1), end: b };
-            if (a <= b) {
-              return { start: a, endExclusive: shiftDate(b, 1), end: b };
-            }
-            return { start: b, endExclusive: shiftDate(a, 1), end: a };
-          }
-
-          function showSelectionActions(ctx) {
-            const humanStart = formatHuman(ctx.start);
-            const humanEnd = formatHuman(shiftDate(ctx.end, -1));
-            const nights = diffDays(ctx.start, ctx.end);
-            let html = '<div class="calendar-action__card">';
-            html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
-            html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
-            html += '<div class="calendar-action__buttons">';
-            const disableBlock = ctx.conflict || !CAN_CREATE_BLOCK;
-            html += '<button class="btn btn-primary" data-action="block-range"' + (disableBlock ? ' disabled' : '') + '>Bloquear estas datas</button>';
-            html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
-            html += '</div>';
-            if (ctx.conflict) {
-              html += '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>';
-            } else if (!CAN_CREATE_BLOCK) {
-              html += '<p class="text-xs text-amber-200">Não tem permissões para criar bloqueios.</p>';
-            } else {
-              html += '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
-            }
-            html += '</div>';
-            showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
-            actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
-          }
-
-          function onPointerDown(e) {
-            if (!isPrimaryPointer(e)) return;
-            const cell = e.target.closest('[data-calendar-cell]');
-            if (!cell) return;
-            if (cell.getAttribute('data-in-month') !== '1') return;
-            hideAction();
-            const entryId = cell.getAttribute('data-entry-id');
-            if (entryId) {
-              const entryKind = cell.getAttribute('data-entry-kind');
-              const status = cell.getAttribute('data-entry-status') || '';
-              const reschedPermission = entryKind === 'BOOKING'
-                ? (CAN_RESCHEDULE && status === 'CONFIRMED')
-                : CAN_MANAGE_BLOCK;
-              if (typeof cell.setPointerCapture === 'function') {
-                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
-              }
-              dragCtx = {
-                entryId: entryId,
-                entryKind: entryKind,
-                status: status,
-                canReschedule: reschedPermission,
-                unitId: cell.getAttribute('data-unit'),
-                originStart: cell.getAttribute('data-entry-start'),
-                originEnd: cell.getAttribute('data-entry-end'),
-                anchorDate: cell.getAttribute('data-date'),
-                pointerStart: { x: e.clientX, y: e.clientY },
-                pointerId: e.pointerId,
-                captureTarget: cell,
-                moved: false,
-                preview: null,
-                conflict: false
-              };
-            } else {
-              if (!CAN_CREATE_BLOCK) return;
-              if (typeof cell.setPointerCapture === 'function') {
-                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
-              }
-              selectionCtx = {
-                unitId: cell.getAttribute('data-unit'),
-                startDate: cell.getAttribute('data-date'),
-                endDate: cell.getAttribute('data-date'),
-                pointerStart: { x: e.clientX, y: e.clientY },
-                pointerId: e.pointerId,
-                captureTarget: cell,
-                active: true
-              };
-              highlightRange(selectionCtx.unitId, selectionCtx.startDate, shiftDate(selectionCtx.startDate, 1), 'calendar-cell--selection');
-            }
-          }
-
-          function onPointerMove(e) {
-            if (dragCtx) {
-              if (!dragCtx.canReschedule) return;
-              if (!dragCtx.moved) {
-                const delta = Math.abs(e.clientX - dragCtx.pointerStart.x) + Math.abs(e.clientY - dragCtx.pointerStart.y);
-                if (delta > 5) dragCtx.moved = true;
-              }
-              if (!dragCtx.moved) return;
-              const el = document.elementFromPoint(e.clientX, e.clientY);
-              const cell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
-              if (!cell) return;
-              const hoverDate = cell.getAttribute('data-date');
-              if (!hoverDate) return;
-              const anchorOffset = diffDays(dragCtx.originStart, dragCtx.anchorDate);
-              const duration = diffDays(dragCtx.originStart, dragCtx.originEnd);
-              const newStart = shiftDate(hoverDate, -anchorOffset);
-              const newEnd = shiftDate(newStart, duration);
-              dragCtx.preview = { start: newStart, end: newEnd };
-              dragCtx.conflict = rangeHasConflicts(dragCtx.unitId, newStart, newEnd, dragCtx.entryId, dragCtx.entryKind);
-              highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--preview');
-              if (dragCtx.conflict) {
-                highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--invalid');
-              } else {
-                clearHighlight('calendar-cell--invalid');
-              }
-              e.preventDefault();
-            } else if (selectionCtx && selectionCtx.active) {
-              const targetEl = document.elementFromPoint(e.clientX, e.clientY);
-              const targetCell = targetEl && targetEl.closest('[data-calendar-cell][data-unit="' + selectionCtx.unitId + '"]');
-              if (!targetCell) return;
-              const targetDate = targetCell.getAttribute('data-date');
-              if (!targetDate || targetDate === selectionCtx.endDate) return;
-              selectionCtx.endDate = targetDate;
-              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
-              highlightRange(selectionCtx.unitId, range.start, range.endExclusive, 'calendar-cell--selection');
-            }
-          }
-
-          function onPointerUp(e) {
-            if (dragCtx) {
-              const preview = dragCtx.preview;
-              const wasDragging = dragCtx.moved;
-              const conflict = dragCtx.conflict;
-              if (!wasDragging) {
-                clearHighlight('calendar-cell--preview');
-                clearHighlight('calendar-cell--invalid');
-                releaseCapture(dragCtx);
-                dragCtx = null;
-                return;
-              }
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              const changed = preview && (preview.start !== dragCtx.originStart || preview.end !== dragCtx.originEnd);
-              const ctxCopy = dragCtx;
-              releaseCapture(dragCtx);
-              dragCtx = null;
-              if (preview && !conflict && changed) {
-                submitReschedule(ctxCopy, preview);
-              } else if (conflict) {
-                showToast('As novas datas entram em conflito com outra ocupação.', 'danger');
-                refreshUnitCard(ctxCopy.unitId);
-              }
-            } else if (selectionCtx && selectionCtx.active) {
-              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
-              clearHighlight('calendar-cell--selection');
-              const conflict = rangeHasConflicts(selectionCtx.unitId, range.start, range.endExclusive);
-              releaseCapture(selectionCtx);
-              showSelectionActions({
-                unitId: selectionCtx.unitId,
-                start: range.start,
-                end: range.endExclusive,
-                conflict: conflict,
-                clientX: e.clientX,
-                clientY: e.clientY
-              });
-              selectionCtx = null;
-            }
-          }
-
-          function onPointerCancel() {
-            if (dragCtx) {
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              releaseCapture(dragCtx);
-              dragCtx = null;
-            }
-            if (selectionCtx && selectionCtx.active) {
-              clearHighlight('calendar-cell--selection');
-              releaseCapture(selectionCtx);
-              selectionCtx = null;
-            }
-          }
-
-          function onDoubleClick(e) {
-            if (e.button !== 0) return;
-            const cell = e.target.closest('[data-calendar-cell]');
-            if (!cell) return;
-            if (cell.getAttribute('data-in-month') !== '1') return;
-            const entryId = cell.getAttribute('data-entry-id');
-            if (!entryId) return;
-            dragCtx = null;
-            hideAction();
-            showEntryActions(cell);
-          }
-
-          function onActionClick(e) {
-            const target = e.target.closest('[data-action]');
-            if (!target || !actionCtx) return;
-            const action = target.getAttribute('data-action');
-            if (action === 'block-range' && actionCtx.type === 'selection') {
-              if (!CAN_CREATE_BLOCK) return;
-              e.preventDefault();
-              hideAction();
-              submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
-            }
-            if (action === 'delete-block' && actionCtx.type === 'entry') {
-              if (!CAN_DELETE_BLOCK) return;
-              e.preventDefault();
-              hideAction();
-              submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
-            }
-            if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
-              if (!CAN_CANCEL_CALENDAR) return;
-              e.preventDefault();
-              const proceed = window.confirm('Cancelar esta reserva?');
-              if (!proceed) return;
-              const cancelUrl = target.getAttribute('data-cancel-url') || actionCtx.cancelUrl || ('/calendar/booking/' + actionCtx.entryId + '/cancel');
-              const unitId = actionCtx.unitId;
-              fetch(cancelUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-              })
-                .then(function(res){
-                  return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                    return { res: res, data: data };
-                  });
-                })
-                .then(function(result){
-                  const ok = result.res && result.res.ok && result.data && result.data.ok;
-                  if (ok) {
-                    showToast(result.data.message || 'Reserva cancelada.', 'info');
-                    refreshUnitCard(unitId);
-                  } else {
-                    showToast(result.data && result.data.message ? result.data.message : 'Não foi possível cancelar.', 'danger');
-                    refreshUnitCard(unitId);
-                  }
-                })
-                .catch(function(){
-                  showToast('Erro ao cancelar a reserva.', 'danger');
-                  refreshUnitCard(unitId);
-                });
-            }
-          }
-
-          function onDocumentClick(e) {
-            if (!actionEl || actionEl.hidden) return;
-            if (!actionEl.contains(e.target)) hideAction();
-          }
-
-          function onKeyDown(e) {
-            if (e.key === 'Escape') {
-              clearHighlight('calendar-cell--selection');
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              hideAction();
-              releaseCapture(dragCtx);
-              dragCtx = null;
-              releaseCapture(selectionCtx);
-              selectionCtx = null;
-            }
-          }
-
-          root.addEventListener('pointerdown', onPointerDown);
-          window.addEventListener('pointermove', onPointerMove);
-          window.addEventListener('pointerup', onPointerUp);
-          window.addEventListener('pointercancel', onPointerCancel);
-          root.addEventListener('dblclick', onDoubleClick);
-          if (actionEl) actionEl.addEventListener('click', onActionClick);
-          document.addEventListener('click', onDocumentClick);
-          document.addEventListener('keydown', onKeyDown);
-        })();
-      </script>
     `
   }));
 });
+
+
+function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
+  if (!month) return '';
+  const monthStart = month.startOf('month');
+  const offset = (monthStart.day() + 6) % 7;
+  const firstCell = monthStart.subtract(offset, 'day');
+  const totalDays = month.daysInMonth();
+  const totalCells = Math.ceil((offset + totalDays) / 7) * 7;
+  const todayIso = dayjs().format('YYYY-MM-DD');
+
+  const normalized = bookings.map(booking => ({
+    ...booking,
+    checkinISO: booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
+    checkoutISO: booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
+    checkinLabel: booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
+    checkoutLabel: booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
+    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
+  }));
+
+  const headerHtml = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+    .map(label => `<div class="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">${label}</div>`)
+    .join('');
+
+  const cellsHtml = Array.from({ length: totalCells }, (_, index) => {
+    const cellDate = firstCell.add(index, 'day');
+    const iso = cellDate.format('YYYY-MM-DD');
+    const isCurrentMonth = cellDate.month() === month.month();
+    const isToday = iso === todayIso;
+    const bookingsForDay = normalized.filter(b => iso >= b.checkinISO && iso < b.checkoutISO);
+    const bookingsHtml = bookingsForDay.length
+      ? bookingsForDay.map(b => renderReservationCalendarEntry(b, dayjs, esc)).join('')
+      : '<div class="text-xs text-slate-400">Sem reservas</div>';
+
+    return `
+      <div class="min-h-[190px] border-b border-r border-slate-200 p-3 ${isCurrentMonth ? 'bg-white text-slate-700' : 'bg-slate-50 text-slate-400'}">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold uppercase tracking-wide">${cellDate.format('DD')}</span>
+          ${isToday ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">Hoje</span>' : ''}
+        </div>
+        <div class="space-y-2">
+          ${bookingsHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="overflow-x-auto">
+      <div class="min-w-[960px]">
+        <div class="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="grid grid-cols-7 border-b border-slate-200 bg-slate-50">${headerHtml}</div>
+          <div class="grid grid-cols-7">${cellsHtml}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderReservationCalendarEntry(booking, dayjs, esc) {
+  const status = (booking.status || '').toUpperCase();
+  let statusLabel = booking.status || 'Reserva';
+  let statusClass = 'bg-slate-200 text-slate-600';
+  if (status === 'CONFIRMED') {
+    statusLabel = 'Confirmada';
+    statusClass = 'bg-emerald-100 text-emerald-700';
+  } else if (status === 'PENDING') {
+    statusLabel = 'Pendente';
+    statusClass = 'bg-amber-100 text-amber-700';
+  }
+
+  const guestName = esc(booking.guest_name || `Reserva #${booking.id}`);
+  const unitName = esc(booking.unit_name || 'Unidade');
+  const checkinLabel = esc(booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'));
+  const checkoutLabel = esc(booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'));
+  const nights = booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'));
+  const agency = booking.agency ? `<div class="uppercase tracking-wide text-[10px] text-slate-400">${esc(booking.agency)}</div>` : '';
+
+  return `
+    <a href="/admin/bookings/${booking.id}" class="block rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      <div class="flex items-center justify-between px-3 pt-2">
+        <span class="text-xs font-semibold text-slate-700 truncate">${guestName}</span>
+        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}">${esc(statusLabel)}</span>
+      </div>
+      <div class="px-3 pb-2 text-xs text-slate-500 space-y-1">
+        <div class="flex items-center gap-2 text-slate-600">
+          <span class="inline-flex h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+          <span class="truncate">${unitName}</span>
+        </div>
+        <div>${checkinLabel} &rarr; ${checkoutLabel}</div>
+        <div>${nights} noite${nights === 1 ? '' : 's'}</div>
+        ${agency}
+      </div>
+    </a>
+  `;
+}
+
 
 app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym;
