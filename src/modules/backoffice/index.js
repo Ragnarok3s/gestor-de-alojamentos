@@ -989,43 +989,22 @@ module.exports = function registerBackoffice(app, context) {
       redirectPath: '/limpeza/tarefas',
       variant: 'backoffice'
     });
-    const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
-    const sidebarNav = [
-      html`<a class="bo-tab is-active" href="/limpeza/tarefas">
-          <i data-lucide="broom" class="w-4 h-4"></i>
-          <span>Mapa de limpezas</span>
-        </a>`
-    ];
-    if (canManageHousekeeping) {
-      sidebarNav.push(
-        html`<a class="bo-tab" href="/admin/limpeza">
-            <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
-            <span>Gestão completa</span>
-          </a>`
-      );
-    }
     const body = html`
-      <div class="bo-shell">
-        <aside class="bo-sidebar">
-          <div class="bo-sidebar__title">Limpezas</div>
-          <div class="bo-nav">${sidebarNav.join('')}</div>
-        </aside>
-        <div class="bo-main">
-          <header class="bo-header">
-            <h1>Mapa de limpezas</h1>
-            <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
-          </header>
-          <section class="bo-card">
-            <h2>Resumo rápido</h2>
-            <div class="bo-metrics">
-              <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
-              <div class="bo-metric"><strong>${inProgressCount}</strong><span>Em curso</span></div>
-              <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
-            </div>
-          </section>
-          <div class="bo-stack">
-            ${boardHtml}
+      <div class="bo-main">
+        <header class="bo-header">
+          <h1>Mapa de limpezas</h1>
+          <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
+        </header>
+        <section class="bo-card">
+          <h2>Resumo rápido</h2>
+          <div class="bo-metrics">
+            <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
+            <div class="bo-metric"><strong>${inProgressCount}</strong><span>Em curso</span></div>
+            <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
           </div>
+        </section>
+        <div class="bo-stack">
+          ${boardHtml}
         </div>
       </div>
     `;
