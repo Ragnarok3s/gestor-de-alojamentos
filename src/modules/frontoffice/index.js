@@ -746,13 +746,64 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
       <h2>Resumo das reservas</h2>
       <p class="bo-subtitle">${propertyLabel
         ? `Dados atuais para ${esc(propertyLabel)}.`
-        : 'Escolha uma propriedade na coluna lateral para ver o mapa completo.'}</p>
+        : 'Escolha uma propriedade nos filtros abaixo para ver o mapa completo.'}</p>
       <div class="bo-metrics">
         <div class="bo-metric"><strong>${bookings.length}</strong><span>Reservas no período</span></div>
         <div class="bo-metric"><strong>${confirmedCount}</strong><span>Confirmadas</span></div>
         <div class="bo-metric"><strong>${pendingCount}</strong><span>Pendentes</span></div>
         <div class="bo-metric"><strong>${totalNights}</strong><span>Noites reservadas · ${uniqueUnits} ${uniqueUnits === 1 ? 'unidade' : 'unidades'}</span></div>
       </div>
+    </section>`;
+
+  const calendarFiltersCard = html`
+    <section class="bo-card bo-calendar-filters">
+      <h2>Filtrar reservas</h2>
+      <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
+      <form method="get" class="bo-calendar-filters__form">
+        <input type="hidden" name="ym" value="${esc(activeYm)}" />
+        <div class="bo-field">
+          <label for="calendar-filter-property">Propriedade</label>
+          <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
+            ${properties.length
+              ? properties
+                  .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
+                  .join('')
+              : '<option value="">Sem propriedades</option>'}
+          </select>
+          ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
+        </div>
+        <div class="bo-field">
+          <label>Intervalo de datas</label>
+          <div class="bo-calendar-date-range">
+            <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
+            <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
+          </div>
+          <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
+        </div>
+        <div class="bo-field">
+          <label for="calendar-filter-unit">Unidade</label>
+          <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
+            <option value="">Todas as unidades</option>
+            ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+          </select>
+          ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
+        </div>
+        <div class="bo-field">
+          <label for="calendar-filter-search">Nome do hóspede</label>
+          <input
+            id="calendar-filter-search"
+            type="search"
+            name="q"
+            value="${esc(rawFilters.q || '')}"
+            placeholder="Pesquisar por nome, email ou agência"
+            class="input"
+          />
+        </div>
+        <div class="bo-calendar-filters__actions">
+          <button type="submit" class="btn btn-primary">Aplicar filtros</button>
+          <a class="btn btn-light" href="/calendar">Limpar filtros</a>
+        </div>
+      </form>
     </section>`;
 
   const calendarGridHtml = propertyId
@@ -792,63 +843,9 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           <h1>Mapa de reservas</h1>
           <p>Acompanhe todas as reservas da propriedade num calendário único com filtros rápidos.</p>
         </header>
-        <div class="bo-calendar-layout">
-          <div class="bo-calendar-layout__filters">
-            <section class="bo-card bo-calendar-filters">
-              <h2>Filtrar reservas</h2>
-              <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
-              <form method="get" class="bo-calendar-filters__form">
-                <input type="hidden" name="ym" value="${esc(activeYm)}" />
-                <div class="bo-field">
-                  <label for="calendar-filter-property">Propriedade</label>
-                  <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
-                    ${properties.length
-                      ? properties
-                          .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
-                          .join('')
-                      : '<option value="">Sem propriedades</option>'}
-                  </select>
-                  ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
-                </div>
-                <div class="bo-field">
-                  <label>Intervalo de datas</label>
-                  <div class="bo-calendar-date-range">
-                    <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
-                    <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
-                  </div>
-                  <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
-                </div>
-                <div class="bo-field">
-                  <label for="calendar-filter-unit">Unidade</label>
-                  <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
-                    <option value="">Todas as unidades</option>
-                    ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-                  </select>
-                  ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
-                </div>
-                <div class="bo-field">
-                  <label for="calendar-filter-search">Nome do hóspede</label>
-                  <input
-                    id="calendar-filter-search"
-                    type="search"
-                    name="q"
-                    value="${esc(rawFilters.q || '')}"
-                    placeholder="Pesquisar por nome, email ou agência"
-                    class="input"
-                  />
-                </div>
-                <div class="bo-calendar-filters__actions">
-                  <button type="submit" class="btn btn-primary">Aplicar filtros</button>
-                  <a class="btn btn-light" href="/calendar">Limpar filtros</a>
-                </div>
-              </form>
-            </section>
-          </div>
-          <div class="bo-calendar-layout__content">
-            ${calendarSummaryCard}
-            ${calendarBoard}
-          </div>
-        </div>
+        ${calendarSummaryCard}
+        ${calendarFiltersCard}
+        ${calendarBoard}
       </div>
     `
   }));
