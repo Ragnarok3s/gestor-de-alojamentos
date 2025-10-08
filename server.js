@@ -1875,6 +1875,11 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
   const isHousekeepingOnly = user && user.role === 'limpeza';
   const canAccessBackoffice = userHasBackofficeAccess(user);
   const canViewBookings = can('bookings.view');
+  const pageClasses = String(pageClass || '')
+    .split(/\s+/)
+    .map(cls => cls.trim())
+    .filter(Boolean);
+  const isBackofficeShell = pageClasses.includes('page-backoffice');
   const brandHomeHref = isHousekeepingOnly
     ? '/limpeza/tarefas'
     : canAccessBackoffice && can('dashboard.view')
@@ -1936,6 +1941,36 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
           <button type="submit">Log-out</button>
         </form>`
     : '<a class="login-link" href="/login">Login</a>';
+
+  const navLinks = [];
+  const pushNavLink = (key, href, label) => {
+    navLinks.push(`<a class="${navClass(key)}" href="${href}">${label}</a>`);
+  };
+
+  if (!isHousekeepingOnly) {
+    pushNavLink('search', '/search', 'Pesquisar');
+  }
+  if (can('calendar.view')) {
+    pushNavLink('calendar', '/calendar', 'Mapa de reservas');
+  }
+  if (can('housekeeping.view')) {
+    pushNavLink('housekeeping', '/limpeza/tarefas', 'Limpezas');
+  }
+  if (canAccessBackoffice && can('dashboard.view')) {
+    pushNavLink('backoffice', '/admin', 'Backoffice');
+  }
+  if (!isBackofficeShell) {
+    if (canViewBookings) {
+      pushNavLink('bookings', '/admin/bookings', 'Reservas');
+    }
+    if (canAccessBackoffice && (can('audit.view') || can('logs.view'))) {
+      pushNavLink('audit', '/admin/auditoria', 'Auditoria');
+    }
+    if (canAccessBackoffice && can('users.manage')) {
+      pushNavLink('branding', '/admin/identidade-visual', 'Identidade');
+      pushNavLink('users', '/admin/utilizadores', 'Utilizadores');
+    }
+  }
 
   return html`<!doctype html>
   <html lang="pt">
@@ -2605,14 +2640,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
               </span>
             </a>
             <nav class="nav-links">
-              ${!isHousekeepingOnly ? `<a class="${navClass('search')}" href="/search">Pesquisar</a>` : ''}
-              ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
-              ${can('housekeeping.view') ? `<a class="${navClass('housekeeping')}" href="/limpeza/tarefas">Limpezas</a>` : ``}
-              ${canAccessBackoffice && can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
-              ${canViewBookings ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
-              ${canAccessBackoffice && (can('audit.view') || can('logs.view')) ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
-              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
-              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${navLinks.join('')}
             </nav>
             <div class="nav-actions">${navActionsHtml}</div>
           </div>
