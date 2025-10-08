@@ -2265,13 +2265,14 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-empty-state{padding:40px;border-radius:24px;background:rgba(254,243,199,.5);text-align:center;font-size:.85rem;color:#b45309;font-weight:500;}
         .page-backoffice .bo-calendar-entry{display:grid;gap:6px;padding:14px 16px;border-radius:20px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;box-shadow:0 12px 28px rgba(249,115,22,.14);text-decoration:none;color:inherit;transition:transform .16s ease,box-shadow .16s ease;}
         .page-backoffice .bo-calendar-entry:hover{transform:translateY(-2px);box-shadow:0 18px 34px rgba(249,115,22,.22);}
-        .page-backoffice .bo-calendar-entry__header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-        .page-backoffice .bo-calendar-entry__guest{font-weight:600;color:#9a3412;font-size:.95rem;flex:1;}
-        .page-backoffice .bo-calendar-entry__status{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+        .page-backoffice .bo-calendar-entry__header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+        .page-backoffice .bo-calendar-entry__guest{font-weight:600;color:#9a3412;font-size:.95rem;flex:1;min-width:0;word-break:break-word;}
+        .page-backoffice .bo-calendar-entry__status{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;margin-left:auto;align-self:flex-start;}
         .page-backoffice .bo-calendar-entry__status--confirmed{background:rgba(16,185,129,.18);color:#047857;}
         .page-backoffice .bo-calendar-entry__status--pending{background:rgba(251,191,36,.25);color:#92400e;}
         .page-backoffice .bo-calendar-entry__status--default{background:rgba(148,163,184,.32);color:#334155;}
         .page-backoffice .bo-calendar-entry__meta{display:grid;gap:4px;font-size:.8rem;color:#b45309;}
+        .page-backoffice .bo-calendar-entry__meta > *{word-break:break-word;}
         .page-backoffice .bo-calendar-entry__dates{font-size:.78rem;color:#a16207;}
         .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
         .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
