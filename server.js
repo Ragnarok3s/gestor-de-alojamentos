@@ -693,7 +693,8 @@ function runAutomationSweep(trigger = 'manual') {
       created_at: started.toISOString(),
       title: 'Check-in próximo',
       message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`,
-      href: `/admin/bookings/${b.id}`
+      href: `/admin/bookings/${b.id}`,
+      booking_id: b.id
     });
   });
 

@@ -1616,20 +1616,55 @@ module.exports = function registerBackoffice(app, context) {
       });
     });
     automationNotifications.slice(0, 5).forEach(n => {
-      notifications.push({
+      if (!n) return;
+      const severityRaw = typeof n.severity === 'string' ? n.severity.toLowerCase() : '';
+      let href = '';
+      if (typeof n.href === 'string' && n.href.trim()) {
+        href = n.href.trim();
+      } else {
+        const type = typeof n.type === 'string' ? n.type.toLowerCase() : '';
+        const title = typeof n.title === 'string' ? n.title.toLowerCase() : '';
+        if (type.includes('checkin')) {
+          const bookingId = n.booking_id || n.bookingId;
+          if (bookingId) {
+            href = `/admin/bookings/${bookingId}`;
+          }
+        }
+        if (!href && (type.includes('housekeep') || type.includes('clean') || title.includes('limpez'))) {
+          href = '/limpeza/tarefas';
+        }
+      }
+      const notification = {
         title: n.title || 'Alerta operacional',
         message: n.message || '',
         meta: n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun,
-        href: '#estatisticas',
-        severity: n.severity === 'danger' || n.severity === 'critical' ? 'danger' : n.severity === 'warning' ? 'warning' : ''
-      });
+        severity:
+          severityRaw === 'danger' || severityRaw === 'critical'
+            ? 'danger'
+            : severityRaw === 'warning'
+            ? 'warning'
+            : severityRaw === 'success'
+            ? 'success'
+            : ''
+      };
+      if (href) notification.href = href;
+      notifications.push(notification);
     });
+
+    const broomIconSvg = `
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M3 21h4l7-7"></path>
+        <path d="M14 14l5-5a3 3 0 0 0-4.24-4.24l-5 5"></path>
+        <path d="M11 11l2 2"></path>
+        <path d="M5 21l-1-4 4 1"></path>
+      </svg>
+    `.trim();
 
     const navItems = [
       { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', allowed: canSeeHousekeeping },
+      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
@@ -1640,7 +1675,10 @@ module.exports = function registerBackoffice(app, context) {
         const classes = ['bo-tab'];
         if (item.id === defaultPane) classes.push('is-active');
         const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
-        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}><i data-lucide="${item.icon}" class="w-5 h-5"></i><span>${esc(item.label)}</span></button>`;
+        const iconMarkup = item.iconSvg
+          ? item.iconSvg
+          : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
+        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}>${iconMarkup}<span>${esc(item.label)}</span></button>`;
       })
       .join('');
 
