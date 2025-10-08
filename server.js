@@ -25,6 +25,7 @@ const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
+const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
 
 const app = express();
@@ -692,7 +693,9 @@ function runAutomationSweep(trigger = 'manual') {
       severity: 'info',
       created_at: started.toISOString(),
       title: 'Check-in próximo',
-      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`,
+      href: `/admin/bookings/${b.id}`,
+      booking_id: b.id
     });
   });
 
@@ -1866,7 +1869,7 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 }
 
 // ===================== Layout =====================
-function layout({ title, body, user, activeNav = '', branding, notifications = [], pageClass = '' }) {
+function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
   const theme = branding || getBranding();
   const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
   const hasUser = !!user;
@@ -1883,7 +1886,19 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
     ? '/admin/bookings'
     : '/';
   const userPermissions = user ? Array.from(user.permissions || []) : [];
-  const notificationsList = Array.isArray(notifications) ? notifications.filter(Boolean) : [];
+  const notificationsList =
+    notifications === null
+      ? buildUserNotifications({
+          user,
+          db,
+          dayjs,
+          userCan,
+          ensureAutomationFresh,
+          automationCache
+        })
+      : Array.isArray(notifications)
+      ? notifications.filter(Boolean)
+      : [];
   const notificationsCount = notificationsList.length;
   const userRoleLabel = user && user.role_label ? user.role_label : user && user.role ? user.role : '';
   const brandLogoClass = theme.logoPath ? 'brand-logo has-image' : 'brand-logo';
@@ -1898,13 +1913,13 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
     const severity = typeof item.severity === 'string' && item.severity.trim()
       ? ` nav-notifications__item--${esc(item.severity.trim())}`
       : '';
-    const title = esc(item.title || 'Atualização');
+    const title = `<span class="nav-notifications__title">${esc(item.title || 'Atualização')}</span>`;
     const message = item.message ? `<div class="nav-notifications__message">${esc(item.message)}</div>` : '';
     const meta = item.meta ? `<div class="nav-notifications__meta">${esc(item.meta)}</div>` : '';
-    const target = item.href
-      ? `<a class="nav-notifications__title" href="${esc(item.href)}">${title}</a>`
-      : `<span class="nav-notifications__title">${title}</span>`;
-    return `<li class="nav-notifications__item${severity}">${target}${message}${meta}</li>`;
+    if (item.href) {
+      return `<li class="nav-notifications__item${severity}"><a class="nav-notifications__link" href="${esc(item.href)}">${title}${message}${meta}</a></li>`;
+    }
+    return `<li class="nav-notifications__item${severity}">${title}${message}${meta}</li>`;
   };
 
   const notificationsPanelHtml = notificationsCount
@@ -1937,6 +1952,25 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         </form>`
     : '<a class="login-link" href="/login">Login</a>';
 
+  const navLinks = [];
+  const pushNavLink = (key, href, label) => {
+    navLinks.push(`<a class="${navClass(key)}" href="${href}">${label}</a>`);
+  };
+
+  if (!isHousekeepingOnly) {
+    pushNavLink('search', '/search', 'Pesquisar');
+  }
+  if (can('calendar.view')) {
+    pushNavLink('calendar', '/calendar', 'Mapa de reservas');
+  }
+  if (can('housekeeping.view')) {
+    pushNavLink('housekeeping', '/limpeza/tarefas', 'Limpezas');
+  }
+  if (canAccessBackoffice && can('dashboard.view')) {
+    pushNavLink('backoffice', '/admin', 'Backoffice');
+  }
+  // intentionally restrict the top navigation to the primary shortcuts only
+
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -1946,7 +1980,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
       <script src="https://unpkg.com/htmx.org@2.0.3"></script>
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
-      <script src="https://unpkg.com/lucide@latest"></script>
+      <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
       <style>
         :root{
           --brand-primary:${theme.primaryColor};
@@ -1986,14 +2020,22 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         .feature-builder__controls{display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;}
         .feature-builder__control{display:flex;flex-direction:column;gap:.35rem;min-width:0;}
         .feature-builder__control--select{flex:2 1 220px;}
-        .feature-builder__control--counter{flex:1 1 160px;}
+        .feature-builder__control--detail{flex:1 1 220px;}
         .feature-builder__control-label{font-size:.7rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#fb923c;}
-        .feature-builder__counter{display:inline-flex;align-items:center;border-radius:999px;border:1px solid #fed7aa;overflow:hidden;background:#fff;box-shadow:0 6px 16px rgba(249,115,22,.08);}
-        .feature-builder__step{border:none;background:transparent;color:#f97316;font-size:1.1rem;font-weight:700;width:38px;height:38px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-        .feature-builder__step:disabled{opacity:.4;cursor:not-allowed;}
-        .feature-builder__quantity{width:56px;border:none;background:transparent;text-align:center;font-size:1rem;font-weight:600;color:#9a3412;appearance:textfield;}
-        .feature-builder__quantity::-webkit-outer-spin-button,
-        .feature-builder__quantity::-webkit-inner-spin-button{appearance:none;margin:0;}
+        .feature-builder__icon-picker{position:relative;}
+        .feature-builder__icon-toggle{width:100%;display:flex;align-items:center;gap:.55rem;border-radius:999px;border:1px solid #fed7aa;background:#fff;box-shadow:0 6px 16px rgba(249,115,22,.08);padding:.55rem 1rem;color:#9a3412;font-weight:600;cursor:pointer;}
+        .feature-builder__icon-toggle:focus{outline:none;box-shadow:0 0 0 3px rgba(249,115,22,.25);}
+        .feature-builder__icon-toggle svg{width:18px;height:18px;}
+        .feature-builder__icon-preview{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:#fff7ed;color:#f97316;flex:0 0 36px;}
+        .feature-builder__icon-preview.is-empty{background:#f1f5f9;color:#94a3b8;}
+        .feature-builder__icon-text{flex:1;display:flex;flex-direction:column;text-align:left;font-size:.85rem;}
+        .feature-builder__icon-placeholder{color:#94a3b8;font-weight:500;}
+        .feature-builder__icon-caret{display:inline-flex;align-items:center;justify-content:center;color:#f97316;}
+        .feature-builder__icon-options{position:absolute;top:calc(100% + .5rem);left:0;z-index:30;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem;padding:.65rem;border-radius:1rem;border:1px solid #fed7aa;background:#fff;box-shadow:0 18px 40px rgba(249,115,22,.15);min-width:240px;}
+        .feature-builder__icon-options[hidden]{display:none;}
+        .feature-builder__icon-option{display:flex;align-items:center;gap:.45rem;border-radius:.75rem;padding:.45rem .6rem;border:1px solid transparent;background:transparent;color:#9a3412;font-weight:600;cursor:pointer;transition:background .15s ease,border-color .15s ease;}
+        .feature-builder__icon-option:hover{background:#fff7ed;}
+        .feature-builder__icon-option.is-active{border-color:#f97316;background:#fff7ed;}
         .feature-builder__add{align-self:flex-start;padding:.55rem 1.2rem;border-radius:999px;font-size:.85rem;}
         .feature-builder__list{display:flex;flex-wrap:wrap;gap:.5rem;margin:0;padding:0;list-style:none;}
         .feature-builder__item{display:inline-flex;align-items:center;gap:.4rem;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:.35rem .7rem;font-size:.8rem;font-weight:600;}
@@ -2002,6 +2044,16 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         .feature-builder__remove{border:none;background:transparent;color:#ea580c;cursor:pointer;font-size:1rem;line-height:1;padding:0;}
         .feature-builder__remove:hover{color:#c2410c;}
         .feature-builder__empty{font-size:.8rem;color:#64748b;}
+        .feature-builder__legend{margin-top:.75rem;border:1px solid #fed7aa;border-radius:1rem;padding:.65rem 1rem;background:#fff5eb;color:#9a3412;}
+        .feature-builder__legend[open]{box-shadow:0 18px 36px rgba(249,115,22,.12);}
+        .feature-builder__legend summary{list-style:none;cursor:pointer;outline:none;}
+        .feature-builder__legend summary::-webkit-details-marker{display:none;}
+        .feature-builder__legend-summary{display:inline-flex;align-items:center;gap:.45rem;font-weight:600;}
+        .feature-builder__legend-summary svg{width:18px;height:18px;}
+        .feature-builder__legend-list{margin:0;padding:.75rem 0 0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;}
+        .feature-builder__legend-item{display:flex;align-items:center;gap:.55rem;font-size:.8rem;}
+        .feature-builder__legend-item strong{display:block;font-weight:600;color:#c2410c;}
+        .feature-builder__legend-item small{display:block;color:#9a3412b3;font-size:.72rem;margin-top:.1rem;}
         .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
         body.app-body{margin:0;background:var(--brand-background);color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
@@ -2034,8 +2086,10 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         .nav-notifications__item--warning{border-color:#f59e0b;}
         .nav-notifications__item--danger{border-color:#ef4444;}
         .nav-notifications__item--success{border-color:#22c55e;}
+        .nav-notifications__link{display:block;padding:6px 8px;border-radius:10px;color:inherit;text-decoration:none;transition:background .15s ease,color .15s ease;}
+        .nav-notifications__link:hover{background:rgba(248,250,252,.9);}
+        .nav-notifications__link:hover .nav-notifications__title{color:#1d4ed8;}
         .nav-notifications__title{display:block;font-weight:600;color:#0f172a;text-decoration:none;}
-        .nav-notifications__title:hover{color:#1d4ed8;}
         .nav-notifications__message{margin-top:4px;color:#475569;font-size:.78rem;}
         .nav-notifications__meta{margin-top:4px;color:#94a3b8;font-size:.72rem;}
         .nav-notifications__empty{margin:0;font-size:.85rem;color:#475569;}
@@ -2587,14 +2641,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
               </span>
             </a>
             <nav class="nav-links">
-              ${!isHousekeepingOnly ? `<a class="${navClass('search')}" href="/search">Pesquisar</a>` : ''}
-              ${can('calendar.view') ? `<a class="${navClass('calendar')}" href="/calendar">Mapa de reservas</a>` : ``}
-              ${can('housekeeping.view') ? `<a class="${navClass('housekeeping')}" href="/limpeza/tarefas">Limpezas</a>` : ``}
-              ${canAccessBackoffice && can('dashboard.view') ? `<a class="${navClass('backoffice')}" href="/admin">Backoffice</a>` : ``}
-              ${canViewBookings ? `<a class="${navClass('bookings')}" href="/admin/bookings">Reservas</a>` : ``}
-              ${canAccessBackoffice && (can('audit.view') || can('logs.view')) ? `<a class="${navClass('audit')}" href="/admin/auditoria">Auditoria</a>` : ``}
-              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('branding')}" href="/admin/identidade-visual">Identidade</a>` : ''}
-              ${canAccessBackoffice && can('users.manage') ? `<a class="${navClass('users')}" href="/admin/utilizadores">Utilizadores</a>` : ''}
+              ${navLinks.join('')}
             </nav>
             <div class="nav-actions">${navActionsHtml}</div>
           </div>
@@ -2696,6 +2743,7 @@ const context = {
   requirePermission,
   requireAnyPermission,
   requireAdmin,
+  buildUserNotifications,
   overlaps,
   unitAvailable,
   rateQuote,

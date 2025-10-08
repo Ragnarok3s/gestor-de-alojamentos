@@ -16,6 +16,48 @@ const FEATURE_PRESETS = [
     label: 'Quartos',
     singular: 'quarto',
     plural: 'quartos'
+  },
+  {
+    icon: 'wifi',
+    label: 'Redes Wi-Fi',
+    singular: 'rede Wi-Fi',
+    plural: 'redes Wi-Fi'
+  },
+  {
+    icon: 'tv',
+    label: 'Televisões',
+    singular: 'televisão',
+    plural: 'televisões'
+  },
+  {
+    icon: 'coffee',
+    label: 'Máquinas de café',
+    singular: 'máquina de café',
+    plural: 'máquinas de café'
+  },
+  {
+    icon: 'car',
+    label: 'Lugares de estacionamento',
+    singular: 'lugar de estacionamento',
+    plural: 'lugares de estacionamento'
+  },
+  {
+    icon: 'sun',
+    label: 'Terraços',
+    singular: 'terraço',
+    plural: 'terraços'
+  },
+  {
+    icon: 'waves',
+    label: 'Piscinas',
+    singular: 'piscina',
+    plural: 'piscinas'
+  },
+  {
+    icon: 'chef-hat',
+    label: 'Kitchenettes equipadas',
+    singular: 'kitchenette equipada',
+    plural: 'kitchenettes equipadas'
   }
 ];
 
@@ -49,6 +91,7 @@ module.exports = function registerBackoffice(app, context) {
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
+    buildUserNotifications,
     automationSeverityStyle,
     formatDateRangeShort,
     capitalizeMonth,
@@ -117,7 +160,39 @@ module.exports = function registerBackoffice(app, context) {
   const HOUSEKEEPING_PRIORITIES = new Set(['alta', 'normal', 'baixa']);
   const HOUSEKEEPING_PRIORITY_ORDER = { alta: 0, normal: 1, baixa: 2 };
 
-  const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(item => `<option value="${item.icon}">${esc(item.label)}</option>`).join('');
+  const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(
+    item => `<option value="${item.icon}">${esc(item.label)}</option>`
+  ).join('');
+  const FEATURE_PICKER_OPTIONS_HTML = FEATURE_PRESETS.map(
+    item => `
+              <button type="button" class="feature-builder__icon-option" data-icon-option data-icon="${item.icon}" data-label="${esc(item.label)}" role="option" aria-selected="false">
+                <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+                <span>${esc(item.label)}</span>
+              </button>`
+  ).join('');
+  const FEATURE_PICKER_LEGEND_HTML = `
+    <details class="feature-builder__legend">
+      <summary>
+        <span class="feature-builder__legend-summary">
+          <i aria-hidden="true" data-lucide="list"></i>
+          <span>Ver ícones disponíveis</span>
+        </span>
+      </summary>
+      <ul class="feature-builder__legend-list">
+        ${FEATURE_PRESETS.map(
+          item => `
+            <li class="feature-builder__legend-item">
+              <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+              <span>
+                <strong>${esc(item.label)}</strong>
+                <small>${esc(item.singular)}${item.plural ? ' · ' + esc(item.plural) : ''}</small>
+              </span>
+            </li>
+          `
+        ).join('')}
+      </ul>
+    </details>
+  `;
   const FEATURE_PRESETS_JSON = JSON.stringify(FEATURE_PRESETS).replace(/</g, '\\u003c');
 
   function inlineScript(source) {
@@ -130,7 +205,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
-    featureBuilderSource.replace('__FEATURE_PRESETS__', FEATURE_PRESETS_JSON)
+    featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
 
@@ -144,7 +219,10 @@ module.exports = function registerBackoffice(app, context) {
   function renderFeatureBuilderField({ name, value, helperText, label } = {}) {
     const fieldName = name ? esc(name) : 'features_raw';
     const safeValue = value ? esc(value) : '';
-    const helper = helperText ? `<p class="form-hint">${esc(helperText)}</p>` : '';
+    const helperParts = [];
+    if (helperText) helperParts.push(`<p class="form-hint">${esc(helperText)}</p>`);
+    helperParts.push(FEATURE_PICKER_LEGEND_HTML);
+    const helper = helperParts.join('');
     const heading = label ? `<span class="form-label">${esc(label)}</span>` : '';
     return `
       <div class="feature-builder form-field" data-feature-builder>
@@ -152,19 +230,27 @@ module.exports = function registerBackoffice(app, context) {
         <div class="feature-builder__controls">
           <label class="feature-builder__control feature-builder__control--select">
             <span class="feature-builder__control-label">Característica</span>
-            <select class="input feature-builder__select" data-feature-select>
-              <option value="">Selecionar característica</option>
-              ${FEATURE_PRESET_OPTIONS_HTML}
-            </select>
-          </label>
-          <div class="feature-builder__control feature-builder__control--counter">
-            <span class="feature-builder__control-label">Quantidade</span>
-            <div class="feature-builder__counter" data-feature-counter>
-              <button type="button" class="feature-builder__step" data-feature-decrement aria-label="Diminuir quantidade">−</button>
-              <input type="number" inputmode="numeric" min="1" value="1" class="feature-builder__quantity" data-feature-quantity />
-              <button type="button" class="feature-builder__step" data-feature-increment aria-label="Aumentar quantidade">+</button>
+            <div class="feature-builder__icon-picker" data-feature-picker>
+              <button type="button" class="feature-builder__icon-toggle" data-feature-picker-toggle aria-haspopup="true" aria-expanded="false" aria-label="Selecionar característica">
+                <span class="feature-builder__icon-preview is-empty" data-feature-picker-preview aria-hidden="true"><i data-lucide="plus"></i></span>
+                <span class="feature-builder__icon-text">
+                  <span class="feature-builder__icon-placeholder" data-feature-picker-label data-placeholder="Selecionar característica">Selecionar característica</span>
+                </span>
+                <span class="feature-builder__icon-caret" aria-hidden="true"><i data-lucide="chevron-down"></i></span>
+              </button>
+              <div class="feature-builder__icon-options" data-feature-picker-options hidden role="listbox" aria-label="Selecionar característica">
+                ${FEATURE_PICKER_OPTIONS_HTML}
+              </div>
+              <select data-feature-select hidden>
+                <option value="">Selecionar característica</option>
+                ${FEATURE_PRESET_OPTIONS_HTML}
+              </select>
             </div>
-          </div>
+          </label>
+          <label class="feature-builder__control feature-builder__control--detail">
+            <span class="feature-builder__control-label">Detalhe</span>
+            <input type="text" class="input feature-builder__detail" data-feature-detail placeholder="Ex.: 2 camas king" value="" />
+          </label>
           <button type="button" class="btn btn-light feature-builder__add" data-feature-add>Adicionar</button>
         </div>
         <ul class="feature-builder__list" data-feature-list data-empty-text="Sem características adicionadas."></ul>
@@ -1454,18 +1540,6 @@ module.exports = function registerBackoffice(app, context) {
     const pendingBookingsCount = financialTotals.pending_count || 0;
     const averageTicketCents = confirmedBookingsCount ? Math.round(confirmedRevenueCents / confirmedBookingsCount) : 0;
 
-    const pendingBookings = db
-      .prepare(
-        `SELECT b.id, b.guest_name, b.created_at, b.checkin, b.checkout, u.name AS unit_name, p.name AS property_name
-           FROM bookings b
-           JOIN units u ON u.id = b.unit_id
-           JOIN properties p ON p.id = u.property_id
-          WHERE b.status = 'PENDING'
-          ORDER BY b.created_at DESC
-          LIMIT 10`
-      )
-      .all();
-
     const canManageProperties = userCan(req.user, 'properties.manage');
     const canViewAutomation = userCan(req.user, 'automation.view');
     const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
@@ -1520,31 +1594,30 @@ module.exports = function registerBackoffice(app, context) {
           .all()
       : [];
 
-    const notifications = [];
-    pendingBookings.forEach(b => {
-      notifications.push({
-        title: 'Reserva pendente',
-        message: `${b.guest_name || 'Sem hóspede'} · ${b.property_name} · ${b.unit_name}`,
-        meta: dayjs(b.created_at).format('DD/MM HH:mm'),
-        href: `/admin/bookings/${b.id}`,
-        severity: 'warning'
-      });
+    const notifications = buildUserNotifications({
+      user: req.user,
+      db,
+      dayjs,
+      userCan,
+      automationData,
+      automationCache,
+      ensureAutomationFresh
     });
-    automationNotifications.slice(0, 5).forEach(n => {
-      notifications.push({
-        title: n.title || 'Alerta operacional',
-        message: n.message || '',
-        meta: n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun,
-        href: '#estatisticas',
-        severity: n.severity === 'danger' || n.severity === 'critical' ? 'danger' : n.severity === 'warning' ? 'warning' : ''
-      });
-    });
+
+    const broomIconSvg = `
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M3 21h4l7-7"></path>
+        <path d="M14 14l5-5a3 3 0 0 0-4.24-4.24l-5 5"></path>
+        <path d="M11 11l2 2"></path>
+        <path d="M5 21l-1-4 4 1"></path>
+      </svg>
+    `.trim();
 
     const navItems = [
       { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', allowed: canSeeHousekeeping },
+      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
@@ -1555,7 +1628,10 @@ module.exports = function registerBackoffice(app, context) {
         const classes = ['bo-tab'];
         if (item.id === defaultPane) classes.push('is-active');
         const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
-        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}><i data-lucide="${item.icon}" class="w-5 h-5"></i><span>${esc(item.label)}</span></button>`;
+        const iconMarkup = item.iconSvg
+          ? item.iconSvg
+          : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
+        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}>${iconMarkup}<span>${esc(item.label)}</span></button>`;
       })
       .join('');
 
@@ -2167,7 +2243,7 @@ module.exports = function registerBackoffice(app, context) {
                         ${renderFeatureBuilderField({
                           name: 'features_raw',
                           label: 'Características',
-                          helperText: 'Seleciona uma característica e indica quantas existem nesta unidade.'
+                          helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
                         })}
                       </div>
                     </fieldset>
@@ -2827,7 +2903,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
               name: 'features_raw',
               value: unitFeaturesTextarea,
               label: 'Características',
-              helperText: 'Utiliza o seletor para indicar quantas casas de banho, equipamentos de ar condicionado e quartos existem.'
+              helperText: 'Utiliza o seletor para atualizar as quantidades ou descrições das características desta unidade.'
             })}
             <div class="text-xs text-slate-500">Morada e localidade são configuradas na página do alojamento.</div>
 
