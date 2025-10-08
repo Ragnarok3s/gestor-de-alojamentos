@@ -170,9 +170,26 @@ CREATE TABLE IF NOT EXISTS housekeeping_tasks (
 }
 
 function runLightMigrations(db) {
+  const listColumns = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+
   const ensureColumn = (table, name, def) => {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-    if (!cols.includes(name)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+    const cols = listColumns(table);
+    if (!cols.includes(name)) {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+    }
+  };
+
+  const ensureTimestampColumn = (table, name) => {
+    const cols = listColumns(table);
+    if (cols.includes(name)) return;
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} TEXT`).run();
+    try {
+      db.prepare(
+        `UPDATE ${table} SET ${name} = datetime('now') WHERE ${name} IS NULL OR ${name} = ''`
+      ).run();
+    } catch (err) {
+      console.warn(`Falha ao normalizar ${table}.${name}:`, err.message);
+    }
   };
 
   try {
@@ -199,8 +216,8 @@ function runLightMigrations(db) {
     ensureColumn('sessions', 'token_hash', 'TEXT');
     ensureColumn('sessions', 'ip', 'TEXT');
     ensureColumn('sessions', 'user_agent', 'TEXT');
-    ensureColumn('sessions', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))");
-    ensureColumn('sessions', 'last_seen_at', "TEXT NOT NULL DEFAULT (datetime('now'))");
+    ensureTimestampColumn('sessions', 'created_at');
+    ensureTimestampColumn('sessions', 'last_seen_at');
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }
