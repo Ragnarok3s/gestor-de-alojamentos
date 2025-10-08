@@ -682,9 +682,12 @@ module.exports = function registerBackoffice(app, context) {
       canStart = false,
       canComplete = false,
       actionBase = '/limpeza/tarefas',
-      redirectPath = '/limpeza/tarefas'
+      redirectPath = '/limpeza/tarefas',
+      variant = 'default'
     } = options;
 
+    const isBackofficeVariant = variant === 'backoffice';
+    const cardClass = isBackofficeVariant ? 'bo-card' : 'card';
     const statusLabels = { pending: 'Pendente', in_progress: 'Em curso', completed: 'Concluída' };
     const priorityLabels = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
     const safeActionBase = actionBase.replace(/\/+$/, '');
@@ -748,13 +751,29 @@ module.exports = function registerBackoffice(app, context) {
         );
       }
 
-      return html`<article class="rounded-lg border ${highlight ? 'border-rose-200 bg-rose-50/70' : 'border-slate-200 bg-white'} p-3 shadow-sm space-y-2">
-        <div class="flex items-start justify-between gap-3">
+      const articleBaseClass = isBackofficeVariant
+        ? `bo-housekeeping-task${highlight ? ' is-highlighted' : ''}`
+        : `rounded-lg border ${highlight ? 'border-rose-200 bg-rose-50/70' : 'border-slate-200 bg-white'} shadow-sm`;
+      const headerClass = isBackofficeVariant
+        ? 'bo-housekeeping-task__header'
+        : 'flex items-start justify-between gap-3';
+      const statusWrapperClass = isBackofficeVariant
+        ? 'bo-housekeeping-task__status'
+        : 'flex flex-col items-end gap-1 text-right';
+      const metaClass = isBackofficeVariant
+        ? 'bo-housekeeping-task__meta'
+        : 'flex flex-wrap gap-2 text-xs text-slate-500';
+      const actionsClass = isBackofficeVariant
+        ? 'bo-housekeeping-task__actions'
+        : 'flex flex-wrap gap-2 pt-1';
+
+      return html`<article class="${articleBaseClass} p-3 shadow-sm space-y-2">
+        <div class="${headerClass}">
           <div>
             <p class="font-medium text-slate-900">${esc(task.title)}</p>
             <p class="text-sm text-slate-500">${esc(propertyUnitLine)}</p>
           </div>
-          <div class="flex flex-col items-end gap-1 text-right">
+          <div class="${statusWrapperClass}">
             <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(task.status)}">${esc(
               statusLabels[task.status] || task.status
             )}</span>
@@ -768,9 +787,9 @@ module.exports = function registerBackoffice(app, context) {
           ? `<p class="text-xs text-slate-500">Estadia: ${esc(formatDateRangeShort(task.booking_checkin, task.booking_checkout))}</p>`
           : ''}
         ${task.details ? `<p class="text-sm text-slate-600 whitespace-pre-line">${esc(task.details)}</p>` : ''}
-        ${meta.length ? `<div class="flex flex-wrap gap-2 text-xs text-slate-500">${meta.join('')}</div>` : ''}
+        ${meta.length ? `<div class="${metaClass}">${meta.join('')}</div>` : ''}
         ${canStart || canComplete
-          ? `<div class="flex flex-wrap gap-2 pt-1">${renderTaskActions(task)}</div>`
+          ? `<div class="${actionsClass}">${renderTaskActions(task)}</div>`
           : ''}
       </article>`;
     };
@@ -778,9 +797,13 @@ module.exports = function registerBackoffice(app, context) {
     const renderBookingCard = (booking, type) => {
       const badgeClass =
         type === 'checkout' ? 'bg-rose-100 text-rose-700' : type === 'backlog' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700';
-      const borderClass = type === 'checkout' || type === 'backlog' ? 'border-rose-200 bg-rose-50/60' : 'border-sky-200 bg-sky-50/60';
       const label = type === 'checkout' ? 'Checkout' : type === 'backlog' ? 'Pendente' : 'Check-in';
-      return html`<article class="rounded-lg border ${borderClass} p-3 shadow-sm space-y-1">
+      const cardClassName = isBackofficeVariant
+        ? `bo-housekeeping-booking bo-housekeeping-booking--${type}`
+        : `rounded-lg border ${
+            type === 'checkout' || type === 'backlog' ? 'border-rose-200 bg-rose-50/60' : 'border-sky-200 bg-sky-50/60'
+          } p-3 shadow-sm space-y-1`;
+      return html`<article class="${cardClassName} space-y-1">
         <div class="flex items-center justify-between text-sm font-medium text-slate-800">
           <span>${esc(booking.property_name || '')} · ${esc(booking.unit_name || '')}</span>
           <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass}">${label}</span>
@@ -791,7 +814,7 @@ module.exports = function registerBackoffice(app, context) {
     };
 
     const backlogSection = backlogCheckouts.length
-      ? html`<section class="card border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+      ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
           <div>
             <h3 class="text-base font-semibold text-rose-700">Check-outs recentes a aguardar limpeza</h3>
             <p class="text-sm text-rose-600">Garanta a higienização destas unidades para libertar novas entradas.</p>
@@ -803,7 +826,7 @@ module.exports = function registerBackoffice(app, context) {
       : '';
 
     const overdueSection = overdueTasks.length
-      ? html`<section class="card border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+      ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-base font-semibold text-rose-700">Tarefas de limpeza em atraso</h3>
             <span class="text-sm text-rose-600 font-medium">${overdueTasks.length}</span>
@@ -818,7 +841,7 @@ module.exports = function registerBackoffice(app, context) {
       ? html`<div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           ${buckets
             .map(
-              (bucket) => html`<section class="card p-4 space-y-4">
+              (bucket) => html`<section class="${cardClass} p-4 space-y-4">
                 <header class="flex items-start justify-between gap-2">
                   <div>
                     <p class="text-xs uppercase tracking-wide text-slate-500">${esc(bucket.weekdayLabel)}</p>
@@ -862,6 +885,8 @@ module.exports = function registerBackoffice(app, context) {
             )
             .join('')}
         </div>`
+      : isBackofficeVariant
+      ? html`<section class="${cardClass} p-4"><p class="text-sm text-slate-500">Sem tarefas planeadas para os próximos dias.</p></section>`
       : '<p class="text-sm text-slate-500">Sem tarefas planeadas para os próximos dias.</p>';
 
     const futureGroups = [];
@@ -880,7 +905,7 @@ module.exports = function registerBackoffice(app, context) {
     });
 
     const futureSection = futureGroups.length
-      ? html`<section class="card p-4 space-y-4">
+      ? html`<section class="${cardClass} p-4 space-y-4">
           <h3 class="text-base font-semibold text-slate-800">Próximas limpezas</h3>
           ${futureGroups
             .map(
@@ -896,7 +921,7 @@ module.exports = function registerBackoffice(app, context) {
       : '';
 
     const unscheduledSection = unscheduledTasks.length
-      ? html`<section class="card p-4 space-y-3">
+      ? html`<section class="${cardClass} p-4 space-y-3">
           <h3 class="text-base font-semibold text-slate-800">Tarefas sem data definida</h3>
           <div class="grid gap-3 md:grid-cols-2">
             ${unscheduledTasks.map((task) => renderTaskCard(task)).join('')}
@@ -905,7 +930,7 @@ module.exports = function registerBackoffice(app, context) {
       : '';
 
     const futureEventsSection = futureCheckins.length || futureCheckouts.length
-      ? html`<section class="card p-4 space-y-4">
+      ? html`<section class="${cardClass} p-4 space-y-4">
           <h3 class="text-base font-semibold text-slate-800">Agenda futura</h3>
           <div class="grid gap-4 md:grid-cols-2">
             ${futureCheckouts.length
@@ -961,31 +986,47 @@ module.exports = function registerBackoffice(app, context) {
       canStart: canCompleteTasks,
       canComplete: canCompleteTasks,
       actionBase: '/limpeza/tarefas',
-      redirectPath: '/limpeza/tarefas'
+      redirectPath: '/limpeza/tarefas',
+      variant: 'backoffice'
     });
+    const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
+    const sidebarNav = [
+      html`<a class="bo-tab is-active" href="/limpeza/tarefas">
+          <i data-lucide="broom" class="w-4 h-4"></i>
+          <span>Mapa de limpezas</span>
+        </a>`
+    ];
+    if (canManageHousekeeping) {
+      sidebarNav.push(
+        html`<a class="bo-tab" href="/admin/limpeza">
+            <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+            <span>Gestão completa</span>
+          </a>`
+      );
+    }
     const body = html`
-      <div class="space-y-6">
-        <header class="card p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 class="text-2xl font-semibold text-slate-900">Mapa de limpezas</h1>
-            <p class="text-sm text-slate-600">Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
+      <div class="bo-shell">
+        <aside class="bo-sidebar">
+          <div class="bo-sidebar__title">Limpezas</div>
+          <div class="bo-nav">${sidebarNav.join('')}</div>
+        </aside>
+        <div class="bo-main">
+          <header class="bo-header">
+            <h1>Mapa de limpezas</h1>
+            <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
+          </header>
+          <section class="bo-card">
+            <h2>Resumo rápido</h2>
+            <div class="bo-metrics">
+              <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
+              <div class="bo-metric"><strong>${inProgressCount}</strong><span>Em curso</span></div>
+              <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
+            </div>
+          </section>
+          <div class="bo-stack">
+            ${boardHtml}
           </div>
-          <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
-            <div class="rounded-lg bg-slate-900 text-white p-3 text-center shadow-sm">
-              <p class="text-xs uppercase tracking-wide text-white/70">Pendentes</p>
-              <p class="text-2xl font-semibold">${pendingCount}</p>
-            </div>
-            <div class="rounded-lg bg-amber-500 text-white p-3 text-center shadow-sm">
-              <p class="text-xs uppercase tracking-wide text-white/70">Em curso</p>
-              <p class="text-2xl font-semibold">${inProgressCount}</p>
-            </div>
-            <div class="rounded-lg bg-emerald-600 text-white p-3 text-center shadow-sm">
-              <p class="text-xs uppercase tracking-wide text-white/70">Concluídas (24h)</p>
-              <p class="text-2xl font-semibold">${completedLast24h}</p>
-            </div>
-          </div>
-        </header>
-        ${boardHtml}
+        </div>
       </div>
     `;
     res.send(
@@ -994,6 +1035,7 @@ module.exports = function registerBackoffice(app, context) {
         activeNav: 'housekeeping',
         user: req.user,
         branding: resolveBrandingForRequest(req),
+        pageClass: 'page-backoffice page-housekeeping',
         body
       })
     );

@@ -2199,6 +2199,17 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
         .page-backoffice .bo-tab[disabled]{opacity:.45;cursor:not-allowed;}
         .page-backoffice .bo-main{display:grid;gap:24px;}
+        .page-backoffice .bo-stack{display:grid;gap:24px;}
+        .page-backoffice .bo-housekeeping-task{border-radius:22px;border:1px solid rgba(249,115,22,.18);background:#fff;box-shadow:0 16px 32px rgba(249,115,22,.12);padding:18px;display:grid;gap:10px;}
+        .page-backoffice .bo-housekeeping-task.is-highlighted{border-color:#fb7185;background:rgba(254,226,226,.6);box-shadow:0 20px 44px rgba(248,113,113,.18);}
+        .page-backoffice .bo-housekeeping-task__header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;}
+        .page-backoffice .bo-housekeeping-task__status{display:flex;flex-direction:column;gap:8px;text-align:right;}
+        .page-backoffice .bo-housekeeping-task__meta{display:flex;flex-wrap:wrap;gap:8px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-housekeeping-task__actions{display:flex;flex-wrap:wrap;gap:10px;padding-top:6px;}
+        .page-backoffice .bo-housekeeping-booking{border-radius:20px;padding:16px;border:1px solid rgba(249,115,22,.16);background:#fff;box-shadow:0 14px 28px rgba(249,115,22,.12);display:grid;gap:6px;}
+        .page-backoffice .bo-housekeeping-booking--checkout{border-color:#fb7185;background:rgba(254,226,226,.55);}
+        .page-backoffice .bo-housekeeping-booking--checkin{border-color:#38bdf8;background:rgba(224,242,254,.6);}
+        .page-backoffice .bo-housekeeping-booking--backlog{border-color:#facc15;background:rgba(254,243,199,.6);}
         .page-backoffice .bo-header{background:#fff7ed;border:1px solid #fed7aa;border-radius:26px;padding:28px;display:flex;flex-direction:column;gap:8px;}
         .page-backoffice .bo-header h1{margin:0;font-size:1.9rem;color:#9a3412;}
         .page-backoffice .bo-header p{margin:0;color:#b45309;}
