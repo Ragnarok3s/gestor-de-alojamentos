@@ -39,6 +39,7 @@ module.exports = function registerBackoffice(app, context) {
     getSession,
     createSession,
     destroySession,
+    revokeUserSessions,
     normalizeRole,
     buildUserContext,
     userCan,
@@ -4369,7 +4370,7 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   if (!user) return res.status(404).send('Utilizador não encontrado');
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
+  revokeUserSessions(user_id);
   logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
 });
@@ -4389,7 +4390,7 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
     return res.redirect('/admin/utilizadores');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+  revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
