@@ -25,6 +25,7 @@ const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
+const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
 
 const app = express();
@@ -1868,7 +1869,7 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 }
 
 // ===================== Layout =====================
-function layout({ title, body, user, activeNav = '', branding, notifications = [], pageClass = '' }) {
+function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
   const theme = branding || getBranding();
   const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
   const hasUser = !!user;
@@ -1885,7 +1886,19 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
     ? '/admin/bookings'
     : '/';
   const userPermissions = user ? Array.from(user.permissions || []) : [];
-  const notificationsList = Array.isArray(notifications) ? notifications.filter(Boolean) : [];
+  const notificationsList =
+    notifications === null
+      ? buildUserNotifications({
+          user,
+          db,
+          dayjs,
+          userCan,
+          ensureAutomationFresh,
+          automationCache
+        })
+      : Array.isArray(notifications)
+      ? notifications.filter(Boolean)
+      : [];
   const notificationsCount = notificationsList.length;
   const userRoleLabel = user && user.role_label ? user.role_label : user && user.role ? user.role : '';
   const brandLogoClass = theme.logoPath ? 'brand-logo has-image' : 'brand-logo';
@@ -2730,6 +2743,7 @@ const context = {
   requirePermission,
   requireAnyPermission,
   requireAdmin,
+  buildUserNotifications,
   overlaps,
   unitAvailable,
   rateQuote,

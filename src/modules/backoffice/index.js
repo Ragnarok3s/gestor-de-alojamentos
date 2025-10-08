@@ -91,6 +91,7 @@ module.exports = function registerBackoffice(app, context) {
     logSessionEvent,
     ensureAutomationFresh,
     automationCache,
+    buildUserNotifications,
     automationSeverityStyle,
     formatDateRangeShort,
     capitalizeMonth,
@@ -1539,18 +1540,6 @@ module.exports = function registerBackoffice(app, context) {
     const pendingBookingsCount = financialTotals.pending_count || 0;
     const averageTicketCents = confirmedBookingsCount ? Math.round(confirmedRevenueCents / confirmedBookingsCount) : 0;
 
-    const pendingBookings = db
-      .prepare(
-        `SELECT b.id, b.guest_name, b.created_at, b.checkin, b.checkout, u.name AS unit_name, p.name AS property_name
-           FROM bookings b
-           JOIN units u ON u.id = b.unit_id
-           JOIN properties p ON p.id = u.property_id
-          WHERE b.status = 'PENDING'
-          ORDER BY b.created_at DESC
-          LIMIT 10`
-      )
-      .all();
-
     const canManageProperties = userCan(req.user, 'properties.manage');
     const canViewAutomation = userCan(req.user, 'automation.view');
     const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
@@ -1605,50 +1594,14 @@ module.exports = function registerBackoffice(app, context) {
           .all()
       : [];
 
-    const notifications = [];
-    pendingBookings.forEach(b => {
-      notifications.push({
-        title: 'Reserva pendente',
-        message: `${b.guest_name || 'Sem hóspede'} · ${b.property_name} · ${b.unit_name}`,
-        meta: dayjs(b.created_at).format('DD/MM HH:mm'),
-        href: `/admin/bookings/${b.id}`,
-        severity: 'warning'
-      });
-    });
-    automationNotifications.slice(0, 5).forEach(n => {
-      if (!n) return;
-      const severityRaw = typeof n.severity === 'string' ? n.severity.toLowerCase() : '';
-      let href = '';
-      if (typeof n.href === 'string' && n.href.trim()) {
-        href = n.href.trim();
-      } else {
-        const type = typeof n.type === 'string' ? n.type.toLowerCase() : '';
-        const title = typeof n.title === 'string' ? n.title.toLowerCase() : '';
-        if (type.includes('checkin')) {
-          const bookingId = n.booking_id || n.bookingId;
-          if (bookingId) {
-            href = `/admin/bookings/${bookingId}`;
-          }
-        }
-        if (!href && (type.includes('housekeep') || type.includes('clean') || title.includes('limpez'))) {
-          href = '/limpeza/tarefas';
-        }
-      }
-      const notification = {
-        title: n.title || 'Alerta operacional',
-        message: n.message || '',
-        meta: n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun,
-        severity:
-          severityRaw === 'danger' || severityRaw === 'critical'
-            ? 'danger'
-            : severityRaw === 'warning'
-            ? 'warning'
-            : severityRaw === 'success'
-            ? 'success'
-            : ''
-      };
-      if (href) notification.href = href;
-      notifications.push(notification);
+    const notifications = buildUserNotifications({
+      user: req.user,
+      db,
+      dayjs,
+      userCan,
+      automationData,
+      automationCache,
+      ensureAutomationFresh
     });
 
     const broomIconSvg = `
