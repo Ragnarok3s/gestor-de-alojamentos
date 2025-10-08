@@ -740,97 +740,137 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 
   const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
   const canExportCalendar = userCan(req.user, 'bookings.export');
+  const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
+
+  const sidebarNav = [
+    html`<a class="bo-tab is-active" href="/calendar">
+        <i data-lucide="calendar-days" class="w-4 h-4"></i>
+        <span>Mapa de reservas</span>
+      </a>`
+  ];
+  if (canViewHousekeeping) {
+    sidebarNav.push(
+      html`<a class="bo-tab" href="/limpeza/tarefas">
+          <i data-lucide="broom" class="w-4 h-4"></i>
+          <span>Limpezas</span>
+        </a>`
+    );
+  }
+
+  const calendarSummaryCard = html`
+    <section class="bo-card">
+      <h2>Resumo das reservas</h2>
+      <p class="bo-subtitle">${propertyLabel
+        ? `Dados atuais para ${esc(propertyLabel)}.`
+        : 'Escolha uma propriedade na coluna lateral para ver o mapa completo.'}</p>
+      <div class="bo-metrics">
+        <div class="bo-metric"><strong>${bookings.length}</strong><span>Reservas no período</span></div>
+        <div class="bo-metric"><strong>${confirmedCount}</strong><span>Confirmadas</span></div>
+        <div class="bo-metric"><strong>${pendingCount}</strong><span>Pendentes</span></div>
+        <div class="bo-metric"><strong>${totalNights}</strong><span>Noites reservadas · ${uniqueUnits} ${uniqueUnits === 1 ? 'unidade' : 'unidades'}</span></div>
+      </div>
+    </section>`;
+
+  const calendarGridHtml = propertyId
+    ? bookings.length
+      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc })
+      : '<div class="bo-calendar-empty-state">Não foram encontradas reservas para os filtros selecionados.</div>'
+    : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
+
+  const calendarBoard = html`
+    <section class="bo-card bo-calendar-board">
+      <div class="bo-calendar-toolbar">
+        <div class="bo-calendar-monthnav">
+          <a class="btn btn-light" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
+          <div class="bo-calendar-monthlabel">${formatMonthYear(month.format('YYYY-MM-DD'))}</div>
+          <a class="btn btn-light" href="${esc(nextLink)}">${formatMonthYear(next + '-01')} &rarr;</a>
+        </div>
+        <div class="bo-calendar-actions">
+          <div class="bo-calendar-legend">
+            <span><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
+            <span><span class="bo-dot bo-dot--pending"></span>Pendente</span>
+          </div>
+          ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
+        </div>
+      </div>
+      ${calendarGridHtml}
+    </section>`;
 
   res.send(layout({
     title: 'Mapa de Reservas',
     user: req.user,
     activeNav: 'calendar',
     branding: resolveBrandingForRequest(req),
+    pageClass: 'page-backoffice page-calendar',
     body: html`
-      <div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
-        <aside class="bg-white border border-slate-200 rounded-lg shadow-sm p-6 space-y-6">
-          <form method="get" class="space-y-6">
-            <input type="hidden" name="ym" value="${esc(activeYm)}">
-            <div>
-              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Propriedade</label>
-              <select name="property" class="form-select mt-1" ${properties.length ? '' : 'disabled'}>
-                ${properties.length
-                  ? properties.map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')
-                  : '<option value="">Sem propriedades</option>'}
-              </select>
-              ${properties.length ? '' : '<p class="mt-2 text-xs text-slate-500">Crie uma propriedade para começar.</p>'}
-            </div>
-            <div>
-              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Intervalo de datas</label>
-              <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <input type="date" name="start" value="${esc(startInputValue)}" class="form-input">
-                <input type="date" name="end" value="${esc(endInputValue)}" class="form-input">
-              </div>
-              <p class="mt-1 text-xs text-slate-500">Mostra reservas que ocorram entre as datas selecionadas.</p>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Unidade</label>
-              <select name="unit" class="form-select mt-1" ${units.length ? '' : 'disabled'}>
-                <option value="">Todas as unidades</option>
-                ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-              </select>
-              ${units.length ? '' : '<p class="mt-1 text-xs text-slate-500">Sem unidades disponíveis.</p>'}
-            </div>
-            <div>
-              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Nome do hóspede</label>
-              <input type="search" name="q" value="${esc(rawFilters.q || '')}" placeholder="Procurar por nome, email ou agência" class="form-input mt-1">
-            </div>
-            <div class="flex flex-col gap-3">
-              <button type="submit" class="btn btn-primary w-full">Aplicar filtros</button>
-              <a class="btn btn-muted w-full" href="/calendar">Limpar filtros</a>
-            </div>
-          </form>
+      <div class="bo-shell">
+        <aside class="bo-sidebar">
+          <div class="bo-sidebar__title">Reservas</div>
+          <div class="bo-nav">${sidebarNav.join('')}</div>
         </aside>
-        <section class="space-y-6">
-          <div>
-            <h1 class="text-2xl font-semibold text-slate-900">Mapa de Reservas</h1>
-            <p class="text-sm text-slate-500 mt-1">Visualize todas as reservas${propertyLabel ? ` da propriedade ${esc(propertyLabel)}` : ''} num único calendário.</p>
+        <div class="bo-main">
+          <header class="bo-header">
+            <h1>Mapa de reservas</h1>
+            <p>Acompanhe todas as reservas da propriedade num calendário único com filtros rápidos.</p>
+          </header>
+          <div class="bo-calendar-layout">
+            <div class="bo-calendar-layout__filters">
+              <section class="bo-card bo-calendar-filters">
+                <h2>Filtrar reservas</h2>
+                <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
+                <form method="get" class="bo-calendar-filters__form">
+                  <input type="hidden" name="ym" value="${esc(activeYm)}" />
+                  <div class="bo-field">
+                    <label for="calendar-filter-property">Propriedade</label>
+                    <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
+                      ${properties.length
+                        ? properties
+                            .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
+                            .join('')
+                        : '<option value="">Sem propriedades</option>'}
+                    </select>
+                    ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
+                  </div>
+                  <div class="bo-field">
+                    <label>Intervalo de datas</label>
+                    <div class="bo-calendar-date-range">
+                      <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
+                      <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
+                    </div>
+                    <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
+                  </div>
+                  <div class="bo-field">
+                    <label for="calendar-filter-unit">Unidade</label>
+                    <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
+                      <option value="">Todas as unidades</option>
+                      ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+                    </select>
+                    ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
+                  </div>
+                  <div class="bo-field">
+                    <label for="calendar-filter-search">Nome do hóspede</label>
+                    <input
+                      id="calendar-filter-search"
+                      type="search"
+                      name="q"
+                      value="${esc(rawFilters.q || '')}"
+                      placeholder="Pesquisar por nome, email ou agência"
+                      class="input"
+                    />
+                  </div>
+                  <div class="bo-calendar-filters__actions">
+                    <button type="submit" class="btn btn-primary">Aplicar filtros</button>
+                    <a class="btn btn-light" href="/calendar">Limpar filtros</a>
+                  </div>
+                </form>
+              </section>
+            </div>
+            <div class="bo-calendar-layout__content">
+              ${calendarSummaryCard}
+              ${calendarBoard}
+            </div>
           </div>
-          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div class="flex items-center gap-3">
-              <a class="btn btn-muted" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
-              <div class="text-sm font-medium uppercase tracking-wide text-slate-600">${formatMonthYear(month.format('YYYY-MM-DD'))}</div>
-              <a class="btn btn-muted" href="${esc(nextLink)}">${formatMonthYear(next + '-01')} &rarr;</a>
-            </div>
-            <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-              <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>Confirmada</span>
-              <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-amber-400"></span>Pendente</span>
-              ${canExportCalendar ? `<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>` : ''}
-            </div>
-          </div>
-          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas no período</div>
-              <div class="mt-2 text-2xl font-semibold text-slate-900">${bookings.length}</div>
-              <div class="text-xs text-slate-500 mt-1">Total de reservas que coincidem com os filtros aplicados.</div>
-            </div>
-            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas confirmadas</div>
-              <div class="mt-2 text-2xl font-semibold text-slate-900">${confirmedCount}</div>
-              <div class="text-xs text-slate-500 mt-1">Reservas com estado confirmado.</div>
-            </div>
-            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div class="text-xs uppercase tracking-wide text-slate-500">Reservas pendentes</div>
-              <div class="mt-2 text-2xl font-semibold text-slate-900">${pendingCount}</div>
-              <div class="text-xs text-slate-500 mt-1">Reservas que aguardam confirmação.</div>
-            </div>
-            <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div class="text-xs uppercase tracking-wide text-slate-500">Noites reservadas</div>
-              <div class="mt-2 text-2xl font-semibold text-slate-900">${totalNights}</div>
-              <div class="text-xs text-slate-500 mt-1">Envolvem ${uniqueUnits} ${uniqueUnits === 1 ? 'unidade' : 'unidades'}.</div>
-            </div>
-          </div>
-          ${propertyId
-            ? (bookings.length
-              ? renderReservationCalendarGrid({ month, bookings, dayjs, esc })
-              : '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">Não foram encontradas reservas para os filtros selecionados.</div>')
-            : '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">Configure uma propriedade para começar a acompanhar as reservas.</div>'}
-        </section>
+        </div>
       </div>
     `
   }));
@@ -856,7 +896,7 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
   }));
 
   const headerHtml = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
-    .map(label => `<div class="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">${label}</div>`)
+    .map(label => `<div class="bo-calendar-grid__day">${label}</div>`)
     .join('');
 
   const cellsHtml = Array.from({ length: totalCells }, (_, index) => {
@@ -867,15 +907,17 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
     const bookingsForDay = normalized.filter(b => iso >= b.checkinISO && iso < b.checkoutISO);
     const bookingsHtml = bookingsForDay.length
       ? bookingsForDay.map(b => renderReservationCalendarEntry(b, dayjs, esc)).join('')
-      : '<div class="text-xs text-slate-400">Sem reservas</div>';
+      : '<div class="bo-calendar-empty">Sem reservas</div>';
+
+    const cellClasses = ['bo-calendar-grid__cell'];
+    if (!isCurrentMonth) cellClasses.push('is-out');
+    if (isToday) cellClasses.push('is-today');
+    if ((index + 1) % 7 === 0) cellClasses.push('is-column-end');
 
     return `
-      <div class="min-h-[190px] border-b border-r border-slate-200 p-3 ${isCurrentMonth ? 'bg-white text-slate-700' : 'bg-slate-50 text-slate-400'}">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-semibold uppercase tracking-wide">${cellDate.format('DD')}</span>
-          ${isToday ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">Hoje</span>' : ''}
-        </div>
-        <div class="space-y-2">
+      <div class="${cellClasses.join(' ')}">
+        <div class="bo-calendar-day">${cellDate.format('DD')}</div>
+        <div class="bo-calendar-cell-body">
           ${bookingsHtml}
         </div>
       </div>
@@ -883,13 +925,9 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
   }).join('');
 
   return `
-    <div class="overflow-x-auto">
-      <div class="min-w-[960px]">
-        <div class="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div class="grid grid-cols-7 border-b border-slate-200 bg-slate-50">${headerHtml}</div>
-          <div class="grid grid-cols-7">${cellsHtml}</div>
-        </div>
-      </div>
+    <div class="bo-calendar-grid">
+      ${headerHtml}
+      ${cellsHtml}
     </div>
   `;
 }
@@ -897,35 +935,32 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
 function renderReservationCalendarEntry(booking, dayjs, esc) {
   const status = (booking.status || '').toUpperCase();
   let statusLabel = booking.status || 'Reserva';
-  let statusClass = 'bg-slate-200 text-slate-600';
+  let statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--default';
   if (status === 'CONFIRMED') {
     statusLabel = 'Confirmada';
-    statusClass = 'bg-emerald-100 text-emerald-700';
+    statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--confirmed';
   } else if (status === 'PENDING') {
     statusLabel = 'Pendente';
-    statusClass = 'bg-amber-100 text-amber-700';
+    statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--pending';
   }
 
   const guestName = esc(booking.guest_name || `Reserva #${booking.id}`);
-  const unitName = esc(booking.unit_name || 'Unidade');
+  const unitName = esc([booking.property_name, booking.unit_name].filter(Boolean).join(' · ') || 'Unidade');
   const checkinLabel = esc(booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'));
   const checkoutLabel = esc(booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'));
   const nights = booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'));
-  const agency = booking.agency ? `<div class="uppercase tracking-wide text-[10px] text-slate-400">${esc(booking.agency)}</div>` : '';
+  const agency = booking.agency ? `<div class="bo-calendar-entry__agency">${esc(booking.agency)}</div>` : '';
 
   return `
-    <a href="/admin/bookings/${booking.id}" class="block rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-      <div class="flex items-center justify-between px-3 pt-2">
-        <span class="text-xs font-semibold text-slate-700 truncate">${guestName}</span>
-        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}">${esc(statusLabel)}</span>
+    <a href="/admin/bookings/${booking.id}" class="bo-calendar-entry">
+      <div class="bo-calendar-entry__header">
+        <span class="bo-calendar-entry__guest">${guestName}</span>
+        <span class="${statusClass}">${esc(statusLabel)}</span>
       </div>
-      <div class="px-3 pb-2 text-xs text-slate-500 space-y-1">
-        <div class="flex items-center gap-2 text-slate-600">
-          <span class="inline-flex h-1.5 w-1.5 rounded-full bg-slate-400"></span>
-          <span class="truncate">${unitName}</span>
-        </div>
-        <div>${checkinLabel} &rarr; ${checkoutLabel}</div>
-        <div>${nights} noite${nights === 1 ? '' : 's'}</div>
+      <div class="bo-calendar-entry__meta">
+        <div class="bo-calendar-entry__unit">${unitName}</div>
+        <div class="bo-calendar-entry__dates">${checkinLabel} → ${checkoutLabel}</div>
+        <div class="bo-calendar-entry__nights">${nights} noite${nights === 1 ? '' : 's'}</div>
         ${agency}
       </div>
     </a>
