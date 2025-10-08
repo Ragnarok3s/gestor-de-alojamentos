@@ -16,6 +16,48 @@ const FEATURE_PRESETS = [
     label: 'Quartos',
     singular: 'quarto',
     plural: 'quartos'
+  },
+  {
+    icon: 'wifi',
+    label: 'Redes Wi-Fi',
+    singular: 'rede Wi-Fi',
+    plural: 'redes Wi-Fi'
+  },
+  {
+    icon: 'tv',
+    label: 'Televisões',
+    singular: 'televisão',
+    plural: 'televisões'
+  },
+  {
+    icon: 'coffee',
+    label: 'Máquinas de café',
+    singular: 'máquina de café',
+    plural: 'máquinas de café'
+  },
+  {
+    icon: 'car',
+    label: 'Lugares de estacionamento',
+    singular: 'lugar de estacionamento',
+    plural: 'lugares de estacionamento'
+  },
+  {
+    icon: 'sun',
+    label: 'Terraços',
+    singular: 'terraço',
+    plural: 'terraços'
+  },
+  {
+    icon: 'waves',
+    label: 'Piscinas',
+    singular: 'piscina',
+    plural: 'piscinas'
+  },
+  {
+    icon: 'chef-hat',
+    label: 'Kitchenettes equipadas',
+    singular: 'kitchenette equipada',
+    plural: 'kitchenettes equipadas'
   }
 ];
 
@@ -127,6 +169,29 @@ module.exports = function registerBackoffice(app, context) {
                 <span>${esc(item.label)}</span>
               </button>`
   ).join('');
+  const FEATURE_PICKER_LEGEND_HTML = `
+    <details class="feature-builder__legend">
+      <summary>
+        <span class="feature-builder__legend-summary">
+          <i aria-hidden="true" data-lucide="list"></i>
+          <span>Ver ícones disponíveis</span>
+        </span>
+      </summary>
+      <ul class="feature-builder__legend-list">
+        ${FEATURE_PRESETS.map(
+          item => `
+            <li class="feature-builder__legend-item">
+              <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+              <span>
+                <strong>${esc(item.label)}</strong>
+                <small>${esc(item.singular)}${item.plural ? ' · ' + esc(item.plural) : ''}</small>
+              </span>
+            </li>
+          `
+        ).join('')}
+      </ul>
+    </details>
+  `;
   const FEATURE_PRESETS_JSON = JSON.stringify(FEATURE_PRESETS).replace(/</g, '\\u003c');
 
   function inlineScript(source) {
@@ -139,7 +204,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
-    featureBuilderSource.replace('__FEATURE_PRESETS__', FEATURE_PRESETS_JSON)
+    featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
 
@@ -153,7 +218,10 @@ module.exports = function registerBackoffice(app, context) {
   function renderFeatureBuilderField({ name, value, helperText, label } = {}) {
     const fieldName = name ? esc(name) : 'features_raw';
     const safeValue = value ? esc(value) : '';
-    const helper = helperText ? `<p class="form-hint">${esc(helperText)}</p>` : '';
+    const helperParts = [];
+    if (helperText) helperParts.push(`<p class="form-hint">${esc(helperText)}</p>`);
+    helperParts.push(FEATURE_PICKER_LEGEND_HTML);
+    const helper = helperParts.join('');
     const heading = label ? `<span class="form-label">${esc(label)}</span>` : '';
     return `
       <div class="feature-builder form-field" data-feature-builder>
@@ -180,7 +248,7 @@ module.exports = function registerBackoffice(app, context) {
           </label>
           <label class="feature-builder__control feature-builder__control--detail">
             <span class="feature-builder__control-label">Detalhe</span>
-            <input type="text" class="input feature-builder__detail" data-feature-detail placeholder="Ex.: 2 camas king" value="1" />
+            <input type="text" class="input feature-builder__detail" data-feature-detail placeholder="Ex.: 2 camas king" value="" />
           </label>
           <button type="button" class="btn btn-light feature-builder__add" data-feature-add>Adicionar</button>
         </div>
@@ -2184,7 +2252,7 @@ module.exports = function registerBackoffice(app, context) {
                         ${renderFeatureBuilderField({
                           name: 'features_raw',
                           label: 'Características',
-                          helperText: 'Seleciona uma característica e indica quantas existem nesta unidade.'
+                          helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
                         })}
                       </div>
                     </fieldset>
@@ -2844,7 +2912,7 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
               name: 'features_raw',
               value: unitFeaturesTextarea,
               label: 'Características',
-              helperText: 'Utiliza o seletor para indicar quantas casas de banho, equipamentos de ar condicionado e quartos existem.'
+              helperText: 'Utiliza o seletor para atualizar as quantidades ou descrições das características desta unidade.'
             })}
             <div class="text-xs text-slate-500">Morada e localidade são configuradas na página do alojamento.</div>
 

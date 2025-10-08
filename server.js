@@ -2010,6 +2010,16 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         .feature-builder__remove{border:none;background:transparent;color:#ea580c;cursor:pointer;font-size:1rem;line-height:1;padding:0;}
         .feature-builder__remove:hover{color:#c2410c;}
         .feature-builder__empty{font-size:.8rem;color:#64748b;}
+        .feature-builder__legend{margin-top:.75rem;border:1px solid #fed7aa;border-radius:1rem;padding:.65rem 1rem;background:#fff5eb;color:#9a3412;}
+        .feature-builder__legend[open]{box-shadow:0 18px 36px rgba(249,115,22,.12);}
+        .feature-builder__legend summary{list-style:none;cursor:pointer;outline:none;}
+        .feature-builder__legend summary::-webkit-details-marker{display:none;}
+        .feature-builder__legend-summary{display:inline-flex;align-items:center;gap:.45rem;font-weight:600;}
+        .feature-builder__legend-summary svg{width:18px;height:18px;}
+        .feature-builder__legend-list{margin:0;padding:.75rem 0 0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;}
+        .feature-builder__legend-item{display:flex;align-items:center;gap:.55rem;font-size:.8rem;}
+        .feature-builder__legend-item strong{display:block;font-weight:600;color:#c2410c;}
+        .feature-builder__legend-item small{display:block;color:#9a3412b3;font-size:.72rem;margin-top:.1rem;}
         .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
         body.app-body{margin:0;background:var(--brand-background);color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}

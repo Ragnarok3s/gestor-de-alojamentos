@@ -331,7 +331,7 @@
       upsertEntry(icon, detailInput.value);
       sync();
       setSelectedIcon("");
-      detailInput.value = "1";
+      detailInput.value = "";
       detailInput.focus();
     });
 
