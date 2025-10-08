@@ -39,6 +39,7 @@ module.exports = function registerBackoffice(app, context) {
     getSession,
     createSession,
     destroySession,
+    revokeUserSessions,
     normalizeRole,
     buildUserContext,
     userCan,
@@ -116,7 +117,16 @@ module.exports = function registerBackoffice(app, context) {
   const HOUSEKEEPING_PRIORITIES = new Set(['alta', 'normal', 'baixa']);
   const HOUSEKEEPING_PRIORITY_ORDER = { alta: 0, normal: 1, baixa: 2 };
 
-  const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(item => `<option value="${item.icon}">${esc(item.label)}</option>`).join('');
+  const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(
+    item => `<option value="${item.icon}">${esc(item.label)}</option>`
+  ).join('');
+  const FEATURE_PICKER_OPTIONS_HTML = FEATURE_PRESETS.map(
+    item => `
+              <button type="button" class="feature-builder__icon-option" data-icon-option data-icon="${item.icon}" data-label="${esc(item.label)}" role="option" aria-selected="false">
+                <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+                <span>${esc(item.label)}</span>
+              </button>`
+  ).join('');
   const FEATURE_PRESETS_JSON = JSON.stringify(FEATURE_PRESETS).replace(/</g, '\\u003c');
 
   function inlineScript(source) {
@@ -151,19 +161,27 @@ module.exports = function registerBackoffice(app, context) {
         <div class="feature-builder__controls">
           <label class="feature-builder__control feature-builder__control--select">
             <span class="feature-builder__control-label">Característica</span>
-            <select class="input feature-builder__select" data-feature-select>
-              <option value="">Selecionar característica</option>
-              ${FEATURE_PRESET_OPTIONS_HTML}
-            </select>
-          </label>
-          <div class="feature-builder__control feature-builder__control--counter">
-            <span class="feature-builder__control-label">Quantidade</span>
-            <div class="feature-builder__counter" data-feature-counter>
-              <button type="button" class="feature-builder__step" data-feature-decrement aria-label="Diminuir quantidade">−</button>
-              <input type="number" inputmode="numeric" min="1" value="1" class="feature-builder__quantity" data-feature-quantity />
-              <button type="button" class="feature-builder__step" data-feature-increment aria-label="Aumentar quantidade">+</button>
+            <div class="feature-builder__icon-picker" data-feature-picker>
+              <button type="button" class="feature-builder__icon-toggle" data-feature-picker-toggle aria-haspopup="true" aria-expanded="false" aria-label="Selecionar característica">
+                <span class="feature-builder__icon-preview is-empty" data-feature-picker-preview aria-hidden="true"><i data-lucide="plus"></i></span>
+                <span class="feature-builder__icon-text">
+                  <span class="feature-builder__icon-placeholder" data-feature-picker-label data-placeholder="Selecionar característica">Selecionar característica</span>
+                </span>
+                <span class="feature-builder__icon-caret" aria-hidden="true"><i data-lucide="chevron-down"></i></span>
+              </button>
+              <div class="feature-builder__icon-options" data-feature-picker-options hidden role="listbox" aria-label="Selecionar característica">
+                ${FEATURE_PICKER_OPTIONS_HTML}
+              </div>
+              <select data-feature-select hidden>
+                <option value="">Selecionar característica</option>
+                ${FEATURE_PRESET_OPTIONS_HTML}
+              </select>
             </div>
-          </div>
+          </label>
+          <label class="feature-builder__control feature-builder__control--detail">
+            <span class="feature-builder__control-label">Detalhe</span>
+            <input type="text" class="input feature-builder__detail" data-feature-detail placeholder="Ex.: 2 camas king" value="1" />
+          </label>
           <button type="button" class="btn btn-light feature-builder__add" data-feature-add>Adicionar</button>
         </div>
         <ul class="feature-builder__list" data-feature-list data-empty-text="Sem características adicionadas."></ul>
@@ -4369,7 +4387,7 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   if (!user) return res.status(404).send('Utilizador não encontrado');
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
+  revokeUserSessions(user_id);
   logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
 });
@@ -4389,7 +4407,7 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
     return res.redirect('/admin/utilizadores');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+  revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
