@@ -2199,6 +2199,17 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
         .page-backoffice .bo-tab[disabled]{opacity:.45;cursor:not-allowed;}
         .page-backoffice .bo-main{display:grid;gap:24px;}
+        .page-backoffice .bo-stack{display:grid;gap:24px;}
+        .page-backoffice .bo-housekeeping-task{border-radius:22px;border:1px solid rgba(249,115,22,.18);background:#fff;box-shadow:0 16px 32px rgba(249,115,22,.12);padding:18px;display:grid;gap:10px;}
+        .page-backoffice .bo-housekeeping-task.is-highlighted{border-color:#fb7185;background:rgba(254,226,226,.6);box-shadow:0 20px 44px rgba(248,113,113,.18);}
+        .page-backoffice .bo-housekeeping-task__header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;}
+        .page-backoffice .bo-housekeeping-task__status{display:flex;flex-direction:column;gap:8px;text-align:right;}
+        .page-backoffice .bo-housekeeping-task__meta{display:flex;flex-wrap:wrap;gap:8px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-housekeeping-task__actions{display:flex;flex-wrap:wrap;gap:10px;padding-top:6px;}
+        .page-backoffice .bo-housekeeping-booking{border-radius:20px;padding:16px;border:1px solid rgba(249,115,22,.16);background:#fff;box-shadow:0 14px 28px rgba(249,115,22,.12);display:grid;gap:6px;}
+        .page-backoffice .bo-housekeeping-booking--checkout{border-color:#fb7185;background:rgba(254,226,226,.55);}
+        .page-backoffice .bo-housekeeping-booking--checkin{border-color:#38bdf8;background:rgba(224,242,254,.6);}
+        .page-backoffice .bo-housekeeping-booking--backlog{border-color:#facc15;background:rgba(254,243,199,.6);}
         .page-backoffice .bo-header{background:#fff7ed;border:1px solid #fed7aa;border-radius:26px;padding:28px;display:flex;flex-direction:column;gap:8px;}
         .page-backoffice .bo-header h1{margin:0;font-size:1.9rem;color:#9a3412;}
         .page-backoffice .bo-header p{margin:0;color:#b45309;}
@@ -2217,6 +2228,68 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-metric{background:#fff7ed;border:1px solid #fed7aa;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
         .page-backoffice .bo-metric strong{font-size:1.4rem;color:#9a3412;}
         .page-backoffice .bo-metric span{font-size:.8rem;color:#b45309;}
+        .page-backoffice .bo-calendar-filters{padding:0;overflow:hidden;}
+        .page-backoffice .bo-calendar-filters__details{display:block;}
+        .page-backoffice .bo-calendar-filters__summary{list-style:none;margin:0;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:600;font-size:.95rem;color:#9a3412;border-bottom:1px solid rgba(249,115,22,.18);}
+        .page-backoffice .bo-calendar-filters__summary:focus-visible{outline:2px solid rgba(249,115,22,.4);outline-offset:4px;}
+        .page-backoffice .bo-calendar-filters__summary::-webkit-details-marker{display:none;}
+        .page-backoffice .bo-calendar-filters__summary-label{display:inline-flex;align-items:center;gap:10px;}
+        .page-backoffice .bo-calendar-filters__summary-label i{color:#f97316;}
+        .page-backoffice .bo-calendar-filters__summary-hint{font-size:.78rem;font-weight:500;color:#b45309;}
+        .page-backoffice .bo-calendar-filters__summary::after{content:'\25BC';font-size:.8rem;color:#b45309;transition:transform .18s ease;}
+        .page-backoffice .bo-calendar-filters__details[open] .bo-calendar-filters__summary::after{transform:rotate(180deg);}
+        .page-backoffice .bo-calendar-filters__body{display:none;padding:20px 26px 26px;gap:18px;}
+        .page-backoffice .bo-calendar-filters__details[open] .bo-calendar-filters__body{display:grid;}
+        .page-backoffice .bo-calendar-filters__form{display:grid;gap:18px;}
+        .page-backoffice .bo-field{display:grid;gap:8px;}
+        .page-backoffice .bo-field label{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:#b45309;}
+        .page-backoffice .bo-calendar-date-range{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));}
+        .page-backoffice .bo-calendar-filters .input{border-radius:16px;}
+        .page-backoffice .bo-form-hint{font-size:.72rem;color:#b45309;opacity:.8;margin:0;}
+        .page-backoffice .bo-calendar-filters__actions{display:flex;flex-wrap:wrap;gap:12px;}
+        .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
+        .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
+        .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
+        .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
+        .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
+        .page-backoffice .bo-calendar-monthlabel{font-size:.9rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9a3412;}
+        .page-backoffice .bo-calendar-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;}
+        .page-backoffice .bo-calendar-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-legend span{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);}
+        .page-backoffice .bo-calendar-actions .btn{flex-shrink:0;}
+        .page-backoffice .bo-calendar-hint{margin:0;color:#b45309;font-size:.75rem;font-weight:600;}
+        .page-backoffice .bo-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
+        .page-backoffice .bo-dot--confirmed{background:#10b981;}
+        .page-backoffice .bo-dot--pending{background:#facc15;}
+        .page-backoffice .bo-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:#fff;border-radius:28px;border:1px solid rgba(249,115,22,.2);overflow:hidden;box-shadow:0 24px 46px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-grid__day{padding:14px 10px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;background:#fff7ed;border-right:1px solid rgba(249,115,22,.18);border-bottom:1px solid rgba(249,115,22,.18);}
+        .page-backoffice .bo-calendar-grid__day:nth-child(7n){border-right:none;}
+        .page-backoffice .bo-calendar-grid__cell{min-height:200px;padding:18px;border-right:1px solid rgba(249,115,22,.14);border-bottom:1px solid rgba(249,115,22,.14);display:flex;flex-direction:column;gap:14px;background:#fff;position:relative;}
+        .page-backoffice .bo-calendar-grid__cell.is-column-end{border-right:none;}
+        .page-backoffice .bo-calendar-grid__cell.is-out{background:rgba(254,243,199,.4);color:#b45309;}
+        .page-backoffice .bo-calendar-grid__cell.is-today::after{content:'Hoje';position:absolute;top:16px;right:18px;background:#ecfdf5;color:#047857;font-size:.62rem;font-weight:700;letter-spacing:.1em;padding:4px 10px;border-radius:999px;text-transform:uppercase;}
+        .page-backoffice .bo-calendar-grid__cell.is-drop-target{box-shadow:inset 0 0 0 2px rgba(249,115,22,.45);}
+        .page-backoffice .bo-calendar-day{font-size:.82rem;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.08em;}
+        .page-backoffice .bo-calendar-cell-body{display:grid;gap:12px;}
+        .page-backoffice .bo-calendar-empty{font-size:.78rem;color:#b45309;font-style:italic;}
+        .page-backoffice .bo-calendar-empty-state{padding:40px;border-radius:24px;background:rgba(254,243,199,.5);text-align:center;font-size:.85rem;color:#b45309;font-weight:500;}
+        .page-backoffice .bo-calendar-entry{display:grid;gap:8px;padding:14px 16px;border-radius:20px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;box-shadow:0 12px 28px rgba(249,115,22,.14);text-decoration:none;color:inherit;transition:transform .16s ease,box-shadow .16s ease;line-height:1.35;align-content:start;}
+        .page-backoffice .bo-calendar-entry:hover{transform:translateY(-2px);box-shadow:0 18px 34px rgba(249,115,22,.22);}
+        .page-backoffice .bo-calendar-entry.is-dragging{opacity:.65;}
+        .page-backoffice .bo-calendar-entry.is-saving{opacity:.45;pointer-events:none;cursor:progress;}
+        .page-backoffice .bo-calendar-entry__header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+        .page-backoffice .bo-calendar-entry__guest{font-weight:600;color:#9a3412;font-size:.95rem;flex:1;min-width:0;word-break:break-word;white-space:normal;}
+        .page-backoffice .bo-calendar-entry__status{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;margin-left:auto;align-self:flex-start;}
+        .page-backoffice .bo-calendar-entry__status--confirmed{background:rgba(16,185,129,.18);color:#047857;}
+        .page-backoffice .bo-calendar-entry__status--pending{background:rgba(251,191,36,.25);color:#92400e;}
+        .page-backoffice .bo-calendar-entry__status--default{background:rgba(148,163,184,.32);color:#334155;}
+        .page-backoffice .bo-calendar-entry__meta{display:grid;gap:4px;font-size:.8rem;color:#b45309;line-height:1.35;}
+        .page-backoffice .bo-calendar-entry__meta > *{word-break:break-word;white-space:normal;}
+        .page-backoffice .bo-calendar-entry__dates{font-size:.78rem;color:#a16207;}
+        .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
+        .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
+        @media (max-width:900px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:16px;}}
+        @media (max-width:720px){.page-backoffice .bo-calendar-grid{border-radius:22px;}.page-backoffice .bo-calendar-toolbar{gap:12px;}}
         .page-backoffice .bo-table{overflow:auto;}
         .page-backoffice .bo-table table{min-width:100%;border-collapse:collapse;}
         .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}

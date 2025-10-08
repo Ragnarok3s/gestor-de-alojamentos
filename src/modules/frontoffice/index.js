@@ -31,6 +31,10 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBlockUpdateStmt
   } = context;
 
+  function inlineScript(source) {
+    return source.replace(/<\/(script)/gi, '<\\/$1');
+  }
+
   function sanitizeBookingSubmission(payload, { requireAgency }) {
     const errors = [];
 
@@ -620,668 +624,486 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const prev = month.subtract(1, 'month').format('YYYY-MM');
   const next = month.add(1, 'month').format('YYYY-MM');
 
-  const units = db.prepare(
-    'SELECT u.*, p.name as property_name ' +
-    'FROM units u JOIN properties p ON p.id = u.property_id ' +
-    'ORDER BY p.name, u.name'
-  ).all();
+  const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const propertyMap = new Map(properties.map(p => [p.id, p.name]));
+  let propertyId = req.query.property ? Number(req.query.property) : (properties[0] ? properties[0].id : null);
+  if (Number.isNaN(propertyId)) propertyId = properties[0] ? properties[0].id : null;
+
+  const units = propertyId
+    ? db.prepare('SELECT id, name FROM units WHERE property_id = ? ORDER BY name').all(propertyId)
+    : [];
+
+  const rawFilters = {
+    start: req.query.start && String(req.query.start),
+    end: req.query.end && String(req.query.end),
+    unit: req.query.unit && String(req.query.unit),
+    q: req.query.q && String(req.query.q).trim()
+  };
+
+  let startDate = rawFilters.start && dayjs(rawFilters.start, 'YYYY-MM-DD', true).isValid()
+    ? dayjs(rawFilters.start)
+    : month;
+  let endDate = rawFilters.end && dayjs(rawFilters.end, 'YYYY-MM-DD', true).isValid()
+    ? dayjs(rawFilters.end)
+    : month.endOf('month');
+
+  if (endDate.isBefore(startDate)) {
+    endDate = startDate;
+  }
+
+  startDate = startDate.startOf('day');
+  endDate = endDate.startOf('day');
+
+  const startInputValue = startDate.format('YYYY-MM-DD');
+  const endInputValue = endDate.format('YYYY-MM-DD');
+
+  const endExclusive = endDate.add(1, 'day');
+
+  let selectedUnitId = null;
+  if (rawFilters.unit) {
+    const parsedUnit = Number(rawFilters.unit);
+    if (!Number.isNaN(parsedUnit) && units.some(u => u.id === parsedUnit)) {
+      selectedUnitId = parsedUnit;
+    }
+  }
+
+  const searchTerm = rawFilters.q ? rawFilters.q.toLowerCase() : '';
+
+  let bookings = [];
+  if (propertyId) {
+    const params = {
+      propertyId,
+      start: startDate.format('YYYY-MM-DD'),
+      end: endExclusive.format('YYYY-MM-DD')
+    };
+    let where = `u.property_id = @propertyId AND NOT (b.checkout <= @start OR b.checkin >= @end) AND b.status IN ('CONFIRMED','PENDING')`;
+    if (selectedUnitId) {
+      params.unitId = selectedUnitId;
+      where += ' AND b.unit_id = @unitId';
+    }
+    if (searchTerm) {
+      params.search = '%' + searchTerm + '%';
+      where += " AND (LOWER(b.guest_name) LIKE @search OR LOWER(IFNULL(b.guest_email, '')) LIKE @search OR LOWER(IFNULL(b.agency, '')) LIKE @search)";
+    }
+    bookings = db.prepare(`
+      SELECT b.*, u.name AS unit_name, p.name AS property_name
+        FROM bookings b
+        JOIN units u ON u.id = b.unit_id
+        JOIN properties p ON p.id = u.property_id
+       WHERE ${where}
+       ORDER BY b.checkin, b.checkout, b.id
+    `).all(params).map(row => ({
+      ...row,
+      nights: Math.max(1, dayjs(row.checkout).diff(dayjs(row.checkin), 'day')),
+      checkin_iso: dayjs(row.checkin).format('YYYY-MM-DD'),
+      checkout_iso: dayjs(row.checkout).format('YYYY-MM-DD'),
+      checkin_label: dayjs(row.checkin).format('DD/MM'),
+      checkout_label: dayjs(row.checkout).format('DD/MM')
+    }));
+  }
+
+  const confirmedCount = bookings.filter(b => (b.status || '').toUpperCase() === 'CONFIRMED').length;
+  const pendingCount = bookings.filter(b => (b.status || '').toUpperCase() === 'PENDING').length;
+  const totalNights = bookings.reduce((sum, b) => sum + (b.nights || 0), 0);
+  const uniqueUnits = new Set(bookings.map(b => b.unit_id)).size;
+
+  const activeYm = month.format('YYYY-MM');
+  const queryState = {
+    ym: activeYm,
+    property: propertyId ? String(propertyId) : '',
+    unit: selectedUnitId ? String(selectedUnitId) : '',
+    q: rawFilters.q || '',
+    start: rawFilters.start || '',
+    end: rawFilters.end || ''
+  };
+
+  function buildQuery(overrides) {
+    const params = new URLSearchParams();
+    if (queryState.property) params.set('property', queryState.property);
+    if (queryState.unit) params.set('unit', queryState.unit);
+    if (queryState.q) params.set('q', queryState.q);
+    if (queryState.start) params.set('start', queryState.start);
+    if (queryState.end) params.set('end', queryState.end);
+    if (queryState.ym) params.set('ym', queryState.ym);
+    if (overrides) {
+      Object.keys(overrides).forEach(key => {
+        const value = overrides[key];
+        if (value === null || value === undefined || value === '') {
+          params.delete(key);
+        } else {
+          params.set(key, value);
+        }
+      });
+    }
+    const search = params.toString();
+    return search ? `?${search}` : '';
+  }
+
+  const prevLink = '/calendar' + buildQuery({ ym: prev, start: '', end: '' });
+  const nextLink = '/calendar' + buildQuery({ ym: next, start: '', end: '' });
+
+  const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
   const canExportCalendar = userCan(req.user, 'bookings.export');
+  const canRescheduleCalendar = userCan(req.user, 'calendar.reschedule');
+
+  const activeFilters = ['start', 'end', 'unit', 'q'].filter(key => rawFilters[key]);
+  const filtersHint = activeFilters.length
+    ? `${activeFilters.length} filtro${activeFilters.length === 1 ? '' : 's'} ativo${activeFilters.length === 1 ? '' : 's'}`
+    : 'Ajuste propriedade, datas e pesquisa';
+  const filtersInitiallyOpen = activeFilters.length > 0 || !propertyId || !properties.length;
+  const filtersOpenAttr = filtersInitiallyOpen ? ' open' : '';
+
+  const calendarSummaryCard = html`
+    <section class="bo-card">
+      <h2>Resumo das reservas</h2>
+      <p class="bo-subtitle">${propertyLabel
+        ? `Dados atuais para ${esc(propertyLabel)}.`
+        : 'Escolha uma propriedade nos filtros abaixo para ver o mapa completo.'}</p>
+      <div class="bo-metrics">
+        <div class="bo-metric"><strong>${bookings.length}</strong><span>Reservas no período</span></div>
+        <div class="bo-metric"><strong>${confirmedCount}</strong><span>Confirmadas</span></div>
+        <div class="bo-metric"><strong>${pendingCount}</strong><span>Pendentes</span></div>
+        <div class="bo-metric"><strong>${totalNights}</strong><span>Noites reservadas · ${uniqueUnits} ${uniqueUnits === 1 ? 'unidade' : 'unidades'}</span></div>
+      </div>
+    </section>`;
+
+  const calendarFiltersCard = html`
+    <section class="bo-card bo-calendar-filters">
+      <details class="bo-calendar-filters__details"${filtersOpenAttr}>
+        <summary class="bo-calendar-filters__summary">
+          <span class="bo-calendar-filters__summary-label">
+            <i aria-hidden="true" data-lucide="sliders"></i>
+            <span>Filtros de reservas</span>
+          </span>
+          <span class="bo-calendar-filters__summary-hint">${esc(filtersHint)}</span>
+        </summary>
+        <div class="bo-calendar-filters__body">
+          <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
+          <form method="get" class="bo-calendar-filters__form">
+            <input type="hidden" name="ym" value="${esc(activeYm)}" />
+            <div class="bo-field">
+              <label for="calendar-filter-property">Propriedade</label>
+              <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
+                ${properties.length
+                  ? properties
+                      .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
+                      .join('')
+                  : '<option value="">Sem propriedades</option>'}
+              </select>
+              ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
+            </div>
+            <div class="bo-field">
+              <label>Intervalo de datas</label>
+              <div class="bo-calendar-date-range">
+                <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
+                <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
+              </div>
+              <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
+            </div>
+            <div class="bo-field">
+              <label for="calendar-filter-unit">Unidade</label>
+              <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
+                <option value="">Todas as unidades</option>
+                ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+              </select>
+              ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
+            </div>
+            <div class="bo-field">
+              <label for="calendar-filter-search">Nome do hóspede</label>
+              <input
+                id="calendar-filter-search"
+                type="search"
+                name="q"
+                value="${esc(rawFilters.q || '')}"
+                placeholder="Pesquisar por nome, email ou agência"
+                class="input"
+              />
+            </div>
+            <div class="bo-calendar-filters__actions">
+              <button type="submit" class="btn btn-primary">Aplicar filtros</button>
+              <a class="btn btn-light" href="/calendar">Limpar filtros</a>
+            </div>
+          </form>
+        </div>
+      </details>
+    </section>`;
+
+  const calendarGridHtml = propertyId
+    ? bookings.length
+      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })
+      : '<div class="bo-calendar-empty-state">Não foram encontradas reservas para os filtros selecionados.</div>'
+    : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
+
+  const calendarBoard = html`
+    <section class="bo-card bo-calendar-board" data-calendar-board data-can-reschedule="${canRescheduleCalendar ? '1' : '0'}">
+      <div class="bo-calendar-toolbar">
+        <div class="bo-calendar-monthnav">
+          <a class="btn btn-light" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
+          <div class="bo-calendar-monthlabel">${formatMonthYear(month.format('YYYY-MM-DD'))}</div>
+          <a class="btn btn-light" href="${esc(nextLink)}">${formatMonthYear(next + '-01')} &rarr;</a>
+        </div>
+        <div class="bo-calendar-actions">
+          <div class="bo-calendar-legend">
+            <span><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
+            <span><span class="bo-dot bo-dot--pending"></span>Pendente</span>
+          </div>
+          ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
+        </div>
+      </div>
+      ${canRescheduleCalendar ? '<p class="bo-calendar-hint">Arraste uma reserva confirmada para reagendar rapidamente.</p>' : ''}
+      ${calendarGridHtml}
+    </section>`;
+
+  const calendarDragScript = html`
+    <script>${inlineScript(`
+      (function(){
+        const board = document.querySelector('[data-calendar-board]');
+        if (!board) return;
+        if (board.getAttribute('data-can-reschedule') !== '1') return;
+        const entries = board.querySelectorAll('[data-calendar-entry]');
+        const cells = Array.from(board.querySelectorAll('[data-calendar-cell]'));
+        if (!entries.length || !cells.length) return;
+        let dragData = null;
+
+        function addDays(iso, days) {
+          if (!iso) return iso;
+          const parts = iso.split('-').map(Number);
+          if (parts.length !== 3 || parts.some(Number.isNaN)) return iso;
+          const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+          date.setUTCDate(date.getUTCDate() + days);
+          return date.toISOString().slice(0, 10);
+        }
+
+        function clearDropTargets() {
+          cells.forEach(function(cell){
+            cell.classList.remove('is-drop-target');
+          });
+        }
+
+        entries.forEach(function(entry){
+          entry.addEventListener('dragstart', function(event){
+            if (entry.getAttribute('draggable') !== 'true') return;
+            const id = entry.getAttribute('data-entry-id');
+            const start = entry.getAttribute('data-entry-start');
+            const end = entry.getAttribute('data-entry-end');
+            if (!id || !start || !end) return;
+            dragData = {
+              id: id,
+              start: start,
+              end: end,
+              nights: Number(entry.getAttribute('data-entry-nights') || '1'),
+              element: entry
+            };
+            entry.classList.add('is-dragging');
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = 'move';
+              try { event.dataTransfer.setData('text/plain', id); } catch (err) {}
+            }
+          });
+          entry.addEventListener('dragend', function(){
+            entry.classList.remove('is-dragging');
+            clearDropTargets();
+            dragData = null;
+          });
+        });
+
+        cells.forEach(function(cell){
+          cell.addEventListener('dragover', function(event){
+            if (!dragData) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+            cells.forEach(function(other){
+              if (other !== cell) other.classList.remove('is-drop-target');
+            });
+            cell.classList.add('is-drop-target');
+          });
+          cell.addEventListener('dragleave', function(){
+            cell.classList.remove('is-drop-target');
+          });
+          cell.addEventListener('drop', function(event){
+            if (!dragData) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            event.preventDefault();
+            const entry = dragData.element;
+            const entryId = dragData.id;
+            const originalStart = dragData.start;
+            const nights = Number.isFinite(dragData.nights) && dragData.nights > 0 ? dragData.nights : 1;
+            const targetDate = cell.getAttribute('data-date');
+            clearDropTargets();
+            dragData = null;
+            if (!entryId || !targetDate || targetDate === originalStart) return;
+            if (entry) {
+              entry.classList.remove('is-dragging');
+              entry.classList.add('is-saving');
+            }
+            const checkout = addDays(targetDate, nights);
+            fetch('/calendar/booking/' + encodeURIComponent(entryId) + '/reschedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ checkin: targetDate, checkout: checkout })
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado.' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result && result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  window.location.reload();
+                } else {
+                  if (entry) entry.classList.remove('is-saving');
+                  const message = result && result.data && result.data.message ? result.data.message : 'Não foi possível reagendar a reserva.';
+                  window.alert(message);
+                }
+              })
+              .catch(function(){
+                if (entry) entry.classList.remove('is-saving');
+                window.alert('Erro de rede ao reagendar a reserva.');
+              });
+          });
+        });
+      })();
+    `)}</script>
+  `;
 
   res.send(layout({
     title: 'Mapa de Reservas',
     user: req.user,
     activeNav: 'calendar',
     branding: resolveBrandingForRequest(req),
+    pageClass: 'page-backoffice page-calendar',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Mapa de Reservas</h1>
-      <div class="flex items-center justify-between mb-4">
-        <a class="btn btn-muted" href="/calendar?ym=${prev}">Mês anterior: ${formatMonthYear(prev + '-01')}</a>
-        <div class="text-slate-600">Mês de ${formatMonthYear(month)}</div>
-        <a class="btn btn-muted" href="/calendar?ym=${next}">Mês seguinte: ${formatMonthYear(next + '-01')}</a>
+      <div class="bo-main">
+        <header class="bo-header">
+          <h1>Mapa de reservas</h1>
+          <p>Acompanhe todas as reservas da propriedade num calendário único com filtros rápidos.</p>
+        </header>
+        ${calendarSummaryCard}
+        ${calendarFiltersCard}
+        ${calendarBoard}
+        ${calendarDragScript}
       </div>
-      <div class="text-sm mb-3 flex gap-3 items-center">
-        <span class="inline-block w-3 h-3 rounded bg-emerald-500"></span> Livre
-        <span class="inline-block w-3 h-3 rounded bg-rose-500"></span> Ocupado
-        <span class="inline-block w-3 h-3 rounded bg-amber-400"></span> Pendente
-        <span class="inline-block w-3 h-3 rounded bg-red-600"></span> Bloqueado
-        <span class="inline-block w-3 h-3 rounded bg-slate-200 ml-3"></span> Fora do mês
-        ${canExportCalendar ? `<a class="btn btn-primary ml-auto" href="/admin/export">Exportar Excel</a>` : ''}
-      </div>
-      <div class="space-y-6" data-calendar data-month="${month.format('YYYY-MM')}" data-calendar-fetch="/calendar/unit/:id/card">
-        ${units.map(u => unitCalendarCard(u, month)).join('')}
-      </div>
-      <div class="calendar-action" data-calendar-action hidden></div>
-      <div class="calendar-toast" data-calendar-toast hidden><span class="calendar-toast__dot"></span><span data-calendar-toast-message></span></div>
-      <script>
-        (function(){
-          const root = document.querySelector('[data-calendar]');
-          if (!root) return;
-          const actionEl = document.querySelector('[data-calendar-action]');
-          const toastEl = document.querySelector('[data-calendar-toast]');
-          const toastMessage = toastEl ? toastEl.querySelector('[data-calendar-toast-message]') : null;
-          const fetchTemplate = root.getAttribute('data-calendar-fetch');
-          const month = root.getAttribute('data-month');
-          let actionCtx = null;
-          let dragCtx = null;
-          let selectionCtx = null;
-          let toastTimer = null;
-          const CAN_RESCHEDULE = userCanClient('calendar.reschedule');
-          const CAN_CANCEL_CALENDAR = userCanClient('calendar.cancel');
-          const CAN_CREATE_BLOCK = userCanClient('calendar.block.create');
-          const CAN_DELETE_BLOCK = userCanClient('calendar.block.delete');
-          const CAN_MANAGE_BLOCK = userCanClient('calendar.block.manage');
-          const CAN_VIEW_BOOKING = userCanClient('bookings.view');
-
-          function isPrimaryPointer(e) {
-            if (e.pointerType === 'mouse') {
-              return typeof e.button === 'number' ? e.button === 0 : e.isPrimary !== false;
-            }
-            return true;
-          }
-
-          function parseDate(str) {
-            if (!str) return null;
-            const parts = str.split('-').map(Number);
-            if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-            return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-          }
-
-          function toISO(date) {
-            return date.toISOString().slice(0, 10);
-          }
-
-          function shiftDate(str, delta) {
-            const base = parseDate(str);
-            if (!base) return null;
-            base.setUTCDate(base.getUTCDate() + delta);
-            return toISO(base);
-          }
-
-          function diffDays(start, end) {
-            const a = parseDate(start);
-            const b = parseDate(end);
-            if (!a || !b) return 0;
-            return Math.round((b - a) / 86400000);
-          }
-
-          function formatHuman(str) {
-            const date = parseDate(str);
-            if (!date) return str;
-            return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
-          }
-
-          function clearHighlight(className) {
-            root.querySelectorAll('.' + className).forEach(function(cell){
-              cell.classList.remove(className);
-            });
-          }
-
-          function releaseCapture(ctx) {
-            if (!ctx || !ctx.captureTarget || typeof ctx.pointerId !== 'number') return;
-            if (typeof ctx.captureTarget.releasePointerCapture === 'function') {
-              try { ctx.captureTarget.releasePointerCapture(ctx.pointerId); } catch (_) {}
-            }
-          }
-
-          function highlightRange(unitId, start, endExclusive, className) {
-            clearHighlight(className);
-            if (!start || !endExclusive) return;
-            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
-            cells.forEach(function(cell){
-              const date = cell.getAttribute('data-date');
-              if (date && date >= start && date < endExclusive) {
-                cell.classList.add(className);
-              }
-            });
-          }
-
-          function rangeHasConflicts(unitId, start, endExclusive, currentId, currentKind) {
-            const cells = Array.prototype.slice.call(root.querySelectorAll('[data-calendar-cell][data-unit="' + unitId + '"]'));
-            return cells.some(function(cell){
-              const date = cell.getAttribute('data-date');
-              if (!date || date < start || date >= endExclusive) return false;
-              const otherId = cell.getAttribute('data-entry-id');
-              if (!otherId) return false;
-              const otherKind = cell.getAttribute('data-entry-kind');
-              if (otherId === currentId && otherKind === currentKind) return false;
-              return true;
-            });
-          }
-
-          function showToast(message, variant) {
-            if (!toastEl || !toastMessage) return;
-            toastEl.setAttribute('data-variant', variant || 'success');
-            toastMessage.textContent = message;
-            toastEl.hidden = false;
-            if (toastTimer) window.clearTimeout(toastTimer);
-            toastTimer = window.setTimeout(function(){ toastEl.hidden = true; }, 3200);
-          }
-
-          function hideAction() {
-            if (!actionEl) return;
-            actionEl.hidden = true;
-            actionEl.innerHTML = '';
-            actionCtx = null;
-          }
-
-          function showAction(config) {
-            if (!actionEl) return;
-            actionCtx = config;
-            actionEl.style.left = config.clientX + 'px';
-            actionEl.style.top = (config.clientY - 12) + 'px';
-            actionEl.innerHTML = config.html;
-            actionEl.hidden = false;
-          }
-
-          function refreshUnitCard(unitId) {
-            const card = root.querySelector('[data-unit-card="' + unitId + '"]');
-            if (!card || !fetchTemplate) return;
-            card.setAttribute('data-loading', 'true');
-            const url = fetchTemplate.replace(':id', unitId) + '?ym=' + month;
-            fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
-              .then(function(res){ return res.text(); })
-              .then(function(html){
-                const wrapper = document.createElement('div');
-                wrapper.innerHTML = html.trim();
-                const nextCard = wrapper.firstElementChild;
-                if (nextCard) {
-                  card.replaceWith(nextCard);
-                } else {
-                  card.removeAttribute('data-loading');
-                }
-                hideAction();
-              })
-              .catch(function(){
-                card.removeAttribute('data-loading');
-                showToast('Não foi possível atualizar o calendário.', 'danger');
-                hideAction();
-              });
-          }
-
-          function submitReschedule(ctx, range) {
-            let url;
-            let payload;
-            if (ctx.entryKind === 'BOOKING') {
-              url = '/calendar/booking/' + ctx.entryId + '/reschedule';
-              payload = { checkin: range.start, checkout: range.end };
-            } else {
-              url = '/calendar/block/' + ctx.entryId + '/reschedule';
-              payload = { start_date: range.start, end_date: range.end };
-            }
-            fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Atualizado com sucesso', 'success');
-                  refreshUnitCard(result.data.unit_id || ctx.unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível reagendar.', 'danger');
-                  refreshUnitCard(ctx.unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro de rede ao guardar.', 'danger');
-                refreshUnitCard(ctx.unitId);
-              });
-          }
-
-          function submitBlock(unitId, start, endExclusive) {
-            fetch('/calendar/unit/' + unitId + '/block', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ start_date: start, end_date: endExclusive })
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Bloqueio criado.', 'success');
-                  refreshUnitCard(unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível bloquear estas datas.', 'danger');
-                  refreshUnitCard(unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro de rede ao bloquear datas.', 'danger');
-                refreshUnitCard(unitId);
-              });
-          }
-
-          function submitBlockRemoval(blockId, unitId) {
-            fetch('/calendar/block/' + blockId, {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' }
-            })
-              .then(function(res){
-                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                  return { res: res, data: data };
-                });
-              })
-              .then(function(result){
-                const ok = result.res && result.res.ok && result.data && result.data.ok;
-                if (ok) {
-                  showToast(result.data.message || 'Bloqueio removido.', 'success');
-                  refreshUnitCard(unitId);
-                } else {
-                  showToast(result.data && result.data.message ? result.data.message : 'Não foi possível remover o bloqueio.', 'danger');
-                  refreshUnitCard(unitId);
-                }
-              })
-              .catch(function(){
-                showToast('Erro ao remover bloqueio.', 'danger');
-                refreshUnitCard(unitId);
-              });
-          }
-
-          function escapeHtml(str) {
-            return String(str == null ? '' : str)
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;');
-          }
-
-          function formatStatusLabel(status) {
-            switch ((status || '').toUpperCase()) {
-              case 'CONFIRMED':
-                return 'Reserva confirmada';
-              case 'PENDING':
-                return 'Reserva pendente';
-              case 'BLOCK':
-                return 'Bloqueio';
-              default:
-                return status ? 'Estado: ' + status : '';
-            }
-          }
-
-          function formatGuestSummary(adults, children) {
-            const parts = [];
-            if (adults > 0) parts.push(adults + ' ' + (adults === 1 ? 'adulto' : 'adultos'));
-            if (children > 0) parts.push(children + ' ' + (children === 1 ? 'criança' : 'crianças'));
-            return parts.join(' · ');
-          }
-
-          function showEntryActions(cell) {
-            if (!cell) return;
-            const entryId = cell.getAttribute('data-entry-id');
-            if (!entryId) return;
-            const entryKind = cell.getAttribute('data-entry-kind');
-            const status = cell.getAttribute('data-entry-status') || '';
-            const guest = cell.getAttribute('data-entry-guest') || '';
-            const label = cell.getAttribute('data-entry-label') || '';
-            const start = cell.getAttribute('data-entry-start');
-            const end = cell.getAttribute('data-entry-end');
-            const url = cell.getAttribute('data-entry-url');
-            const cancelUrl = cell.getAttribute('data-entry-cancel-url');
-            const historyUrl = '/admin/auditoria?entity=' + encodeURIComponent(entryKind === 'BOOKING' ? 'booking' : 'block') + '&id=' + encodeURIComponent(entryId);
-            const rect = cell.getBoundingClientRect();
-            let html = '<div class="calendar-action__card">';
-            if (entryKind === 'BOOKING') {
-              const email = cell.getAttribute('data-entry-email') || '';
-              const phone = cell.getAttribute('data-entry-phone') || '';
-              const adults = Number(cell.getAttribute('data-entry-adults') || '0');
-              const children = Number(cell.getAttribute('data-entry-children') || '0');
-              const guestSummary = formatGuestSummary(adults, children);
-              const nights = diffDays(start, end);
-              const statusLabel = formatStatusLabel(status);
-              html += '<div class="calendar-action__title">' + escapeHtml(guest || 'Reserva') + '</div>';
-              if (statusLabel) {
-                html += '<div class="text-xs text-slate-300 uppercase tracking-wide">' + escapeHtml(statusLabel) + '</div>';
-              }
-              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1));
-              if (nights > 0) {
-                html += ' · ' + nights + ' ' + (nights === 1 ? 'noite' : 'noites');
-              }
-              html += '</div>';
-              if (guestSummary) {
-                html += '<div class="text-sm text-slate-200">' + escapeHtml(guestSummary) + '</div>';
-              }
-              if (email || phone) {
-                html += '<div class="text-xs text-slate-300 leading-relaxed">';
-                if (email) {
-                  const mailHref = 'mailto:' + encodeURIComponent(email.trim());
-                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Email</span> <a class="text-white underline" href="' + mailHref + '">' + escapeHtml(email) + '</a></div>';
-                }
-                if (phone) {
-                  const telHref = 'tel:' + encodeURIComponent(phone.replace(/\s+/g, ''));
-                  html += '<div><span class="text-slate-400 uppercase tracking-wide">Telefone</span> <a class="text-white underline" href="' + telHref + '">' + escapeHtml(phone) + '</a></div>';
-                }
-                html += '</div>';
-              }
-              if (label) {
-                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
-              }
-              const noteCount = Number(cell.getAttribute('data-entry-note-count') || '0');
-              const notePreview = cell.getAttribute('data-entry-note-preview') || '';
-              const noteMeta = cell.getAttribute('data-entry-note-meta') || '';
-              if (noteCount > 0 && notePreview) {
-                html += '<div class="text-xs text-slate-200 bg-slate-900/30 rounded-lg p-2 leading-relaxed">';
-                html += '<div class="font-semibold">Última nota (' + escapeHtml(noteMeta || noteCount + (noteCount === 1 ? ' nota' : ' notas')) + ')</div>';
-                html += '<div class="text-slate-100 whitespace-pre-line mt-1">' + escapeHtml(notePreview) + (notePreview.length >= 180 ? '…' : '') + '</div>';
-                if (noteCount > 1) {
-                  html += '<div class="mt-1 text-slate-400">' + noteCount + ' notas no total.</div>';
-                }
-                html += '</div>';
-              }
-              html += '<div class="calendar-action__buttons">';
-              if (url && CAN_VIEW_BOOKING) html += '<a class="btn btn-light" href="' + url + '">Ver detalhes</a>';
-              if (CAN_CANCEL_CALENDAR) {
-                html += '<button class="btn btn-danger" data-action="cancel-booking" data-cancel-url="' + (cancelUrl || '') + '">Cancelar reserva</button>';
-              }
-              html += '</div>';
-              html += '<a class="text-xs text-slate-200 underline" href="' + historyUrl + '">Ver histórico de alterações</a>';
-              if (status !== 'CONFIRMED') {
-                html += '<p class="text-xs text-amber-200">Arrastar para reagendar está disponível apenas para reservas confirmadas.</p>';
-              } else if (!CAN_RESCHEDULE) {
-                html += '<p class="text-xs text-amber-200">Não tem permissões para reagendar arrastando.</p>';
-              } else {
-                html += '<p class="text-xs text-slate-300">Arrasta para ajustar rapidamente as datas.</p>';
-              }
-            } else {
-              html += '<div class="calendar-action__title">Bloqueio</div>';
-              html += '<div class="text-sm text-slate-200">' + formatHuman(start) + ' – ' + formatHuman(shiftDate(end, -1)) + '</div>';
-              if (label) {
-                html += '<div class="text-xs text-slate-300">' + escapeHtml(label) + '</div>';
-              }
-              html += '<div class="calendar-action__buttons">';
-              html += '<a class="btn btn-muted" href="' + historyUrl + '">Histórico</a>';
-              if (CAN_DELETE_BLOCK) {
-                html += '<button class="btn btn-danger" data-action="delete-block" data-block-id="' + entryId + '">Remover bloqueio</button>';
-              }
-              html += '</div>';
-              if (CAN_MANAGE_BLOCK) {
-                html += '<p class="text-xs text-slate-300">Clique e arrasta para mover o bloqueio.</p>';
-              } else {
-                html += '<p class="text-xs text-amber-200">Não tem permissões para mover este bloqueio.</p>';
-              }
-            }
-            html += '</div>';
-            showAction({ html: html, clientX: rect.left + rect.width / 2, clientY: rect.top });
-            actionCtx = { type: 'entry', entryId: entryId, entryKind: entryKind, unitId: cell.getAttribute('data-unit'), cancelUrl: cancelUrl };
-          }
-
-          function normalizeRange(a, b) {
-            if (!a || !b) return { start: a, endExclusive: shiftDate(a, 1), end: b };
-            if (a <= b) {
-              return { start: a, endExclusive: shiftDate(b, 1), end: b };
-            }
-            return { start: b, endExclusive: shiftDate(a, 1), end: a };
-          }
-
-          function showSelectionActions(ctx) {
-            const humanStart = formatHuman(ctx.start);
-            const humanEnd = formatHuman(shiftDate(ctx.end, -1));
-            const nights = diffDays(ctx.start, ctx.end);
-            let html = '<div class="calendar-action__card">';
-            html += '<div class="calendar-action__title">' + (nights > 1 ? nights + ' noites selecionadas' : nights + ' noite selecionada') + '</div>';
-            html += '<div class="text-sm text-slate-200">' + humanStart + ' – ' + humanEnd + '</div>';
-            html += '<div class="calendar-action__buttons">';
-            const disableBlock = ctx.conflict || !CAN_CREATE_BLOCK;
-            html += '<button class="btn btn-primary" data-action="block-range"' + (disableBlock ? ' disabled' : '') + '>Bloquear estas datas</button>';
-            html += '<a class="btn btn-light" href="/admin/units/' + ctx.unitId + '">Ver detalhes</a>';
-            html += '</div>';
-            if (ctx.conflict) {
-              html += '<p class="text-xs text-rose-200">Existem reservas nesta seleção.</p>';
-            } else if (!CAN_CREATE_BLOCK) {
-              html += '<p class="text-xs text-amber-200">Não tem permissões para criar bloqueios.</p>';
-            } else {
-              html += '<p class="text-xs text-slate-300">Sem reservas nesta seleção.</p>';
-            }
-            html += '</div>';
-            showAction({ html: html, clientX: ctx.clientX, clientY: ctx.clientY });
-            actionCtx = { type: 'selection', unitId: ctx.unitId, start: ctx.start, end: ctx.end, conflict: ctx.conflict };
-          }
-
-          function onPointerDown(e) {
-            if (!isPrimaryPointer(e)) return;
-            const cell = e.target.closest('[data-calendar-cell]');
-            if (!cell) return;
-            if (cell.getAttribute('data-in-month') !== '1') return;
-            hideAction();
-            const entryId = cell.getAttribute('data-entry-id');
-            if (entryId) {
-              const entryKind = cell.getAttribute('data-entry-kind');
-              const status = cell.getAttribute('data-entry-status') || '';
-              const reschedPermission = entryKind === 'BOOKING'
-                ? (CAN_RESCHEDULE && status === 'CONFIRMED')
-                : CAN_MANAGE_BLOCK;
-              if (typeof cell.setPointerCapture === 'function') {
-                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
-              }
-              dragCtx = {
-                entryId: entryId,
-                entryKind: entryKind,
-                status: status,
-                canReschedule: reschedPermission,
-                unitId: cell.getAttribute('data-unit'),
-                originStart: cell.getAttribute('data-entry-start'),
-                originEnd: cell.getAttribute('data-entry-end'),
-                anchorDate: cell.getAttribute('data-date'),
-                pointerStart: { x: e.clientX, y: e.clientY },
-                pointerId: e.pointerId,
-                captureTarget: cell,
-                moved: false,
-                preview: null,
-                conflict: false
-              };
-            } else {
-              if (!CAN_CREATE_BLOCK) return;
-              if (typeof cell.setPointerCapture === 'function') {
-                try { cell.setPointerCapture(e.pointerId); } catch (_) {}
-              }
-              selectionCtx = {
-                unitId: cell.getAttribute('data-unit'),
-                startDate: cell.getAttribute('data-date'),
-                endDate: cell.getAttribute('data-date'),
-                pointerStart: { x: e.clientX, y: e.clientY },
-                pointerId: e.pointerId,
-                captureTarget: cell,
-                active: true
-              };
-              highlightRange(selectionCtx.unitId, selectionCtx.startDate, shiftDate(selectionCtx.startDate, 1), 'calendar-cell--selection');
-            }
-          }
-
-          function onPointerMove(e) {
-            if (dragCtx) {
-              if (!dragCtx.canReschedule) return;
-              if (!dragCtx.moved) {
-                const delta = Math.abs(e.clientX - dragCtx.pointerStart.x) + Math.abs(e.clientY - dragCtx.pointerStart.y);
-                if (delta > 5) dragCtx.moved = true;
-              }
-              if (!dragCtx.moved) return;
-              const el = document.elementFromPoint(e.clientX, e.clientY);
-              const cell = el && el.closest('[data-calendar-cell][data-unit="' + dragCtx.unitId + '"]');
-              if (!cell) return;
-              const hoverDate = cell.getAttribute('data-date');
-              if (!hoverDate) return;
-              const anchorOffset = diffDays(dragCtx.originStart, dragCtx.anchorDate);
-              const duration = diffDays(dragCtx.originStart, dragCtx.originEnd);
-              const newStart = shiftDate(hoverDate, -anchorOffset);
-              const newEnd = shiftDate(newStart, duration);
-              dragCtx.preview = { start: newStart, end: newEnd };
-              dragCtx.conflict = rangeHasConflicts(dragCtx.unitId, newStart, newEnd, dragCtx.entryId, dragCtx.entryKind);
-              highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--preview');
-              if (dragCtx.conflict) {
-                highlightRange(dragCtx.unitId, newStart, newEnd, 'calendar-cell--invalid');
-              } else {
-                clearHighlight('calendar-cell--invalid');
-              }
-              e.preventDefault();
-            } else if (selectionCtx && selectionCtx.active) {
-              const targetEl = document.elementFromPoint(e.clientX, e.clientY);
-              const targetCell = targetEl && targetEl.closest('[data-calendar-cell][data-unit="' + selectionCtx.unitId + '"]');
-              if (!targetCell) return;
-              const targetDate = targetCell.getAttribute('data-date');
-              if (!targetDate || targetDate === selectionCtx.endDate) return;
-              selectionCtx.endDate = targetDate;
-              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
-              highlightRange(selectionCtx.unitId, range.start, range.endExclusive, 'calendar-cell--selection');
-            }
-          }
-
-          function onPointerUp(e) {
-            if (dragCtx) {
-              const preview = dragCtx.preview;
-              const wasDragging = dragCtx.moved;
-              const conflict = dragCtx.conflict;
-              if (!wasDragging) {
-                clearHighlight('calendar-cell--preview');
-                clearHighlight('calendar-cell--invalid');
-                releaseCapture(dragCtx);
-                dragCtx = null;
-                return;
-              }
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              const changed = preview && (preview.start !== dragCtx.originStart || preview.end !== dragCtx.originEnd);
-              const ctxCopy = dragCtx;
-              releaseCapture(dragCtx);
-              dragCtx = null;
-              if (preview && !conflict && changed) {
-                submitReschedule(ctxCopy, preview);
-              } else if (conflict) {
-                showToast('As novas datas entram em conflito com outra ocupação.', 'danger');
-                refreshUnitCard(ctxCopy.unitId);
-              }
-            } else if (selectionCtx && selectionCtx.active) {
-              const range = normalizeRange(selectionCtx.startDate, selectionCtx.endDate);
-              clearHighlight('calendar-cell--selection');
-              const conflict = rangeHasConflicts(selectionCtx.unitId, range.start, range.endExclusive);
-              releaseCapture(selectionCtx);
-              showSelectionActions({
-                unitId: selectionCtx.unitId,
-                start: range.start,
-                end: range.endExclusive,
-                conflict: conflict,
-                clientX: e.clientX,
-                clientY: e.clientY
-              });
-              selectionCtx = null;
-            }
-          }
-
-          function onPointerCancel() {
-            if (dragCtx) {
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              releaseCapture(dragCtx);
-              dragCtx = null;
-            }
-            if (selectionCtx && selectionCtx.active) {
-              clearHighlight('calendar-cell--selection');
-              releaseCapture(selectionCtx);
-              selectionCtx = null;
-            }
-          }
-
-          function onDoubleClick(e) {
-            if (e.button !== 0) return;
-            const cell = e.target.closest('[data-calendar-cell]');
-            if (!cell) return;
-            if (cell.getAttribute('data-in-month') !== '1') return;
-            const entryId = cell.getAttribute('data-entry-id');
-            if (!entryId) return;
-            dragCtx = null;
-            hideAction();
-            showEntryActions(cell);
-          }
-
-          function onActionClick(e) {
-            const target = e.target.closest('[data-action]');
-            if (!target || !actionCtx) return;
-            const action = target.getAttribute('data-action');
-            if (action === 'block-range' && actionCtx.type === 'selection') {
-              if (!CAN_CREATE_BLOCK) return;
-              e.preventDefault();
-              hideAction();
-              submitBlock(actionCtx.unitId, actionCtx.start, actionCtx.end);
-            }
-            if (action === 'delete-block' && actionCtx.type === 'entry') {
-              if (!CAN_DELETE_BLOCK) return;
-              e.preventDefault();
-              hideAction();
-              submitBlockRemoval(target.getAttribute('data-block-id'), actionCtx.unitId);
-            }
-            if (action === 'cancel-booking' && actionCtx.type === 'entry' && actionCtx.entryKind === 'BOOKING') {
-              if (!CAN_CANCEL_CALENDAR) return;
-              e.preventDefault();
-              const proceed = window.confirm('Cancelar esta reserva?');
-              if (!proceed) return;
-              const cancelUrl = target.getAttribute('data-cancel-url') || actionCtx.cancelUrl || ('/calendar/booking/' + actionCtx.entryId + '/cancel');
-              const unitId = actionCtx.unitId;
-              fetch(cancelUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-              })
-                .then(function(res){
-                  return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado' }; }).then(function(data){
-                    return { res: res, data: data };
-                  });
-                })
-                .then(function(result){
-                  const ok = result.res && result.res.ok && result.data && result.data.ok;
-                  if (ok) {
-                    showToast(result.data.message || 'Reserva cancelada.', 'info');
-                    refreshUnitCard(unitId);
-                  } else {
-                    showToast(result.data && result.data.message ? result.data.message : 'Não foi possível cancelar.', 'danger');
-                    refreshUnitCard(unitId);
-                  }
-                })
-                .catch(function(){
-                  showToast('Erro ao cancelar a reserva.', 'danger');
-                  refreshUnitCard(unitId);
-                });
-            }
-          }
-
-          function onDocumentClick(e) {
-            if (!actionEl || actionEl.hidden) return;
-            if (!actionEl.contains(e.target)) hideAction();
-          }
-
-          function onKeyDown(e) {
-            if (e.key === 'Escape') {
-              clearHighlight('calendar-cell--selection');
-              clearHighlight('calendar-cell--preview');
-              clearHighlight('calendar-cell--invalid');
-              hideAction();
-              releaseCapture(dragCtx);
-              dragCtx = null;
-              releaseCapture(selectionCtx);
-              selectionCtx = null;
-            }
-          }
-
-          root.addEventListener('pointerdown', onPointerDown);
-          window.addEventListener('pointermove', onPointerMove);
-          window.addEventListener('pointerup', onPointerUp);
-          window.addEventListener('pointercancel', onPointerCancel);
-          root.addEventListener('dblclick', onDoubleClick);
-          if (actionEl) actionEl.addEventListener('click', onActionClick);
-          document.addEventListener('click', onDocumentClick);
-          document.addEventListener('keydown', onKeyDown);
-        })();
-      </script>
     `
   }));
 });
+
+
+function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule }) {
+  if (!month) return '';
+  const monthStart = month.startOf('month');
+  const offset = (monthStart.day() + 6) % 7;
+  const firstCell = monthStart.subtract(offset, 'day');
+  const totalDays = month.daysInMonth();
+  const totalCells = Math.ceil((offset + totalDays) / 7) * 7;
+  const todayIso = dayjs().format('YYYY-MM-DD');
+
+  const normalized = bookings.map(booking => ({
+    ...booking,
+    checkinISO: booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
+    checkoutISO: booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
+    checkinLabel: booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
+    checkoutLabel: booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
+    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
+  }));
+
+  const headerHtml = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+    .map(label => `<div class="bo-calendar-grid__day">${label}</div>`)
+    .join('');
+
+  const cellsHtml = Array.from({ length: totalCells }, (_, index) => {
+    const cellDate = firstCell.add(index, 'day');
+    const iso = cellDate.format('YYYY-MM-DD');
+    const isCurrentMonth = cellDate.month() === month.month();
+    const isToday = iso === todayIso;
+    const bookingsForDay = normalized.filter(b => iso >= b.checkinISO && iso < b.checkoutISO);
+    const bookingsHtml = bookingsForDay.length
+      ? bookingsForDay.map(b => renderReservationCalendarEntry(b, dayjs, esc, canReschedule)).join('')
+      : '<div class="bo-calendar-empty">Sem reservas</div>';
+
+    const cellClasses = ['bo-calendar-grid__cell'];
+    if (!isCurrentMonth) cellClasses.push('is-out');
+    if (isToday) cellClasses.push('is-today');
+    if ((index + 1) % 7 === 0) cellClasses.push('is-column-end');
+
+    const cellAttributes = [
+      `class="${cellClasses.join(' ')}"`,
+      'data-calendar-cell',
+      `data-date="${esc(iso)}"`,
+      `data-in-month="${isCurrentMonth ? '1' : '0'}"`
+    ];
+
+    return `
+      <div ${cellAttributes.join(' ')}>
+        <div class="bo-calendar-day">${cellDate.format('DD')}</div>
+        <div class="bo-calendar-cell-body">
+          ${bookingsHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="bo-calendar-grid">
+      ${headerHtml}
+      ${cellsHtml}
+    </div>
+  `;
+}
+
+function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
+  const status = (booking.status || '').toUpperCase();
+  let statusLabel = booking.status || 'Reserva';
+  let statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--default';
+  if (status === 'CONFIRMED') {
+    statusLabel = 'Confirmada';
+    statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--confirmed';
+  } else if (status === 'PENDING') {
+    statusLabel = 'Pendente';
+    statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--pending';
+  }
+
+  const isDraggable = !!canReschedule && status === 'CONFIRMED';
+  const checkinISO = booking.checkinISO || dayjs(booking.checkin).format('YYYY-MM-DD');
+  const checkoutISO = booking.checkoutISO || dayjs(booking.checkout).format('YYYY-MM-DD');
+  const guestName = esc(booking.guest_name || `Reserva #${booking.id}`);
+  const unitName = esc([booking.property_name, booking.unit_name].filter(Boolean).join(' · ') || 'Unidade');
+  const checkinLabel = esc(booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'));
+  const checkoutLabel = esc(booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'));
+  const nights = booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'));
+  const agency = booking.agency ? `<div class="bo-calendar-entry__agency">${esc(booking.agency)}</div>` : '';
+  const unitIdAttr = booking.unit_id != null ? String(booking.unit_id) : '';
+
+  const entryAttributes = [
+    `href="/admin/bookings/${booking.id}"`,
+    `class="bo-calendar-entry${isDraggable ? ' is-draggable' : ''}"`,
+    'data-calendar-entry',
+    `data-entry-id="${esc(String(booking.id))}"`,
+    `data-unit-id="${esc(unitIdAttr)}"`,
+    `data-entry-start="${esc(checkinISO)}"`,
+    `data-entry-end="${esc(checkoutISO)}"`,
+    `data-entry-nights="${esc(String(nights))}"`,
+    `data-entry-status="${esc(status)}"`
+  ];
+  if (isDraggable) entryAttributes.push('draggable="true"');
+
+  return `
+    <a ${entryAttributes.join(' ')}>
+      <div class="bo-calendar-entry__header">
+        <span class="bo-calendar-entry__guest">${guestName}</span>
+        <span class="${statusClass}">${esc(statusLabel)}</span>
+      </div>
+      <div class="bo-calendar-entry__meta">
+        <div class="bo-calendar-entry__unit">${unitName}</div>
+        <div class="bo-calendar-entry__dates">${checkinLabel} → ${checkoutLabel}</div>
+        <div class="bo-calendar-entry__nights">${nights} noite${nights === 1 ? '' : 's'}</div>
+        ${agency}
+      </div>
+    </a>
+  `;
+}
+
 
 app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.view'), (req, res) => {
   const ym = req.query.ym;
