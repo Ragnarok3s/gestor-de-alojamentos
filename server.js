@@ -18,207 +18,29 @@ dayjs.extend(minMax);
 dayjs.locale('pt');
 const express = require('express');
 const cookieParser = require('cookie-parser');
-const Database = require('better-sqlite3');
+const path = require('path');
 
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
-const path = require('path');
+const { createDatabase, tableHasColumn } = require('./src/infra/database');
+const { createSessionService } = require('./src/services/session');
+const { createCsrfProtection } = require('./src/security/csrf');
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use((req, res, next) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  next();
-});
+const secureCookies =
+  !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
+const csrfProtection = createCsrfProtection({ secureCookies });
+app.use(csrfProtection.middleware);
 
 // ===================== DB =====================
-const db = new Database('booking_engine.db');
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-const schema = `
-CREATE TABLE IF NOT EXISTS properties (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  location TEXT,
-  locality TEXT,
-  district TEXT,
-  address TEXT,
-  description TEXT,
-  latitude REAL,
-  longitude REAL
-);
-
-CREATE TABLE IF NOT EXISTS units (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  capacity INTEGER NOT NULL DEFAULT 2,
-  base_price_cents INTEGER NOT NULL DEFAULT 10000,
-  features TEXT,
-  description TEXT,
-  address TEXT,
-  latitude REAL,
-  longitude REAL,
-  UNIQUE(property_id, name)
-);
-
-/* Bookings: checkin incluído, checkout exclusivo (YYYY-MM-DD) */
-CREATE TABLE IF NOT EXISTS bookings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
-  guest_name TEXT NOT NULL,
-  guest_email TEXT NOT NULL,
-  guest_nationality TEXT,
-  guest_phone TEXT,
-  agency TEXT,
-  adults INTEGER NOT NULL DEFAULT 1,
-  children INTEGER NOT NULL DEFAULT 0,
-  checkin TEXT NOT NULL,
-  checkout TEXT NOT NULL,
-  total_cents INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'CONFIRMED',
-  external_ref TEXT,
-  confirmation_token TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS blocks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
-  start_date TEXT NOT NULL,
-  end_date TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS rates (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
-  start_date TEXT NOT NULL,  /* inclusive */
-  end_date TEXT NOT NULL,    /* exclusivo */
-  weekday_price_cents INTEGER,
-  weekend_price_cents INTEGER,
-  min_stay INTEGER DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin'
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS unit_images (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
-  file TEXT NOT NULL,
-  alt TEXT,
-  position INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS change_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL,
-  entity_id INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  before_json TEXT,
-  after_json TEXT,
-  actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS automation_state (
-  key TEXT PRIMARY KEY,
-  value TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS session_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  action TEXT NOT NULL,
-  ip TEXT,
-  user_agent TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS activity_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  action TEXT NOT NULL,
-  entity_type TEXT,
-  entity_id INTEGER,
-  meta_json TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS booking_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  note TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS housekeeping_tasks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,
-  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
-  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
-  task_type TEXT NOT NULL DEFAULT 'custom',
-  title TEXT NOT NULL,
-  details TEXT,
-  due_date TEXT,
-  due_time TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  priority TEXT NOT NULL DEFAULT 'normal',
-  source TEXT NOT NULL DEFAULT 'manual',
-  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  started_at TEXT,
-  started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  completed_at TEXT,
-  completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
-);
-`;
-db.exec(schema);
-
-// Migrações leves
-function ensureColumn(table, name, def) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-  if (!cols.includes(name)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
-}
-try {
-  ensureColumn('bookings', 'guest_nationality', 'TEXT');
-  ensureColumn('bookings', 'guest_phone', 'TEXT');
-  ensureColumn('bookings', 'agency', 'TEXT');
-  ensureColumn('bookings', 'adults', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn('bookings', 'children', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn('bookings', 'internal_notes', 'TEXT');
-  ensureColumn('units', 'features', 'TEXT');
-  ensureColumn('bookings', 'external_ref', 'TEXT');
-  ensureColumn('bookings', 'updated_at', 'TEXT');
-  ensureColumn('bookings', 'confirmation_token', 'TEXT');
-  ensureColumn('blocks', 'updated_at', 'TEXT');
-  ensureColumn('unit_images', 'is_primary', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn('properties', 'locality', 'TEXT');
-  ensureColumn('properties', 'district', 'TEXT');
-  ensureColumn('properties', 'address', 'TEXT');
-  ensureColumn('properties', 'latitude', 'REAL');
-  ensureColumn('properties', 'longitude', 'REAL');
-  ensureColumn('units', 'address', 'TEXT');
-  ensureColumn('units', 'latitude', 'REAL');
-  ensureColumn('units', 'longitude', 'REAL');
-} catch (_) {}
+const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
+const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
+const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
+const sessionService = createSessionService({ db, dayjs });
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -310,17 +132,6 @@ async function geocodeAddress(query) {
   const primary = await tryPhoton();
   if (primary) return primary;
   return await tryNominatim();
-}
-
-const bookingColumns = db.prepare('PRAGMA table_info(bookings)').all();
-const blockColumns = db.prepare('PRAGMA table_info(blocks)').all();
-const hasBookingsUpdatedAt = bookingColumns.some(col => col.name === 'updated_at');
-const hasBlocksUpdatedAt = blockColumns.some(col => col.name === 'updated_at');
-if (!hasBookingsUpdatedAt) {
-  console.warn('Aviso: bookings.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
-}
-if (!hasBlocksUpdatedAt) {
-  console.warn('Aviso: blocks.updated_at não existe. Volte a executar as migrações para ativar auditoria completa.');
 }
 
 const MASTER_ROLE = 'dev';
@@ -1925,29 +1736,32 @@ function dateRangeNights(ci, co) {
   for (let d = start; d.isBefore(end); d = d.add(1, 'day')) nights.push(d.format('YYYY-MM-DD'));
   return nights;
 }
-function createSession(userId, days = 7) {
-  const token = crypto.randomBytes(24).toString('hex');
-  const expires = dayjs().add(days, 'day').toISOString();
-  db.prepare('INSERT INTO sessions(token,user_id,expires_at) VALUES (?,?,?)').run(token, userId, expires);
+
+function createSession(userId, req, days = 7) {
+  const { token } = sessionService.issueSession(userId, req, { days });
   return token;
 }
-function getSession(token) {
-  if (!token) return null;
-  const row = db.prepare('SELECT s.token, s.expires_at, u.id as user_id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token);
-  if (!row) return null;
-  if (!dayjs().isBefore(dayjs(row.expires_at))) { db.prepare('DELETE FROM sessions WHERE token = ?').run(token); return null; }
-  return row;
+
+function getSession(token, req) {
+  return sessionService.getSession(token, req);
 }
-function destroySession(token){ if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token); }
+
+function destroySession(token) {
+  sessionService.destroySession(token);
+}
+
+function revokeUserSessions(userId) {
+  sessionService.revokeUserSessions(userId);
+}
 
 function requireLogin(req,res,next){
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
   req.user = buildUserContext(sess);
   next();
 }
 function requireAdmin(req,res,next){
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   if (!sess) return res.redirect('/login?next='+encodeURIComponent(req.originalUrl));
   const user = buildUserContext(sess);
   req.user = user;
@@ -1965,7 +1779,7 @@ function userHasBackofficeAccess(user) {
 
 function requireBackofficeAccess(req, res, next) {
   if (!req.user) {
-    const sess = getSession(req.cookies.adm);
+    const sess = getSession(req.cookies.adm, req);
     if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
     req.user = buildUserContext(sess);
   }
@@ -1990,7 +1804,7 @@ function requireBackofficeAccess(req, res, next) {
 function requirePermission(permission) {
   return (req, res, next) => {
     if (!req.user) {
-      const sess = getSession(req.cookies.adm);
+      const sess = getSession(req.cookies.adm, req);
       if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
       req.user = buildUserContext(sess);
     }
@@ -2005,7 +1819,7 @@ function requirePermission(permission) {
 function requireAnyPermission(permissions = []) {
   return (req, res, next) => {
     if (!req.user) {
-      const sess = getSession(req.cookies.adm);
+      const sess = getSession(req.cookies.adm, req);
       if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
       req.user = buildUserContext(sess);
     }
@@ -2873,6 +2687,9 @@ const context = {
   createSession,
   getSession,
   destroySession,
+  revokeUserSessions,
+  secureCookies,
+  csrfProtection,
   requireLogin,
   userHasBackofficeAccess,
   requireBackofficeAccess,

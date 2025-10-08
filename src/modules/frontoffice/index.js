@@ -17,6 +17,7 @@ module.exports = function registerFrontoffice(app, context) {
     selectPropertyById,
     unitAvailable,
     rateQuote,
+    csrfProtection,
     parseFeaturesStored,
     featureChipsHtml,
     dateRangeNights,
@@ -30,9 +31,78 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBlockUpdateStmt
   } = context;
 
+  function sanitizeBookingSubmission(payload, { requireAgency }) {
+    const errors = [];
+
+    const normalizeWhitespace = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const guestName = normalizeWhitespace(payload.guest_name);
+    if (guestName.length < 2 || guestName.length > 120) {
+      errors.push('Nome do hóspede deve ter entre 2 e 120 caracteres.');
+    }
+
+    const guestNationality = normalizeWhitespace(payload.guest_nationality);
+    if (!guestNationality) {
+      errors.push('Nacionalidade é obrigatória.');
+    } else if (guestNationality.length > 80) {
+      errors.push('Nacionalidade deve ter no máximo 80 caracteres.');
+    }
+
+    const rawEmail = String(payload.guest_email || '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(rawEmail) || rawEmail.length > 160) {
+      errors.push('Email do hóspede inválido.');
+    }
+
+    const rawPhone = String(payload.guest_phone || '').trim();
+    const phoneNormalized = rawPhone.replace(/[^0-9+]/g, '');
+    const numericDigits = phoneNormalized.replace(/\D/g, '');
+    if (numericDigits.length < 6 || phoneNormalized.length > 32) {
+      errors.push('Telefone do hóspede inválido.');
+    }
+
+    const checkin = String(payload.checkin || '').trim();
+    const checkout = String(payload.checkout || '').trim();
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (!datePattern.test(checkin) || !dayjs(checkin).isValid()) {
+      errors.push('Data de check-in inválida.');
+    }
+    if (!datePattern.test(checkout) || !dayjs(checkout).isValid()) {
+      errors.push('Data de check-out inválida.');
+    } else if (!dayjs(checkout).isAfter(dayjs(checkin))) {
+      errors.push('Check-out deve ser posterior ao check-in.');
+    }
+
+    const adults = Math.max(1, Math.min(12, Number.parseInt(payload.adults, 10) || 1));
+    const children = Math.max(0, Math.min(12, Number.parseInt(payload.children, 10) || 0));
+
+    const agencyRaw = normalizeWhitespace(payload.agency).toUpperCase();
+    let agency = agencyRaw || null;
+    if (requireAgency && !agency) {
+      errors.push('Agência é obrigatória para reservas internas.');
+    }
+    if (agency && agency.length > 60) {
+      agency = agency.slice(0, 60);
+    }
+
+    return {
+      errors,
+      data: {
+        guest_name: guestName,
+        guest_email: rawEmail,
+        guest_nationality: guestNationality,
+        guest_phone: phoneNormalized,
+        checkin,
+        checkout,
+        adults,
+        children,
+        agency,
+      },
+    };
+  }
+
   // ===================== Front Office =====================
 app.get('/', (req, res) => {
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   const viewer = sess ? buildUserContext(sess) : undefined;
   const user = viewer;
   const theme = resolveBrandingForRequest(req);
@@ -162,7 +232,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/search', (req, res) => {
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
 
   const { checkin, checkout, property_id } = req.query;
@@ -283,7 +353,7 @@ app.get('/search', (req, res) => {
 });
 
 app.get('/book/:unitId', (req, res) => {
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
 
   const { unitId } = req.params;
@@ -306,6 +376,8 @@ app.get('/book/:unitId', (req, res) => {
   const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), { className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3', badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full', iconWrapClass: 'inline-flex items-center justify-center text-emerald-700' });
   const theme = resolveBrandingForRequest(req, { propertyId: u.property_id, propertyName: u.property_name });
   rememberActiveBrandingProperty(res, u.property_id);
+
+  const csrfToken = csrfProtection.ensureToken(req, res);
 
   res.send(layout({
     title: 'Confirmar Reserva',
@@ -337,6 +409,7 @@ app.get('/book/:unitId', (req, res) => {
           ${unitFeaturesBooking}
         </div>
         <form class="card p-4" method="post" action="/book" data-booking-form>
+          <input type="hidden" name="_csrf" value="${csrfToken}" />
           <h2 class="font-semibold mb-3">Dados do hóspede</h2>
           <p class="text-sm text-slate-500 mb-3">Confirmamos a reserva assim que estes dados forem submetidos. Usamos esta informação apenas para contacto com o hóspede.</p>
           <input type="hidden" name="unit_id" value="${u.id}" />
@@ -384,19 +457,28 @@ app.get('/book/:unitId', (req, res) => {
 });
 
 app.post('/book', (req, res) => {
-  const sess = getSession(req.cookies.adm);
+  if (!csrfProtection.validateRequest(req)) {
+    csrfProtection.rotateToken(req, res);
+    return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
+  }
+  const sess = getSession(req.cookies.adm, req);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
 
-  const { unit_id, guest_name, guest_email, guest_nationality, guest_phone, checkin, checkout } = req.body;
-  const adults = Math.max(1, Number(req.body.adults ?? 1));
-  const children = Math.max(0, Number(req.body.children ?? 0));
+  const { errors, data } = sanitizeBookingSubmission(req.body, { requireAgency: !!user });
+  if (errors.length > 0) {
+    return res.status(422).send(errors.join(' '));
+  }
+
+  const unitId = Number.parseInt(req.body.unit_id, 10);
+  if (!Number.isInteger(unitId) || unitId <= 0) {
+    return res.status(400).send('Unidade inválida.');
+  }
+
+  const { guest_name, guest_email, guest_nationality, guest_phone, checkin, checkout, adults, children, agency } = data;
   const totalGuests = adults + children;
-  const agencyRaw = req.body.agency;
-  const agency = agencyRaw ? String(agencyRaw).trim().toUpperCase() : null;
-  if (user && !agency) return res.status(400).send('Agencia obrigatória para reservas internas.');
   const agencyValue = agency || 'DIRECT';
 
-  const u = db.prepare('SELECT * FROM units WHERE id = ?').get(unit_id);
+  const u = db.prepare('SELECT * FROM units WHERE id = ?').get(unitId);
   if (!u) return res.status(404).send('Unidade não encontrada');
   if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
 
@@ -406,7 +488,7 @@ app.post('/book', (req, res) => {
       `SELECT 1 FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)
        UNION ALL
        SELECT 1 FROM blocks WHERE unit_id = ? AND NOT (end_date <= ? OR start_date >= ?)`
-    ).all(unit_id, checkin, checkout, unit_id, checkin, checkout);
+    ).all(unitId, checkin, checkout, unitId, checkin, checkout);
     if (conflicts.length > 0) throw new Error('conflict');
 
     const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
@@ -418,7 +500,7 @@ app.post('/book', (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const r = stmt.run(
-      unit_id,
+      unitId,
       guest_name,
       guest_email,
       guest_nationality || null,
@@ -438,8 +520,10 @@ app.post('/book', (req, res) => {
 
   try {
     const { id, confirmationToken } = trx();
+    csrfProtection.rotateToken(req, res);
     res.redirect(`/booking/${id}?token=${confirmationToken}`);
   } catch (e) {
+    csrfProtection.rotateToken(req, res);
     if (e.message === 'conflict') return res.status(409).send('Datas indisponíveis. Tente novamente.');
     if (e.message && e.message.startsWith('minstay:')) return res.status(400).send('Estadia mínima: ' + e.message.split(':')[1] + ' noites');
     console.error(e);
@@ -448,7 +532,7 @@ app.post('/book', (req, res) => {
 });
 
 app.get('/booking/:id', (req, res) => {
-  const sess = getSession(req.cookies.adm);
+  const sess = getSession(req.cookies.adm, req);
   const viewer = sess ? buildUserContext(sess) : undefined;
   const user = viewer;
   const requestedToken = typeof req.query.token === 'string' ? req.query.token.trim() : '';

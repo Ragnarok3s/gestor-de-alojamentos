@@ -15,10 +15,13 @@ module.exports = function registerAuthRoutes(app, context) {
     getSession,
     destroySession,
     resolveBrandingForRequest,
-    isSafeRedirectTarget
+    isSafeRedirectTarget,
+    csrfProtection,
+    secureCookies
   } = context;
 
   app.get('/login', (req, res) => {
+    const csrfToken = csrfProtection.ensureToken(req, res);
     const { error, next: nxt } = req.query;
     const safeError = error ? esc(error) : '';
     const safeNext = nxt && isSafeRedirectTarget(nxt) ? esc(nxt) : '';
@@ -32,6 +35,7 @@ module.exports = function registerAuthRoutes(app, context) {
       <h1 class="text-xl font-semibold mb-4">Login Backoffice</h1>
       ${safeError ? `<div class="mb-3 text-sm text-rose-600">${safeError}</div>` : ''}
       <form method="post" action="/login" class="grid gap-3">
+        <input type="hidden" name="_csrf" value="${csrfToken}" />
         ${safeNext ? `<input type="hidden" name="next" value="${safeNext}"/>` : ''}
         <input name="username" class="input" placeholder="Utilizador" required />
         <input name="password" type="password" class="input" placeholder="Palavra-passe" required />
@@ -44,9 +48,14 @@ module.exports = function registerAuthRoutes(app, context) {
   });
 
   app.post('/login', (req, res) => {
+    if (!csrfProtection.validateRequest(req)) {
+      csrfProtection.rotateToken(req, res);
+      return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
+    }
     const { username, password, next: nxt } = req.body;
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     if (!user || !bcrypt.compareSync(String(password), user.password_hash)) {
+      csrfProtection.rotateToken(req, res);
       return res.redirect('/login?error=Credenciais inválidas');
     }
 
@@ -57,12 +66,12 @@ module.exports = function registerAuthRoutes(app, context) {
 
     const userContext = buildUserContext({ user_id: user.id, username: user.username, role: normalizedRole });
 
-    const token = createSession(user.id);
-    const secure =
-      !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
-    res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure });
+    const token = createSession(user.id, req);
+    res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure: secureCookies });
     logSessionEvent(user.id, 'login', req);
     logActivity(user.id, 'auth:login', null, null, {});
+
+    csrfProtection.rotateToken(req, res);
 
     const safeNext = typeof nxt === 'string' && isSafeRedirectTarget(nxt) ? nxt : null;
     const defaultRedirect =
@@ -79,13 +88,14 @@ module.exports = function registerAuthRoutes(app, context) {
   });
 
   app.post('/logout', (req, res) => {
-    const sess = getSession(req.cookies.adm);
+    const sess = getSession(req.cookies.adm, req);
     if (sess) {
       logSessionEvent(sess.user_id, 'logout', req);
       logActivity(sess.user_id, 'auth:logout', null, null, {});
     }
     destroySession(req.cookies.adm);
     res.clearCookie('adm');
+    csrfProtection.rotateToken(req, res);
     res.redirect('/');
   });
 };
