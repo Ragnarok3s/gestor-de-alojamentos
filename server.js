@@ -1875,11 +1875,6 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
   const isHousekeepingOnly = user && user.role === 'limpeza';
   const canAccessBackoffice = userHasBackofficeAccess(user);
   const canViewBookings = can('bookings.view');
-  const pageClasses = String(pageClass || '')
-    .split(/\s+/)
-    .map(cls => cls.trim())
-    .filter(Boolean);
-  const isBackofficeShell = pageClasses.includes('page-backoffice');
   const brandHomeHref = isHousekeepingOnly
     ? '/limpeza/tarefas'
     : canAccessBackoffice && can('dashboard.view')
@@ -1959,18 +1954,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
   if (canAccessBackoffice && can('dashboard.view')) {
     pushNavLink('backoffice', '/admin', 'Backoffice');
   }
-  if (!isBackofficeShell) {
-    if (canViewBookings) {
-      pushNavLink('bookings', '/admin/bookings', 'Reservas');
-    }
-    if (canAccessBackoffice && (can('audit.view') || can('logs.view'))) {
-      pushNavLink('audit', '/admin/auditoria', 'Auditoria');
-    }
-    if (canAccessBackoffice && can('users.manage')) {
-      pushNavLink('branding', '/admin/identidade-visual', 'Identidade');
-      pushNavLink('users', '/admin/utilizadores', 'Utilizadores');
-    }
-  }
+  // intentionally restrict the top navigation to the primary shortcuts only
 
   return html`<!doctype html>
   <html lang="pt">
