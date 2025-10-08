@@ -1026,6 +1026,7 @@ module.exports = function registerBackoffice(app, context) {
                 b.checkout,
                 b.guest_name,
                 u.name AS unit_name,
+                p.id AS property_id,
                 p.name AS property_name
            FROM bookings b
            JOIN units u ON u.id = b.unit_id
@@ -1048,34 +1049,408 @@ module.exports = function registerBackoffice(app, context) {
     const recentCompleted = completedLast7.slice(0, 12);
     const typeOptions = ['checkout', 'checkin', 'midstay', 'custom'];
     const priorityOptions = ['alta', 'normal', 'baixa'];
+    const today = board.today || dayjs().startOf('day');
+    const todayBucket = Array.isArray(board.buckets)
+      ? board.buckets.find(bucket => bucket && bucket.isToday) || {}
+      : {};
+    const todaysTasks = Array.isArray(todayBucket.tasks) ? todayBucket.tasks : [];
+    const todaysCheckins = Array.isArray(todayBucket.checkins) ? todayBucket.checkins : [];
+    const todaysCheckouts = Array.isArray(todayBucket.checkouts) ? todayBucket.checkouts : [];
+    const priorityText = priority => (priority === 'alta' ? 'Prioridade alta' : priority === 'baixa' ? 'Prioridade baixa' : 'Prioridade normal');
+    const statusText = status => (status === 'in_progress' ? 'Em curso' : status === 'completed' ? 'Concluída' : 'Pendente');
+    const renderTodayTask = task => html`<article class="rounded-2xl border border-amber-200/80 bg-white/80 p-3 shadow-sm space-y-1">
+        <p class="font-semibold text-slate-900">${esc(task.title)}</p>
+        <p class="text-xs text-slate-600">${esc(`${task.property_name ? `${task.property_name} · ` : ''}${task.unit_name || 'Sem unidade associada'}`)}</p>
+        ${task.due_time
+          ? `<p class="text-xs text-amber-600 mt-1 flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-full bg-amber-500"></span>${esc(task.due_time)}</p>`
+          : ''}
+        <div class="mt-2 flex flex-wrap gap-2 text-[11px] font-medium">
+          <span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${esc(priorityText(task.priority))}</span>
+          <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${esc(statusText(task.status))}</span>
+        </div>
+      </article>`;
+    const todayTasksHtml = todaysTasks.length
+      ? `<div class="grid gap-3 sm:grid-cols-2">${todaysTasks.slice(0, 6).map(renderTodayTask).join('')}</div>`
+      : '<p class="text-sm text-amber-700">Sem tarefas programadas para hoje.</p>';
+    const todayMetaBadges = [];
+    if (todaysCheckouts.length) {
+      todayMetaBadges.push(
+        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-rose-400"></span>${todaysCheckouts.length} saída${todaysCheckouts.length === 1 ? '' : 's'}</span>`
+      );
+    }
+    if (todaysCheckins.length) {
+      todayMetaBadges.push(
+        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>${todaysCheckins.length} entrada${todaysCheckins.length === 1 ? '' : 's'}</span>`
+      );
+    }
+    const todayMetaHtml = todayMetaBadges.length ? `<div class="flex flex-wrap gap-2">${todayMetaBadges.join('')}</div>` : '';
+    const todayWeekdayLabel = todayBucket.weekdayLabel || capitalizeMonth(today.format('dddd'));
+    const importantMessages = [];
+    if (board.overdueTasks && board.overdueTasks.length) {
+      importantMessages.push({
+        tone: 'alert',
+        text: `${board.overdueTasks.length} tarefa${board.overdueTasks.length === 1 ? '' : 's'} em atraso aguardam ação.`
+      });
+    }
+    if (board.backlogCheckouts && board.backlogCheckouts.length) {
+      importantMessages.push({
+        tone: 'warning',
+        text: `${board.backlogCheckouts.length} unidade${board.backlogCheckouts.length === 1 ? '' : 's'} aguardam limpeza após check-out.`
+      });
+    }
+    if (highPriorityCount) {
+      importantMessages.push({
+        tone: 'info',
+        text: `${highPriorityCount} tarefa${highPriorityCount === 1 ? '' : 's'} com prioridade alta estão abertas.`
+      });
+    }
+    if (!importantMessages.length) {
+      importantMessages.push({ tone: 'info', text: 'Sem alertas no momento. Continue o excelente trabalho!' });
+    }
+    const messageToneClass = tone => {
+      if (tone === 'alert') return 'bg-rose-50 border-rose-200 text-rose-700';
+      if (tone === 'warning') return 'bg-amber-50 border-amber-200 text-amber-700';
+      return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+    };
+    const messagesHtml = `<ul class="space-y-3">${importantMessages
+      .map(
+        message => html`<li class="rounded-2xl border ${messageToneClass(message.tone)} px-4 py-3 text-sm leading-relaxed">${esc(
+          message.text
+        )}</li>`
+      )
+      .join('')}</ul>`;
+    const quickStats = [
+      {
+        label: 'Pendentes',
+        value: pendingCount,
+        className: 'border-amber-200 bg-amber-50 text-amber-700'
+      },
+      {
+        label: 'Em curso',
+        value: inProgressCount,
+        className: 'border-orange-200 bg-orange-50 text-orange-700'
+      },
+      {
+        label: 'Prioridade alta',
+        value: highPriorityCount,
+        className: 'border-rose-200 bg-rose-50 text-rose-700'
+      }
+    ];
+    const quickStatsHtml = quickStats
+      .map(
+        stat => html`<div class="rounded-2xl border ${stat.className} px-4 py-3 shadow-sm">
+          <p class="text-xs uppercase tracking-wide text-slate-500">${esc(stat.label)}</p>
+          <p class="text-2xl font-semibold">${stat.value}</p>
+        </div>`
+      )
+      .join('');
+    const computeAverageDurationMinutes = taskList => {
+      if (!Array.isArray(taskList) || !taskList.length) return null;
+      const durations = taskList
+        .map(task => {
+          if (!task.started_at || !task.completed_at) return null;
+          const duration = dayjs(task.completed_at).diff(dayjs(task.started_at), 'minute');
+          return Number.isFinite(duration) && duration >= 0 ? duration : null;
+        })
+        .filter(value => value !== null);
+      if (!durations.length) return null;
+      const total = durations.reduce((sum, value) => sum + value, 0);
+      return Math.round(total / durations.length);
+    };
+    const formatDurationLabel = minutes => {
+      if (minutes === null || minutes === undefined) return '—';
+      if (minutes < 60) return `${minutes} min`;
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return mins ? `${hours}h ${mins}min` : `${hours}h`;
+    };
+    const averageDuration = computeAverageDurationMinutes(recentCompleted);
+    const averageHighPriorityDuration = computeAverageDurationMinutes(
+      recentCompleted.filter(task => task.priority === 'alta')
+    );
+    const tempoMetrics = [
+      {
+        label: 'Média geral',
+        value: formatDurationLabel(averageDuration),
+        className: 'border-amber-200 bg-amber-50 text-amber-700'
+      },
+      {
+        label: 'Alta prioridade',
+        value: averageHighPriorityDuration !== null ? formatDurationLabel(averageHighPriorityDuration) : 'Sem dados',
+        className: 'border-rose-200 bg-rose-50 text-rose-700'
+      },
+      {
+        label: 'Concluídas (7 dias)',
+        value: recentCompleted.length,
+        className: 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      }
+    ];
+    const tempoMetricsHtml = tempoMetrics
+      .map(
+        metric => html`<div class="rounded-2xl border ${metric.className} px-4 py-3 shadow-sm">
+          <p class="text-xs uppercase tracking-wide text-slate-500">${esc(metric.label)}</p>
+          <p class="text-xl font-semibold">${esc(String(metric.value))}</p>
+        </div>`
+      )
+      .join('');
+    const weeklyBuckets = Array.isArray(board.buckets) ? board.buckets.slice(0, 6) : [];
+    const weeklyHtml = weeklyBuckets.length
+      ? `<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">${weeklyBuckets
+          .map(bucket => {
+            const taskList = Array.isArray(bucket.tasks) ? bucket.tasks : [];
+            const checkinCount = Array.isArray(bucket.checkins) ? bucket.checkins.length : 0;
+            const checkoutCount = Array.isArray(bucket.checkouts) ? bucket.checkouts.length : 0;
+            return html`<article class="rounded-2xl border border-amber-100 bg-white/80 p-4 shadow-sm space-y-3">
+              <header class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="text-xs uppercase tracking-wide text-amber-600">${esc(bucket.weekdayLabel || '')}</p>
+                  <h3 class="text-base font-semibold text-slate-900">${esc(bucket.displayLabel || '')}</h3>
+                </div>
+                ${bucket.isToday
+                  ? '<span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">Hoje</span>'
+                  : ''}
+              </header>
+              <p class="text-sm text-slate-500">${taskList.length ? `${taskList.length} tarefa${taskList.length === 1 ? '' : 's'}` : 'Sem tarefas'}</p>
+              ${taskList.length
+                ? `<ul class="space-y-1 text-xs text-slate-600">${taskList
+                    .slice(0, 3)
+                    .map(task => `<li>• ${esc(task.title)}</li>`)
+                    .join('')}</ul>${taskList.length > 3 ? '<p class="text-xs text-slate-400">+' + (taskList.length - 3) + ' tarefa(s)</p>' : ''}`
+                : ''}
+              ${(checkinCount || checkoutCount)
+                ? `<div class="flex flex-wrap gap-2 text-[11px] text-slate-600">
+                    ${checkoutCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-600">${checkoutCount} saída${checkoutCount === 1 ? '' : 's'}</span>` : ''}
+                    ${checkinCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-600">${checkinCount} entrada${checkinCount === 1 ? '' : 's'}</span>` : ''}
+                  </div>`
+                : ''}
+            </article>`;
+          })
+          .join('')}</div>`
+      : '<p class="text-sm text-amber-700">Sem tarefas planeadas para os próximos dias.</p>';
+    const taskTypeInventory = typeOptions.map(type => {
+      const label = HOUSEKEEPING_TYPE_LABELS[type] || type;
+      const tasksForType = totalTasks.filter(task => task.task_type === type);
+      const pending = tasksForType.filter(task => task.status === 'pending').length;
+      const inProgress = tasksForType.filter(task => task.status === 'in_progress').length;
+      return { type, label, pending, inProgress };
+    });
+    const inventoryRowsHtml = taskTypeInventory.length
+      ? taskTypeInventory
+          .map(item => {
+            const totalActive = item.pending + item.inProgress;
+            const statusLabel = totalActive
+              ? `${item.pending} pendente${item.pending === 1 ? '' : 's'} · ${item.inProgress} em curso`
+              : 'Sem tarefas ativas';
+            return html`<tr>
+              <td data-label="Item">
+                <div class="font-medium text-slate-800">${esc(item.label)}</div>
+                <div class="text-xs text-slate-500">${esc(item.type === 'custom' ? 'Manual' : item.type)}</div>
+              </td>
+              <td data-label="Quantidade" class="text-sm text-slate-600">${esc(statusLabel)}</td>
+            </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem tarefas registadas.</td></tr>';
+    const propertyTaskStats = new Map();
+    const propertyKey = (id, name) => (id !== null && id !== undefined ? `prop:${id}` : `none:${name || 'Sem propriedade'}`);
+    totalTasks.forEach(task => {
+      const key = propertyKey(task.property_id, task.property_name);
+      if (!propertyTaskStats.has(key)) {
+        propertyTaskStats.set(key, {
+          id: task.property_id ?? null,
+          name: task.property_name || 'Sem propriedade',
+          pending: 0,
+          inProgress: 0,
+          highPriority: 0
+        });
+      }
+      const stats = propertyTaskStats.get(key);
+      if (task.status === 'in_progress') {
+        stats.inProgress += 1;
+      } else if (task.status === 'pending') {
+        stats.pending += 1;
+      }
+      if (task.priority === 'alta') {
+        stats.highPriority += 1;
+      }
+    });
+    const occupancyPriority = { Livre: 0, 'Check-out hoje': 1, 'Check-in hoje': 2, Ocupado: 3 };
+    const propertyOccupancy = new Map();
+    const setPropertyStatus = (id, name, status) => {
+      const key = propertyKey(id, name);
+      const current = propertyOccupancy.get(key);
+      if (!current || occupancyPriority[status] > occupancyPriority[current.status]) {
+        propertyOccupancy.set(key, { id: id ?? null, name, status });
+      }
+    };
+    upcomingBookings.forEach(booking => {
+      const checkinDate = dayjs(booking.checkin);
+      const checkoutDate = dayjs(booking.checkout);
+      let status = 'Livre';
+      if ((today.isSame(checkinDate, 'day') || today.isAfter(checkinDate, 'day')) && today.isBefore(checkoutDate, 'day')) {
+        status = 'Ocupado';
+      } else if (today.isSame(checkinDate, 'day')) {
+        status = 'Check-in hoje';
+      } else if (today.isSame(checkoutDate, 'day')) {
+        status = 'Check-out hoje';
+      }
+      setPropertyStatus(booking.property_id ?? null, booking.property_name, status);
+    });
+    const occupancyBadgeClass = status => {
+      if (status === 'Ocupado') return 'bg-rose-100 text-rose-700';
+      if (status === 'Check-in hoje') return 'bg-amber-100 text-amber-700';
+      if (status === 'Check-out hoje') return 'bg-orange-100 text-orange-700';
+      return 'bg-emerald-100 text-emerald-700';
+    };
+    const propertyRows = [];
+    properties.forEach(property => {
+      const key = propertyKey(property.id, property.name);
+      const stats = propertyTaskStats.get(key) || {
+        id: property.id,
+        name: property.name,
+        pending: 0,
+        inProgress: 0,
+        highPriority: 0
+      };
+      const occupancy = propertyOccupancy.get(key);
+      const status = occupancy ? occupancy.status : 'Livre';
+      propertyRows.push(
+        html`<tr>
+          <td data-label="Propriedade">
+            <div class="font-medium text-slate-800">${esc(property.name)}</div>
+            <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
+            ${stats.highPriority
+              ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
+              : ''}
+          </td>
+          <td data-label="Ocupação" class="text-right md:text-left">
+            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${occupancyBadgeClass(status)}">${esc(
+              status
+            )}</span>
+          </td>
+        </tr>`
+      );
+    });
+    propertyTaskStats.forEach(stats => {
+      if (stats.id !== null && stats.id !== undefined) return;
+      propertyRows.push(
+        html`<tr>
+          <td data-label="Propriedade">
+            <div class="font-medium text-slate-800">${esc(stats.name)}</div>
+            <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
+            ${stats.highPriority
+              ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
+              : ''}
+          </td>
+          <td data-label="Ocupação" class="text-right md:text-left">
+            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-slate-100 text-slate-600">Sem reservas</span>
+          </td>
+        </tr>`
+      );
+    });
+    const propertyTableRowsHtml = propertyRows.length
+      ? propertyRows.join('')
+      : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
     const body = html`
-      <div class="space-y-8">
-        <header class="card p-5">
+      <div class="hk-dashboard space-y-8">
+        <header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
           <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 class="text-2xl font-semibold text-slate-900">Gestão de limpezas</h1>
-              <p class="text-sm text-slate-600">Atribua tarefas à equipa de limpeza e acompanhe a execução por propriedade.</p>
+              <h1 class="text-3xl font-semibold text-amber-900">Gestão de limpezas</h1>
+              <p class="mt-1 text-sm text-amber-800">Visualize prioridades, acompanhe tarefas em tempo real e mantenha a equipa alinhada.</p>
             </div>
             <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
-              <div class="rounded-lg bg-slate-900 text-white p-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-white/70">Pendentes</p>
-                <p class="text-2xl font-semibold">${pendingCount}</p>
+              <div class="rounded-2xl border border-amber-300 bg-white/80 px-4 py-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-amber-600">Pendentes</p>
+                <p class="text-2xl font-semibold text-amber-900">${pendingCount}</p>
               </div>
-              <div class="rounded-lg bg-amber-500 text-white p-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-white/70">Em curso</p>
-                <p class="text-2xl font-semibold">${inProgressCount}</p>
+              <div class="rounded-2xl border border-orange-300 bg-white/80 px-4 py-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-orange-500">Em curso</p>
+                <p class="text-2xl font-semibold text-orange-700">${inProgressCount}</p>
               </div>
-              <div class="rounded-lg bg-rose-500 text-white p-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-white/70">Prioridade alta</p>
-                <p class="text-2xl font-semibold">${highPriorityCount}</p>
+              <div class="rounded-2xl border border-rose-300 bg-white/80 px-4 py-3 text-center shadow-sm">
+                <p class="text-xs uppercase tracking-wide text-rose-500">Alta prioridade</p>
+                <p class="text-2xl font-semibold text-rose-600">${highPriorityCount}</p>
               </div>
             </div>
           </div>
         </header>
-        <section class="card p-5 space-y-4">
+        <section class="grid gap-5 lg:grid-cols-[1.8fr_1.2fr_1fr]">
+          <div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-amber-900">Tarefas de hoje</h2>
+              <span class="text-xs uppercase tracking-wide text-amber-600">${esc(todayWeekdayLabel)}</span>
+            </div>
+            ${todayTasksHtml}
+            ${todayMetaHtml}
+          </div>
+          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-amber-900">Mensagens</h2>
+              <span class="text-xs text-amber-500">Resumo diário</span>
+            </div>
+            ${messagesHtml}
+          </div>
+          <div class="space-y-4">
+            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
+              <h2 class="text-lg font-semibold text-amber-900">Tarefas</h2>
+              <div class="grid gap-3">${quickStatsHtml}</div>
+            </div>
+            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
+              <h2 class="text-lg font-semibold text-amber-900">Tempo médio por limpeza</h2>
+              <div class="grid gap-3">${tempoMetricsHtml}</div>
+            </div>
+          </div>
+        </section>
+        <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-amber-900">Tarefas semanais</h2>
+            <span class="text-sm text-amber-600">${weeklyBuckets.length
+              ? `${weeklyBuckets.reduce(
+                  (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
+                  0
+                )} tarefa${weeklyBuckets.reduce(
+                  (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
+                  0
+                ) === 1 ? '' : 's'} nos próximos dias`
+              : 'Sem tarefas agendadas'}</span>
+          </div>
+          ${weeklyHtml}
+        </section>
+        <section class="grid gap-5 lg:grid-cols-2">
+          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+            <h2 class="text-lg font-semibold text-amber-900">Inventário de material</h2>
+            <div class="bo-table responsive-table">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-amber-600">
+                    <th>Item</th>
+                    <th>Quantidade</th>
+                  </tr>
+                </thead>
+                <tbody>${inventoryRowsHtml}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+            <h2 class="text-lg font-semibold text-amber-900">Listagem de propriedades</h2>
+            <div class="bo-table responsive-table">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-amber-600">
+                    <th>Propriedade</th>
+                    <th class="md:text-right">Ocupação</th>
+                  </tr>
+                </thead>
+                <tbody>${propertyTableRowsHtml}</tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+        <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
           <div>
-            <h2 class="text-lg font-semibold text-slate-900">Nova tarefa de limpeza</h2>
-            <p class="text-sm text-slate-600">Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.</p>
+            <h2 class="text-lg font-semibold text-amber-900">Nova tarefa de limpeza</h2>
+            <p class="text-sm text-amber-700">Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.</p>
           </div>
           <form method="post" action="/admin/limpeza/tarefas" class="grid gap-4">
             <input type="hidden" name="redirect" value="/admin/limpeza" />
@@ -1158,12 +1533,12 @@ module.exports = function registerBackoffice(app, context) {
             </div>
           </form>
         </section>
-        ${boardHtml}
+        <section class="space-y-6">${boardHtml}</section>
         ${recentCompleted.length
-          ? html`<section class="card p-5 space-y-3">
+          ? html`<section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
               <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-slate-900">Concluídas nos últimos 7 dias</h2>
-                <span class="text-sm text-slate-500">${completedLast7.length} no total</span>
+                <h2 class="text-lg font-semibold text-amber-900">Concluídas nos últimos 7 dias</h2>
+                <span class="text-sm text-amber-600">${completedLast7.length} no total</span>
               </div>
               <div class="responsive-table">
                 <table>
