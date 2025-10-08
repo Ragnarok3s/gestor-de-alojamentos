@@ -692,7 +692,8 @@ function runAutomationSweep(trigger = 'manual') {
       severity: 'info',
       created_at: started.toISOString(),
       title: 'Check-in próximo',
-      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`
+      message: `${b.property_name} · ${b.unit_name}: ${b.guest_name} chega ${dayjs(b.checkin).format('DD/MM HH:mm')}, contacto ${b.guest_phone || '-'}.`,
+      href: `/admin/bookings/${b.id}`
     });
   });
 
@@ -1898,13 +1899,13 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
     const severity = typeof item.severity === 'string' && item.severity.trim()
       ? ` nav-notifications__item--${esc(item.severity.trim())}`
       : '';
-    const title = esc(item.title || 'Atualização');
+    const title = `<span class="nav-notifications__title">${esc(item.title || 'Atualização')}</span>`;
     const message = item.message ? `<div class="nav-notifications__message">${esc(item.message)}</div>` : '';
     const meta = item.meta ? `<div class="nav-notifications__meta">${esc(item.meta)}</div>` : '';
-    const target = item.href
-      ? `<a class="nav-notifications__title" href="${esc(item.href)}">${title}</a>`
-      : `<span class="nav-notifications__title">${title}</span>`;
-    return `<li class="nav-notifications__item${severity}">${target}${message}${meta}</li>`;
+    if (item.href) {
+      return `<li class="nav-notifications__item${severity}"><a class="nav-notifications__link" href="${esc(item.href)}">${title}${message}${meta}</a></li>`;
+    }
+    return `<li class="nav-notifications__item${severity}">${title}${message}${meta}</li>`;
   };
 
   const notificationsPanelHtml = notificationsCount
@@ -2071,8 +2072,10 @@ function layout({ title, body, user, activeNav = '', branding, notifications = [
         .nav-notifications__item--warning{border-color:#f59e0b;}
         .nav-notifications__item--danger{border-color:#ef4444;}
         .nav-notifications__item--success{border-color:#22c55e;}
+        .nav-notifications__link{display:block;padding:6px 8px;border-radius:10px;color:inherit;text-decoration:none;transition:background .15s ease,color .15s ease;}
+        .nav-notifications__link:hover{background:rgba(248,250,252,.9);}
+        .nav-notifications__link:hover .nav-notifications__title{color:#1d4ed8;}
         .nav-notifications__title{display:block;font-weight:600;color:#0f172a;text-decoration:none;}
-        .nav-notifications__title:hover{color:#1d4ed8;}
         .nav-notifications__message{margin-top:4px;color:#475569;font-size:.78rem;}
         .nav-notifications__meta{margin-top:4px;color:#94a3b8;font-size:.72rem;}
         .nav-notifications__empty{margin:0;font-size:.85rem;color:#475569;}
