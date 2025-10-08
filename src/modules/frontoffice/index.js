@@ -31,6 +31,10 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBlockUpdateStmt
   } = context;
 
+  function inlineScript(source) {
+    return source.replace(/<\/(script)/gi, '<\\/$1');
+  }
+
   function sanitizeBookingSubmission(payload, { requireAgency }) {
     const errors = [];
 
@@ -740,6 +744,14 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 
   const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
   const canExportCalendar = userCan(req.user, 'bookings.export');
+  const canRescheduleCalendar = userCan(req.user, 'calendar.reschedule');
+
+  const activeFilters = ['start', 'end', 'unit', 'q'].filter(key => rawFilters[key]);
+  const filtersHint = activeFilters.length
+    ? `${activeFilters.length} filtro${activeFilters.length === 1 ? '' : 's'} ativo${activeFilters.length === 1 ? '' : 's'}`
+    : 'Ajuste propriedade, datas e pesquisa';
+  const filtersInitiallyOpen = activeFilters.length > 0 || !propertyId || !properties.length;
+  const filtersOpenAttr = filtersInitiallyOpen ? ' open' : '';
 
   const calendarSummaryCard = html`
     <section class="bo-card">
@@ -757,63 +769,73 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 
   const calendarFiltersCard = html`
     <section class="bo-card bo-calendar-filters">
-      <h2>Filtrar reservas</h2>
-      <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
-      <form method="get" class="bo-calendar-filters__form">
-        <input type="hidden" name="ym" value="${esc(activeYm)}" />
-        <div class="bo-field">
-          <label for="calendar-filter-property">Propriedade</label>
-          <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
-            ${properties.length
-              ? properties
-                  .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
-                  .join('')
-              : '<option value="">Sem propriedades</option>'}
-          </select>
-          ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
+      <details class="bo-calendar-filters__details"${filtersOpenAttr}>
+        <summary class="bo-calendar-filters__summary">
+          <span class="bo-calendar-filters__summary-label">
+            <i aria-hidden="true" data-lucide="sliders"></i>
+            <span>Filtros de reservas</span>
+          </span>
+          <span class="bo-calendar-filters__summary-hint">${esc(filtersHint)}</span>
+        </summary>
+        <div class="bo-calendar-filters__body">
+          <p class="bo-subtitle">Ajuste a propriedade, datas e pesquisa para encontrar reservas específicas.</p>
+          <form method="get" class="bo-calendar-filters__form">
+            <input type="hidden" name="ym" value="${esc(activeYm)}" />
+            <div class="bo-field">
+              <label for="calendar-filter-property">Propriedade</label>
+              <select id="calendar-filter-property" name="property" class="input" ${properties.length ? '' : 'disabled'}>
+                ${properties.length
+                  ? properties
+                      .map(p => `<option value="${p.id}" ${p.id === propertyId ? 'selected' : ''}>${esc(p.name)}</option>`)
+                      .join('')
+                  : '<option value="">Sem propriedades</option>'}
+              </select>
+              ${properties.length ? '' : '<p class="bo-form-hint">Crie uma propriedade para ativar o mapa.</p>'}
+            </div>
+            <div class="bo-field">
+              <label>Intervalo de datas</label>
+              <div class="bo-calendar-date-range">
+                <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
+                <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
+              </div>
+              <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
+            </div>
+            <div class="bo-field">
+              <label for="calendar-filter-unit">Unidade</label>
+              <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
+                <option value="">Todas as unidades</option>
+                ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+              </select>
+              ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
+            </div>
+            <div class="bo-field">
+              <label for="calendar-filter-search">Nome do hóspede</label>
+              <input
+                id="calendar-filter-search"
+                type="search"
+                name="q"
+                value="${esc(rawFilters.q || '')}"
+                placeholder="Pesquisar por nome, email ou agência"
+                class="input"
+              />
+            </div>
+            <div class="bo-calendar-filters__actions">
+              <button type="submit" class="btn btn-primary">Aplicar filtros</button>
+              <a class="btn btn-light" href="/calendar">Limpar filtros</a>
+            </div>
+          </form>
         </div>
-        <div class="bo-field">
-          <label>Intervalo de datas</label>
-          <div class="bo-calendar-date-range">
-            <input type="date" name="start" value="${esc(startInputValue)}" class="input" />
-            <input type="date" name="end" value="${esc(endInputValue)}" class="input" />
-          </div>
-          <p class="bo-form-hint">Serão apresentadas reservas que ocorram dentro deste período.</p>
-        </div>
-        <div class="bo-field">
-          <label for="calendar-filter-unit">Unidade</label>
-          <select id="calendar-filter-unit" name="unit" class="input" ${units.length ? '' : 'disabled'}>
-            <option value="">Todas as unidades</option>
-            ${units.map(u => `<option value="${u.id}" ${selectedUnitId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-          </select>
-          ${units.length ? '' : '<p class="bo-form-hint">Sem unidades disponíveis para esta propriedade.</p>'}
-        </div>
-        <div class="bo-field">
-          <label for="calendar-filter-search">Nome do hóspede</label>
-          <input
-            id="calendar-filter-search"
-            type="search"
-            name="q"
-            value="${esc(rawFilters.q || '')}"
-            placeholder="Pesquisar por nome, email ou agência"
-            class="input"
-          />
-        </div>
-        <div class="bo-calendar-filters__actions">
-          <button type="submit" class="btn btn-primary">Aplicar filtros</button>
-          <a class="btn btn-light" href="/calendar">Limpar filtros</a>
-        </div>
-      </form>
+      </details>
     </section>`;
 
   const calendarGridHtml = propertyId
     ? bookings.length
-      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc })
+      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })
       : '<div class="bo-calendar-empty-state">Não foram encontradas reservas para os filtros selecionados.</div>'
     : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
 
   const calendarBoard = html`
-    <section class="bo-card bo-calendar-board">
+    <section class="bo-card bo-calendar-board" data-calendar-board data-can-reschedule="${canRescheduleCalendar ? '1' : '0'}">
       <div class="bo-calendar-toolbar">
         <div class="bo-calendar-monthnav">
           <a class="btn btn-light" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
@@ -828,8 +850,123 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
         </div>
       </div>
+      ${canRescheduleCalendar ? '<p class="bo-calendar-hint">Arraste uma reserva confirmada para reagendar rapidamente.</p>' : ''}
       ${calendarGridHtml}
     </section>`;
+
+  const calendarDragScript = html`
+    <script>${inlineScript(`
+      (function(){
+        const board = document.querySelector('[data-calendar-board]');
+        if (!board) return;
+        if (board.getAttribute('data-can-reschedule') !== '1') return;
+        const entries = board.querySelectorAll('[data-calendar-entry]');
+        const cells = Array.from(board.querySelectorAll('[data-calendar-cell]'));
+        if (!entries.length || !cells.length) return;
+        let dragData = null;
+
+        function addDays(iso, days) {
+          if (!iso) return iso;
+          const parts = iso.split('-').map(Number);
+          if (parts.length !== 3 || parts.some(Number.isNaN)) return iso;
+          const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+          date.setUTCDate(date.getUTCDate() + days);
+          return date.toISOString().slice(0, 10);
+        }
+
+        function clearDropTargets() {
+          cells.forEach(function(cell){
+            cell.classList.remove('is-drop-target');
+          });
+        }
+
+        entries.forEach(function(entry){
+          entry.addEventListener('dragstart', function(event){
+            if (entry.getAttribute('draggable') !== 'true') return;
+            const id = entry.getAttribute('data-entry-id');
+            const start = entry.getAttribute('data-entry-start');
+            const end = entry.getAttribute('data-entry-end');
+            if (!id || !start || !end) return;
+            dragData = {
+              id: id,
+              start: start,
+              end: end,
+              nights: Number(entry.getAttribute('data-entry-nights') || '1'),
+              element: entry
+            };
+            entry.classList.add('is-dragging');
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = 'move';
+              try { event.dataTransfer.setData('text/plain', id); } catch (err) {}
+            }
+          });
+          entry.addEventListener('dragend', function(){
+            entry.classList.remove('is-dragging');
+            clearDropTargets();
+            dragData = null;
+          });
+        });
+
+        cells.forEach(function(cell){
+          cell.addEventListener('dragover', function(event){
+            if (!dragData) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+            cells.forEach(function(other){
+              if (other !== cell) other.classList.remove('is-drop-target');
+            });
+            cell.classList.add('is-drop-target');
+          });
+          cell.addEventListener('dragleave', function(){
+            cell.classList.remove('is-drop-target');
+          });
+          cell.addEventListener('drop', function(event){
+            if (!dragData) return;
+            if (cell.getAttribute('data-in-month') !== '1') return;
+            event.preventDefault();
+            const entry = dragData.element;
+            const entryId = dragData.id;
+            const originalStart = dragData.start;
+            const nights = Number.isFinite(dragData.nights) && dragData.nights > 0 ? dragData.nights : 1;
+            const targetDate = cell.getAttribute('data-date');
+            clearDropTargets();
+            dragData = null;
+            if (!entryId || !targetDate || targetDate === originalStart) return;
+            if (entry) {
+              entry.classList.remove('is-dragging');
+              entry.classList.add('is-saving');
+            }
+            const checkout = addDays(targetDate, nights);
+            fetch('/calendar/booking/' + encodeURIComponent(entryId) + '/reschedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ checkin: targetDate, checkout: checkout })
+            })
+              .then(function(res){
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado.' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
+              })
+              .then(function(result){
+                const ok = result && result.res && result.res.ok && result.data && result.data.ok;
+                if (ok) {
+                  window.location.reload();
+                } else {
+                  if (entry) entry.classList.remove('is-saving');
+                  const message = result && result.data && result.data.message ? result.data.message : 'Não foi possível reagendar a reserva.';
+                  window.alert(message);
+                }
+              })
+              .catch(function(){
+                if (entry) entry.classList.remove('is-saving');
+                window.alert('Erro de rede ao reagendar a reserva.');
+              });
+          });
+        });
+      })();
+    `)}</script>
+  `;
 
   res.send(layout({
     title: 'Mapa de Reservas',
@@ -846,13 +983,14 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         ${calendarSummaryCard}
         ${calendarFiltersCard}
         ${calendarBoard}
+        ${calendarDragScript}
       </div>
     `
   }));
 });
 
 
-function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
+function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule }) {
   if (!month) return '';
   const monthStart = month.startOf('month');
   const offset = (monthStart.day() + 6) % 7;
@@ -881,7 +1019,7 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
     const isToday = iso === todayIso;
     const bookingsForDay = normalized.filter(b => iso >= b.checkinISO && iso < b.checkoutISO);
     const bookingsHtml = bookingsForDay.length
-      ? bookingsForDay.map(b => renderReservationCalendarEntry(b, dayjs, esc)).join('')
+      ? bookingsForDay.map(b => renderReservationCalendarEntry(b, dayjs, esc, canReschedule)).join('')
       : '<div class="bo-calendar-empty">Sem reservas</div>';
 
     const cellClasses = ['bo-calendar-grid__cell'];
@@ -889,8 +1027,15 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
     if (isToday) cellClasses.push('is-today');
     if ((index + 1) % 7 === 0) cellClasses.push('is-column-end');
 
+    const cellAttributes = [
+      `class="${cellClasses.join(' ')}"`,
+      'data-calendar-cell',
+      `data-date="${esc(iso)}"`,
+      `data-in-month="${isCurrentMonth ? '1' : '0'}"`
+    ];
+
     return `
-      <div class="${cellClasses.join(' ')}">
+      <div ${cellAttributes.join(' ')}>
         <div class="bo-calendar-day">${cellDate.format('DD')}</div>
         <div class="bo-calendar-cell-body">
           ${bookingsHtml}
@@ -907,7 +1052,7 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc }) {
   `;
 }
 
-function renderReservationCalendarEntry(booking, dayjs, esc) {
+function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
   const status = (booking.status || '').toUpperCase();
   let statusLabel = booking.status || 'Reserva';
   let statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--default';
@@ -919,15 +1064,32 @@ function renderReservationCalendarEntry(booking, dayjs, esc) {
     statusClass = 'bo-calendar-entry__status bo-calendar-entry__status--pending';
   }
 
+  const isDraggable = !!canReschedule && status === 'CONFIRMED';
+  const checkinISO = booking.checkinISO || dayjs(booking.checkin).format('YYYY-MM-DD');
+  const checkoutISO = booking.checkoutISO || dayjs(booking.checkout).format('YYYY-MM-DD');
   const guestName = esc(booking.guest_name || `Reserva #${booking.id}`);
   const unitName = esc([booking.property_name, booking.unit_name].filter(Boolean).join(' · ') || 'Unidade');
   const checkinLabel = esc(booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'));
   const checkoutLabel = esc(booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'));
   const nights = booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'));
   const agency = booking.agency ? `<div class="bo-calendar-entry__agency">${esc(booking.agency)}</div>` : '';
+  const unitIdAttr = booking.unit_id != null ? String(booking.unit_id) : '';
+
+  const entryAttributes = [
+    `href="/admin/bookings/${booking.id}"`,
+    `class="bo-calendar-entry${isDraggable ? ' is-draggable' : ''}"`,
+    'data-calendar-entry',
+    `data-entry-id="${esc(String(booking.id))}"`,
+    `data-unit-id="${esc(unitIdAttr)}"`,
+    `data-entry-start="${esc(checkinISO)}"`,
+    `data-entry-end="${esc(checkoutISO)}"`,
+    `data-entry-nights="${esc(String(nights))}"`,
+    `data-entry-status="${esc(status)}"`
+  ];
+  if (isDraggable) entryAttributes.push('draggable="true"');
 
   return `
-    <a href="/admin/bookings/${booking.id}" class="bo-calendar-entry">
+    <a ${entryAttributes.join(' ')}>
       <div class="bo-calendar-entry__header">
         <span class="bo-calendar-entry__guest">${guestName}</span>
         <span class="${statusClass}">${esc(statusLabel)}</span>
