@@ -32,7 +32,10 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Channel Manager oficial no backoffice** – Um separador dedicado no backoffice reúne métricas de integrações, alertas operacionais, histórico de importações e atalhos para sincronizações manuais ou automáticas dos canais OTA suportados.【F:src/modules/backoffice/index.js†L3440-L3492】
   *Exemplo real*: Ao iniciar o turno, a equipa de revenue abre o “Channel Manager” para confirmar que todas as integrações auto-sync correram bem e identificar rapidamente um alerta de credenciais expiradas antes que afecte novas reservas.
 
-- **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】  
+- **Área de Proprietários fora do backoffice** – A rota `/owners` mostra cartões de receita, ocupação, reservas pendentes, próximas chegadas e distribuição por canal apenas para as propriedades associadas ao utilizador, permitindo que os proprietários consultem dados actualizados sem depender da direção.【F:src/modules/owners/index.js†L1-L207】【F:src/modules/owners/index.js†L252-L460】
+  *Exemplo real*: Um proprietário entra na nova área e confirma que a sua casa tem duas reservas pendentes e três chegadas confirmadas para a próxima semana, percebendo de imediato que a maioria veio da Booking.com e que a receita das últimas quatro semanas superou as expectativas.
+
+- **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
   *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
 
 - **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】  

@@ -23,6 +23,7 @@ const path = require('path');
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
+const registerOwnersPortal = require('./src/modules/owners');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
@@ -146,7 +147,8 @@ const ROLE_LABELS = {
   rececao: 'Receção',
   gestao: 'Gestão',
   direcao: 'Direção',
-  limpeza: 'Limpeza'
+  limpeza: 'Limpeza',
+  owner: 'Proprietário'
 };
 
 const ROLE_PERMISSIONS = {
@@ -188,6 +190,7 @@ const ROLE_PERMISSIONS = {
     'automation.view',
     'automation.export',
     'audit.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -214,6 +217,7 @@ const ROLE_PERMISSIONS = {
     'audit.view',
     'users.manage',
     'logs.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -221,7 +225,8 @@ const ROLE_PERMISSIONS = {
   limpeza: new Set([
     'housekeeping.view',
     'housekeeping.complete'
-  ])
+  ]),
+  owner: new Set(['owners.portal.view'])
 };
 
 const ALL_PERMISSIONS = new Set();
@@ -236,6 +241,14 @@ function normalizeRole(role) {
   if (key === 'admin' || key === 'direcao' || key === 'direção') return 'direcao';
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
   if (key === 'limpeza' || key === 'limpezas' || key === 'housekeeping') return 'limpeza';
+  if (
+    key === 'owner' ||
+    key === 'proprietario' ||
+    key === 'proprietária' ||
+    key === 'proprietaria' ||
+    key === 'proprietário'
+  )
+    return 'owner';
   if (
     key === 'rececao' ||
     key === 'receção' ||
@@ -2009,6 +2022,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
   if (!isHousekeepingOnly) {
     pushNavLink('search', '/search', 'Pesquisar');
   }
+  if (can('owners.portal.view')) {
+    pushNavLink('owners', '/owners', 'Área de proprietários');
+  }
   if (can('calendar.view')) {
     pushNavLink('calendar', '/calendar', 'Mapa de reservas');
   }
@@ -2977,6 +2993,7 @@ const context = {
 
 registerAuthRoutes(app, context);
 registerFrontoffice(app, context);
+registerOwnersPortal(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================
