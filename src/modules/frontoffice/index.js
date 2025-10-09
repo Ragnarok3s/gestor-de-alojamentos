@@ -601,10 +601,6 @@ module.exports = function registerFrontoffice(app, context) {
         <div class="bo-main search-main">
           <header class="bo-header">
             <h1>Pesquisar disponibilidade</h1>
-            <p>Consulte disponibilidade e mantenha o mesmo visual do mapa de reservas, limpezas e backoffice.</p>
-            ${searchActive
-              ? `<p class="bo-subtitle">${esc(dateSummary)} · ${esc(guestsSummary)} · ${esc(propertySummary)}</p>`
-              : ''}
           </header>
           ${searchStyles}
           <div class="search-layout">
