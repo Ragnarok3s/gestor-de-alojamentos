@@ -2757,7 +2757,7 @@ module.exports = function registerBackoffice(app, context) {
                           const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
                           return `
                             <tr>
-                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} → ${endLabel}</span></td>
+                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} - ${endLabel}</span></td>
                               <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
                               <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
                             </tr>`;
@@ -2884,7 +2884,7 @@ module.exports = function registerBackoffice(app, context) {
             const startDate = new Date(range.start + 'T00:00:00');
             const endDate = new Date(range.end + 'T00:00:00');
             endDate.setDate(endDate.getDate() - 1);
-            return dateFormatter.format(startDate) + ' → ' + dateFormatter.format(endDate);
+            return dateFormatter.format(startDate) + ' - ' + dateFormatter.format(endDate);
           }
 
           function describeFilters(data) {
@@ -3075,7 +3075,7 @@ module.exports = function registerBackoffice(app, context) {
           .map(b => {
             return `
               <tr>
-                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
                 <td data-label="Propriedade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
                 <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name || '—')}</span></td>
                 <td data-label="Estado"><span class="table-cell-value">${b.status === 'PENDING' ? 'PENDENTE' : 'CONFIRMADA'}</span></td>
@@ -3220,7 +3220,7 @@ module.exports = function registerBackoffice(app, context) {
                             <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
                             <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
                             <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
                             <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
                           </tr>`)
                         .join('')}</tbody>
@@ -3478,7 +3478,7 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   const rows = [];
   rows.push(['Secção', 'Referência', 'Valor']);
   const rangeEnd = dayjs(operational.range.end).subtract(1, 'day');
-  const rangeLabel = `${operational.range.start} → ${rangeEnd.isValid() ? rangeEnd.format('YYYY-MM-DD') : operational.range.end}`;
+  const rangeLabel = `${operational.range.start} - ${rangeEnd.isValid() ? rangeEnd.format('YYYY-MM-DD') : operational.range.end}`;
   rows.push(['Filtro', 'Período', `${operational.monthLabel} (${rangeLabel})`]);
   if (operational.filters.propertyLabel) {
     rows.push(['Filtro', 'Propriedade', operational.filters.propertyLabel]);
@@ -3546,7 +3546,7 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
     const endLabel = dayjs(w.end).subtract(1, 'day').format('YYYY-MM-DD');
     rows.push([
       'Resumo semanal',
-      `${dayjs(w.start).format('YYYY-MM-DD')} → ${endLabel}`,
+      `${dayjs(w.start).format('YYYY-MM-DD')} - ${endLabel}`,
       `${Math.round((w.occupancyRate || 0) * 100)}% · ${w.confirmedNights} noites`
     ]);
   });

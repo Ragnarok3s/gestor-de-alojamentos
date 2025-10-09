@@ -310,6 +310,32 @@ module.exports = function registerFrontoffice(app, context) {
           width: 0.95rem;
           height: 0.95rem;
         }
+        @media (max-width: 1024px) {
+          .search-banner {
+            padding: 1rem 1.1rem;
+          }
+          .search-banner__chips {
+            justify-content: flex-start;
+            gap: 0.4rem;
+          }
+          .search-panel__actions {
+            justify-content: stretch;
+          }
+          .search-panel__actions .btn,
+          .search-panel__actions .btn-light {
+            flex: 1 1 160px;
+            justify-content: center;
+          }
+        }
+        @media (max-width: 900px) {
+          .search-property__header {
+            gap: 0.75rem;
+          }
+          .search-property__badge {
+            width: 100%;
+            justify-content: center;
+          }
+        }
         .search-guidance {
           margin: 0;
           padding-left: 1.25rem;
@@ -1217,8 +1243,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         </div>
         <div class="bo-calendar-actions">
           <div class="bo-calendar-legend">
-            <span><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
-            <span><span class="bo-dot bo-dot--pending"></span>Pendente</span>
+            <span class="bo-calendar-legend__item bo-calendar-legend__item--confirmed"><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
+            <span class="bo-calendar-legend__item bo-calendar-legend__item--pending"><span class="bo-dot bo-dot--pending"></span>Pendente</span>
           </div>
           ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
         </div>
@@ -1423,9 +1449,11 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
 
   return `
     <div class="bo-calendar-grid-wrapper">
-      <div class="bo-calendar-grid">
-        ${headerHtml}
-        ${cellsHtml}
+      <div class="bo-calendar-grid-viewport">
+        <div class="bo-calendar-grid">
+          ${headerHtml}
+          ${cellsHtml}
+        </div>
       </div>
     </div>
   `;
@@ -1475,7 +1503,7 @@ function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
       </div>
       <div class="bo-calendar-entry__meta">
         <div class="bo-calendar-entry__unit">${unitName}</div>
-        <div class="bo-calendar-entry__dates">${checkinLabel} → ${checkoutLabel}</div>
+        <div class="bo-calendar-entry__dates">${checkinLabel} - ${checkoutLabel}</div>
         <div class="bo-calendar-entry__nights">${nights} noite${nights === 1 ? '' : 's'}</div>
         ${agency}
       </div>
@@ -1537,20 +1565,34 @@ function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, es
           statusLabel = 'Bloqueio';
         }
 
-        const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
-        const unitName = esc(booking.unit_name || `Unidade #${booking.unit_id}`);
-        const property = booking.property_name ? esc(booking.property_name) : '';
-        const location = property ? `${unitName} · ${property}` : unitName;
+        const guestRaw = booking.guest_name || `Reserva #${booking.id}`;
+        const guest = esc(guestRaw);
+        const unitNameRaw = booking.unit_name || `Unidade #${booking.unit_id}`;
+        const propertyRaw = booking.property_name || '';
+        const locationRaw = propertyRaw ? `${unitNameRaw} · ${propertyRaw}` : unitNameRaw;
+        const location = esc(locationRaw);
         const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
         const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
-        const meta = `${booking.checkinLabel} → ${booking.checkoutLabel} · ${nights} noite${nights === 1 ? '' : 's'}`;
+        const metaPartsRaw = [
+          `${booking.checkinLabel} - ${booking.checkoutLabel}`,
+          `${nights} noite${nights === 1 ? '' : 's'}`
+        ];
+        if (booking.agency) metaPartsRaw.push(booking.agency);
+        const meta = metaPartsRaw.map(part => esc(part)).join(' · ');
+        const ariaLabel = esc([
+          locationRaw,
+          guestRaw,
+          ...metaPartsRaw,
+          statusLabel
+        ].filter(Boolean).join(' · '));
+        const statusLabelEsc = esc(statusLabel);
 
         return `
-          <a href="${esc(href)}" class="bo-calendar-mobile__overview-row ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+          <a href="${esc(href)}" class="bo-calendar-mobile__overview-row ${statusClass}" aria-label="${ariaLabel}">
             <span class="bo-calendar-mobile__overview-unit">${location}</span>
             <span class="bo-calendar-mobile__overview-guest">${guest}</span>
-            <span class="bo-calendar-mobile__overview-dates">${esc(meta)}</span>
-            <span class="bo-calendar-mobile__overview-status ${statusClass}">${esc(statusLabel)}</span>
+            <span class="bo-calendar-mobile__overview-dates">${meta}</span>
+            <span class="bo-calendar-mobile__overview-status ${statusClass}">${statusLabelEsc}</span>
           </a>
         `;
       }).join('')
@@ -1565,7 +1607,8 @@ function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, es
 
   const unitSections = unitsToRender.map(unit => {
     const unitBookings = grouped.get(unit.id) || [];
-    const propertyName = unit.property_name || (unitBookings[0] && unitBookings[0].property_name) || '';
+    const propertyNameRaw = unit.property_name || (unitBookings[0] && unitBookings[0].property_name) || '';
+    const propertyName = propertyNameRaw ? esc(propertyNameRaw) : '';
 
     const bookingsHtml = unitBookings.length
       ? unitBookings.map(booking => {
@@ -1583,21 +1626,31 @@ function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, es
           }
 
           const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
-          const metaParts = [
-            `${booking.checkinLabel} → ${booking.checkoutLabel}`,
+          const metaPartsRaw = [
+            `${booking.checkinLabel} - ${booking.checkoutLabel}`,
             `${nights} noite${nights === 1 ? '' : 's'}`
           ];
-          if (booking.agency) metaParts.push(booking.agency);
-          const meta = metaParts.map(part => esc(part)).join(' · ');
+          if (booking.agency) metaPartsRaw.push(booking.agency);
+          const meta = metaPartsRaw.map(part => esc(part)).join(' · ');
 
-          const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+          const guestRaw = booking.guest_name || `Reserva #${booking.id}`;
+          const guest = esc(guestRaw);
           const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
+          const unitNameRaw = booking.unit_name || unit.name || `Unidade #${booking.unit_id || unit.id}`;
+          const unitLabelRaw = propertyNameRaw ? `${unitNameRaw} · ${propertyNameRaw}` : unitNameRaw;
+          const ariaLabel = esc([
+            unitLabelRaw,
+            guestRaw,
+            ...metaPartsRaw,
+            statusLabel
+          ].filter(Boolean).join(' · '));
+          const statusLabelEsc = esc(statusLabel);
 
           return `
-            <a href="${esc(href)}" class="bo-calendar-mobile__booking ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+            <a href="${esc(href)}" class="bo-calendar-mobile__booking ${statusClass}" aria-label="${ariaLabel}">
               <div class="bo-calendar-mobile__booking-header">
                 <span class="bo-calendar-mobile__guest">${guest}</span>
-                <span class="bo-calendar-mobile__badge ${statusClass}">${esc(statusLabel)}</span>
+                <span class="bo-calendar-mobile__badge ${statusClass}">${statusLabelEsc}</span>
               </div>
               <div class="bo-calendar-mobile__booking-meta">${meta}</div>
             </a>
@@ -1609,7 +1662,7 @@ function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, es
       <section class="bo-calendar-mobile__unit" aria-label="Reservas da unidade ${esc(unit.name)}">
         <header class="bo-calendar-mobile__unit-header">
           <h3 class="bo-calendar-mobile__unit-name">${esc(unit.name || `Unidade #${unit.id}`)}</h3>
-          ${propertyName ? `<span class="bo-calendar-mobile__unit-property">${esc(propertyName)}</span>` : ''}
+          ${propertyName ? `<span class="bo-calendar-mobile__unit-property">${propertyName}</span>` : ''}
         </header>
         <div class="bo-calendar-mobile__list">
           ${bookingsHtml}
