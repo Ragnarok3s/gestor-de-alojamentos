@@ -2257,6 +2257,27 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
         .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
         .page-backoffice .bo-calendar-mobile__legend-dot--blocked{background:#38bdf8;}
+        .page-backoffice .bo-calendar-mobile__overview{display:grid;gap:14px;padding:18px;border-radius:24px;background:#fff;border:1px solid rgba(249,115,22,.18);box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__overview-header{display:grid;gap:4px;}
+        .page-backoffice .bo-calendar-mobile__overview-title{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-hint{margin:0;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-grid{display:grid;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__overview-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(120px,1fr) minmax(150px,1.1fr) minmax(90px,.7fr);align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid rgba(249,115,22,.14);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__overview-row:hover{transform:translateY(-1px);box-shadow:0 16px 28px rgba(249,115,22,.18);}
+        .page-backoffice .bo-calendar-mobile__overview-row--head{background:#fff;border:1px solid rgba(249,115,22,.16);box-shadow:none;padding:10px 14px;}
+        .page-backoffice .bo-calendar-mobile__overview-row--head span{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-row > span{display:block;font-size:.78rem;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__overview-unit{font-weight:600;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-guest{color:#9a3412;font-weight:500;}
+        .page-backoffice .bo-calendar-mobile__overview-dates{color:inherit;font-size:.74rem;opacity:.85;}
+        .page-backoffice .bo-calendar-mobile__overview-status{justify-self:start;font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:6px 12px;border-radius:999px;background:rgba(148,163,184,.22);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed{border-color:rgba(16,185,129,.45);background:rgba(16,185,129,.12);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed .bo-calendar-mobile__overview-status{background:rgba(16,185,129,.2);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending{border-color:rgba(250,204,21,.5);background:rgba(250,204,21,.16);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending .bo-calendar-mobile__overview-status{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked .bo-calendar-mobile__overview-status{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__overview-empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed rgba(249,115,22,.35);background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
         .page-backoffice .bo-calendar-mobile__preview{display:grid;gap:16px;}
         .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
         .page-backoffice .bo-calendar-mobile__unit-header{display:flex;flex-direction:column;gap:6px;}
