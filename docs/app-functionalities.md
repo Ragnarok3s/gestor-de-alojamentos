@@ -38,6 +38,9 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Conta “Owners” com seleção directa de propriedades** – Ao criar utilizadores Owners no backoffice, a direção escolhe as propriedades disponíveis através de checkboxes, garantindo que cada proprietário apenas vê os dados atribuídos e que o login redireciona directamente para a área dedicada.【F:src/modules/backoffice/index.js†L5553-L5637】【F:src/modules/backoffice/index.js†L5800-L5852】【F:server.js†L145-L252】
   *Exemplo real*: Ao contratar um novo parceiro, a direção cria a conta Owners “quinta-azul” e selecciona apenas a Quinta Azul na lista, assegurando que o proprietário acede aos relatórios e reservas dessa casa sem ver inventário de outras unidades.
 
+- **Gestão granular de permissões pelo utilizador Dev** – O perfil `dev` é o único com acesso ao novo painel de “Permissões personalizadas”, permitindo adicionar ou remover privilégios individuais por utilizador, armazenando os ajustes na base de dados e terminando as sessões activas sempre que há alterações.【F:src/modules/backoffice/index.js†L5594-L5774】【F:src/modules/backoffice/index.js†L6082-L6171】【F:server.js†L260-L309】【F:server.js†L2970-L3039】
+  *Exemplo real*: Após promover um rececionista a supervisor, o developer activa temporariamente as permissões de exportação e gestão de tarifas para essa conta específica, mantendo as restantes contas de receção com acessos restritos.
+
 - **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
   *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
 

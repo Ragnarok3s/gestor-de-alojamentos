@@ -115,9 +115,14 @@ module.exports = function registerBackoffice(app, context) {
     requirePermission,
     requireAnyPermission,
     requireAdmin,
+    requireDev,
     overlaps,
     unitAvailable,
     rateQuote,
+    selectUserPermissionOverridesStmt,
+    selectAllPermissionOverridesStmt,
+    deletePermissionOverridesForUserStmt,
+    insertPermissionOverrideStmt,
     emailTemplates,
     bookingEmailer,
     channelIntegrations,
@@ -5567,10 +5572,84 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
   }
   const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const query = req.query || {};
+  const successMessage = query.updated === 'permissions' ? 'Permissões personalizadas atualizadas com sucesso.' : null;
+  let errorMessage = null;
+  if (query.error === 'permissions_forbidden') {
+    errorMessage = 'Não é possível alterar as permissões desse utilizador.';
+  } else if (query.error === 'permissions_invalid') {
+    errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+  }
+
+  let permissionGroupEntries = [];
+  let permissionPayload = null;
+  if (isDevOperator) {
+    const grouped = {};
+    Array.from(ALL_PERMISSIONS)
+      .sort((a, b) => a.localeCompare(b, 'pt'))
+      .forEach(permission => {
+        const [groupKey] = permission.split('.');
+        const key = groupKey || 'outros';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push({
+          key: permission,
+          label: permission.replace(/\./g, ' → ')
+        });
+      });
+    permissionGroupEntries = Object.entries(grouped)
+      .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
+      .map(([groupKey, permissions]) => ({ groupKey, permissions }));
+
+    const overridesByUser = {};
+    selectAllPermissionOverridesStmt.all().forEach(row => {
+      if (!row || !row.user_id || !row.permission) return;
+      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+      overridesByUser[row.user_id].push({
+        permission: row.permission,
+        is_granted: row.is_granted ? 1 : 0
+      });
+    });
+
+    const baseByUser = {};
+    const effectiveByUser = {};
+    users.forEach(user => {
+      const baseSet = new Set(ROLE_PERMISSIONS[user.role_key] || []);
+      baseByUser[user.id] = Array.from(baseSet);
+      const effectiveSet = new Set(baseSet);
+      (overridesByUser[user.id] || []).forEach(entry => {
+        if (!entry || !entry.permission || !ALL_PERMISSIONS.has(entry.permission)) return;
+        if (entry.is_granted) {
+          effectiveSet.add(entry.permission);
+        } else {
+          effectiveSet.delete(entry.permission);
+        }
+      });
+      effectiveByUser[user.id] = Array.from(effectiveSet);
+    });
+
+    const roleLabelsByUser = Object.fromEntries(
+      users.map(user => [user.id, ROLE_LABELS[user.role_key] || user.role_key])
+    );
+    const devUser = users.find(u => u.role_key === MASTER_ROLE) || null;
+    const payload = {
+      base: baseByUser,
+      effective: effectiveByUser,
+      overrides: overridesByUser,
+      roleLabels: roleLabelsByUser,
+      devUserId: devUser ? devUser.id : null
+    };
+    permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
+  }
   const theme = resolveBrandingForRequest(req);
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+    ${errorMessage
+      ? `<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+      : ''}
+    ${successMessage
+      ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
+      : ''}
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <section class="card p-4">
@@ -5636,6 +5715,58 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </form>
         <p class="text-sm text-slate-500 mt-2">As sessões ativas serão terminadas ao atualizar as permissões.</p>
       </section>
+
+      ${isDevOperator
+        ? html`
+            <section class="card p-4 md:col-span-2">
+              <h2 class="font-semibold mb-3">Permissões personalizadas</h2>
+              <form id="user-permissions-form" method="post" action="/admin/users/permissions" class="grid gap-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Selecionar utilizador</span>
+                  <select id="user-permissions-user" name="user_id" class="input" required>
+                    <option value="">— Escolher —</option>
+                    ${users
+                      .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                      .join('')}
+                  </select>
+                </label>
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 max-h-72 overflow-y-auto" data-permission-checkboxes>
+                  ${permissionGroupEntries
+                    .map(
+                      group => `
+                        <fieldset class="mb-3 last:mb-0">
+                          <legend class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">${esc(group.groupKey.replace(/_/g, ' '))}</legend>
+                          <div class="grid gap-2 md:grid-cols-2">
+                            ${group.permissions
+                              .map(
+                                perm => `
+                                  <label class="flex items-start gap-2 text-sm leading-snug">
+                                    <input type="checkbox" class="mt-1 accent-slate-700" name="permissions" value="${esc(perm.key)}" />
+                                    <span>${esc(perm.label)}</span>
+                                  </label>
+                                `
+                              )
+                              .join('')}
+                          </div>
+                        </fieldset>
+                      `
+                    )
+                    .join('')}
+                </div>
+                <div class="rounded border border-slate-200 bg-white/60 p-3 text-xs text-slate-600" data-permission-summary>
+                  <p><strong>Perfil base:</strong> <span data-summary-role>—</span> · <span data-summary-base-count>0</span> permissões base</p>
+                  <p><strong>Ajustes personalizados:</strong> <span data-summary-added>0 adicionadas</span>, <span data-summary-removed>0 removidas</span></p>
+                </div>
+                <p class="text-xs text-amber-600 hidden" data-permission-guard>As permissões da conta de desenvolvimento não podem ser alteradas.</p>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+                  <button class="btn btn-primary" data-permission-submit>Guardar permissões</button>
+                </div>
+              </form>
+            </section>
+            ${permissionPayload ? html`<script id="user-permissions-data" type="application/json">${permissionPayload}</script>` : ''}
+          `
+        : ''}
     </div>
 
     <section class="card p-4 mt-6">
@@ -5694,6 +5825,94 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         syncOwnerSection();
       })();
     </script>
+
+    ${isDevOperator && permissionPayload ? html`
+      <script>
+        (function(){
+          const dataEl = document.getElementById('user-permissions-data');
+          const form = document.getElementById('user-permissions-form');
+          if (!dataEl || !form) return;
+          let payload = {};
+          try {
+            payload = JSON.parse(dataEl.textContent || '{}');
+          } catch (err) {
+            console.error('Permissões personalizadas: payload inválido', err);
+            return;
+          }
+          const userSelect = document.getElementById('user-permissions-user');
+          const checkboxes = Array.from(form.querySelectorAll('input[name="permissions"]'));
+          const summaryRole = form.querySelector('[data-summary-role]');
+          const summaryBaseCount = form.querySelector('[data-summary-base-count]');
+          const summaryAdded = form.querySelector('[data-summary-added]');
+          const summaryRemoved = form.querySelector('[data-summary-removed]');
+          const guardNotice = form.querySelector('[data-permission-guard]');
+          const submitButton = form.querySelector('[data-permission-submit]');
+
+          const baseSetFor = (userId) => new Set((payload.base && payload.base[userId]) || []);
+          const effectiveSetFor = (userId) => new Set((payload.effective && payload.effective[userId]) || []);
+          const isDevTarget = (userId) => payload.devUserId != null && String(payload.devUserId) === String(userId);
+
+          function applyStoredState() {
+            const userId = userSelect.value;
+            if (!userId) {
+              checkboxes.forEach(box => {
+                box.checked = false;
+                box.disabled = true;
+              });
+              if (summaryRole) summaryRole.textContent = '—';
+              if (summaryBaseCount) summaryBaseCount.textContent = '0';
+              if (summaryAdded) summaryAdded.textContent = '0 adicionadas';
+              if (summaryRemoved) summaryRemoved.textContent = '0 removidas';
+              if (guardNotice) guardNotice.classList.add('hidden');
+              if (submitButton) submitButton.disabled = true;
+              return;
+            }
+            const effective = effectiveSetFor(userId);
+            const devLocked = isDevTarget(userId);
+            checkboxes.forEach(box => {
+              box.checked = effective.has(box.value);
+              box.disabled = devLocked;
+            });
+            if (summaryRole) summaryRole.textContent = (payload.roleLabels && payload.roleLabels[userId]) || '—';
+            if (summaryBaseCount) summaryBaseCount.textContent = baseSetFor(userId).size || 0;
+            if (guardNotice) guardNotice.classList.toggle('hidden', !devLocked);
+            if (submitButton) submitButton.disabled = devLocked;
+          }
+
+          function updateSummary() {
+            const userId = userSelect.value;
+            if (!userId) return;
+            const base = baseSetFor(userId);
+            let added = 0;
+            let removed = 0;
+            checkboxes.forEach(box => {
+              const hasBase = base.has(box.value);
+              if (box.checked && !hasBase) added += 1;
+              if (!box.checked && hasBase) removed += 1;
+            });
+            if (summaryAdded) summaryAdded.textContent = `${added} adicionadas`;
+            if (summaryRemoved) summaryRemoved.textContent = `${removed} removidas`;
+          }
+
+          if (userSelect) {
+            userSelect.addEventListener('change', () => {
+              applyStoredState();
+              updateSummary();
+            });
+          }
+          checkboxes.forEach(box => {
+            box.addEventListener('change', () => {
+              if (!userSelect.value) return;
+              if (submitButton) submitButton.disabled = isDevTarget(userSelect.value);
+              updateSummary();
+            });
+          });
+
+          applyStoredState();
+          updateSummary();
+        })();
+      </script>
+    ` : ''}
 
     ${isDevOperator ? html`
       <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">
@@ -5887,6 +6106,85 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/permissions', requireDev, (req, res) => {
+  const rawUserId = req.body && req.body.user_id;
+  const userId = Number.parseInt(rawUserId, 10);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const normalizedRole = normalizeRole(target.role);
+  if (normalizedRole === MASTER_ROLE) {
+    return res.redirect('/admin/utilizadores?error=permissions_forbidden');
+  }
+
+  const existingOverrides = selectUserPermissionOverridesStmt.all(target.id).map(entry => ({
+    permission: entry.permission,
+    is_granted: entry.is_granted ? 1 : 0
+  }));
+  const existingMap = new Map(existingOverrides.map(entry => [entry.permission, entry.is_granted]));
+
+  const rawPermissions = req.body ? req.body.permissions : null;
+  const normalizedSelection = Array.isArray(rawPermissions)
+    ? rawPermissions
+    : rawPermissions != null
+    ? [rawPermissions]
+    : [];
+  const desiredSet = new Set();
+  normalizedSelection.forEach(value => {
+    const key = String(value || '').trim();
+    if (ALL_PERMISSIONS.has(key)) desiredSet.add(key);
+  });
+
+  const baseSet = new Set(ROLE_PERMISSIONS[normalizedRole] || []);
+  const overridesToPersist = [];
+  Array.from(ALL_PERMISSIONS).forEach(permission => {
+    const baseHas = baseSet.has(permission);
+    const wantHas = desiredSet.has(permission);
+    if (baseHas === wantHas) return;
+    overridesToPersist.push({ permission, is_granted: wantHas ? 1 : 0 });
+  });
+
+  let changed = false;
+  if (existingOverrides.length !== overridesToPersist.length) {
+    changed = true;
+  } else {
+    for (const entry of overridesToPersist) {
+      if (!existingMap.has(entry.permission) || existingMap.get(entry.permission) !== entry.is_granted) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  if (changed) {
+    const apply = db.transaction(() => {
+      deletePermissionOverridesForUserStmt.run(target.id);
+      overridesToPersist.forEach(entry => {
+        insertPermissionOverrideStmt.run(target.id, entry.permission, entry.is_granted);
+      });
+    });
+    apply();
+    revokeUserSessions(target.id);
+    logChange(
+      req.user.id,
+      'user',
+      Number(target.id),
+      'permissions_update',
+      { overrides: existingOverrides },
+      { overrides: overridesToPersist }
+    );
+    const added = overridesToPersist.filter(entry => entry.is_granted).map(entry => entry.permission);
+    const removed = overridesToPersist.filter(entry => !entry.is_granted).map(entry => entry.permission);
+    logActivity(req.user.id, 'user:permissions_update', 'user', Number(target.id), { added, removed });
+  }
+
+  res.redirect('/admin/utilizadores?updated=permissions');
 });
 
 app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{
