@@ -265,11 +265,52 @@ module.exports = function registerFrontoffice(app, context) {
           display: grid;
           gap: 1.5rem;
         }
-        .search-summary-card .bo-metrics {
-          margin-top: 1.25rem;
+        .search-banner {
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          border-radius: 0.9rem;
+          padding: 1.15rem 1.35rem;
+          background: #f8fafc;
+          display: grid;
+          gap: 0.75rem;
+        }
+        .search-banner__header {
+          display: grid;
+          gap: 0.35rem;
+        }
+        .search-banner__title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .search-banner__subtitle {
+          font-size: 0.875rem;
+          color: #475569;
+        }
+        .search-banner__chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .search-banner__chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          border-radius: 999px;
+          padding: 0.35rem 0.75rem;
+          background: #ffffff;
+          border: 1px solid rgba(148, 163, 184, 0.45);
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: #1e293b;
+        }
+        .search-banner__chip i {
+          width: 0.95rem;
+          height: 0.95rem;
         }
         .search-guidance {
-          margin: 1rem 0 0;
+          margin: 0;
           padding-left: 1.25rem;
           display: grid;
           gap: 0.35rem;
@@ -429,22 +470,26 @@ module.exports = function registerFrontoffice(app, context) {
       </style>
     `;
 
-    const heroCard = searchActive
+    const summaryBanner = searchActive
       ? html`
-          <section class="bo-card search-summary-card">
-            <h2>Resumo da pesquisa</h2>
-            <p class="bo-subtitle">${esc(dateSummary)} · ${esc(guestsSummary)} · ${esc(propertySummary)}</p>
-            <div class="bo-metrics">
-              <div class="bo-metric"><strong>${totalProperties}</strong><span>Propriedades avaliadas</span></div>
-              <div class="bo-metric"><strong>${totalVisibleUnits}</strong><span>Unidades disponíveis</span></div>
-              <div class="bo-metric"><strong>${totalUnits}</strong><span>Unidades registadas</span></div>
+          <section class="search-banner">
+            <div class="search-banner__header">
+              <h2 class="search-banner__title">Filtros aplicados</h2>
+              <p class="search-banner__subtitle">Mostramos apenas as unidades disponíveis para estes critérios.</p>
+            </div>
+            <div class="search-banner__chips">
+              <span class="search-banner__chip"><i data-lucide="calendar"></i>${esc(dateSummary)}</span>
+              <span class="search-banner__chip"><i data-lucide="users"></i>${esc(guestsSummary)}</span>
+              <span class="search-banner__chip"><i data-lucide="map-pin"></i>${esc(propertySummary)}</span>
             </div>
           </section>
         `
       : html`
-          <section class="bo-card search-summary-card">
-            <h2>Prepare a pesquisa de reservas</h2>
-            <p class="bo-subtitle">Selecione datas para ver apenas as unidades disponíveis em cada propriedade.</p>
+          <section class="search-banner">
+            <div class="search-banner__header">
+              <h2 class="search-banner__title">Prepare a pesquisa de reservas</h2>
+              <p class="search-banner__subtitle">Selecione datas para ver apenas as unidades disponíveis por propriedade.</p>
+            </div>
             <ul class="search-guidance">
               <li>Escolha check-in e check-out válidos para ativar o cálculo automático do valor total.</li>
               <li>Ajuste o número de hóspedes para garantir que a capacidade das unidades é respeitada.</li>
@@ -621,7 +666,7 @@ module.exports = function registerFrontoffice(app, context) {
               </form>
             </section>
             <div class="search-results">
-              ${heroCard}
+              ${summaryBanner}
               ${propertyNotFoundCard}
               ${!propertyNotFound ? propertyCards : ''}
               ${!propertyNotFound ? noPropertiesCard : ''}
