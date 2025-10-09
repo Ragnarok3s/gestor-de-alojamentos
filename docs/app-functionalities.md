@@ -26,8 +26,11 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Painel de revenue com métricas, gráficos e tabela diária** – O separador “Revenue” consolida receita confirmada e pendente, previsões automáticas, repartição por canal e gera gráficos interactivos e uma tabela diária com ADR, RevPAR, ocupação e booking pace.【F:src/modules/backoffice/index.js†L3189-L3460】【F:src/modules/backoffice/scripts/revenue-dashboard.js†L1-L200】  
   *Exemplo real*: A direção analisa o gráfico de receita dos últimos 30 dias para comparar o desempenho entre semanas e perceber em que dias a ocupação caiu.
 
-- **Integrações com canais externos e uploads manuais** – O serviço de integrações conhece Booking.com, Airbnb, i-escape e Splendia, importando ficheiros CSV/XLSX/ICS, agendando sincronizações automáticas e registando histórico de lotes. O backoffice inclui cartões de configuração, upload manual e histórico de importações.【F:src/services/channel-integrations.js†L6-L200】【F:src/modules/backoffice/index.js†L3310-L3338】  
+- **Integrações com canais externos e uploads manuais** – O serviço de integrações conhece Booking.com, Airbnb, i-escape e Splendia, importando ficheiros CSV/XLSX/ICS, agendando sincronizações automáticas e registando histórico de lotes. O backoffice inclui cartões de configuração, upload manual e histórico de importações.【F:src/services/channel-integrations.js†L6-L200】【F:src/modules/backoffice/index.js†L3310-L3338】
   *Exemplo real*: O gestor descarrega o CSV diário da Booking.com e carrega-o na nova página “Integrações” para criar rapidamente as reservas no sistema.
+
+- **Channel Manager oficial no backoffice** – Um separador dedicado no backoffice reúne métricas de integrações, alertas operacionais, histórico de importações e atalhos para sincronizações manuais ou automáticas dos canais OTA suportados.【F:src/modules/backoffice/index.js†L3440-L3492】
+  *Exemplo real*: Ao iniciar o turno, a equipa de revenue abre o “Channel Manager” para confirmar que todas as integrações auto-sync correram bem e identificar rapidamente um alerta de credenciais expiradas antes que afecte novas reservas.
 
 - **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】  
   *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
