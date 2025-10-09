@@ -27,6 +27,9 @@ const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
+const { createEmailTemplateService } = require('./src/services/email-templates');
+const { createMailer } = require('./src/services/mailer');
+const { createBookingEmailer } = require('./src/services/booking-emails');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1524,6 +1527,10 @@ const slugify = (value) =>
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
 
+const emailTemplates = createEmailTemplateService({ db, dayjs });
+const mailer = createMailer({ logger: console });
+const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
+
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
   if ((req.headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest') return true;
@@ -2861,6 +2868,9 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  emailTemplates,
+  mailer,
+  bookingEmailer,
   secureCookies,
   csrfProtection,
   requireLogin,
