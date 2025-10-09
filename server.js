@@ -2256,22 +2256,26 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-mobile__legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
         .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
         .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
-        .page-backoffice .bo-calendar-mobile__legend-dot--available{background:#10b981;}
-        .page-backoffice .bo-calendar-mobile__header{display:grid;gap:10px;}
-        .page-backoffice .bo-calendar-mobile__header-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
-        .page-backoffice .bo-calendar-mobile__header-cell{padding:6px 0;border-radius:12px;background:#fed7aa;color:#9a3412;font-size:.68rem;font-weight:700;text-align:center;text-transform:uppercase;letter-spacing:.08em;}
-        .page-backoffice .bo-calendar-mobile__header-cell.is-weekend{background:#fde68a;}
-        .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:12px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
-        .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.85rem;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.08em;}
-        .page-backoffice .bo-calendar-mobile__grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
-        .page-backoffice .bo-calendar-mobile__cell{position:relative;aspect-ratio:1;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:700;color:#fff;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease;}
-        .page-backoffice .bo-calendar-mobile__cell:hover{transform:translateY(-1px);}
-        .page-backoffice .bo-calendar-mobile__cell.is-available{background:#10b981;}
-        .page-backoffice .bo-calendar-mobile__cell.is-pending{background:#facc15;color:#92400e;}
-        .page-backoffice .bo-calendar-mobile__cell.is-confirmed{background:#fb7185;}
-        .page-backoffice .bo-calendar-mobile__cell.is-weekend{box-shadow:0 0 0 2px rgba(253,230,138,.55) inset;}
-        .page-backoffice .bo-calendar-mobile__cell.is-today{outline:2px solid rgba(59,130,246,.6);outline-offset:2px;}
-        .page-backoffice .bo-calendar-mobile__day{display:block;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--blocked{background:#38bdf8;}
+        .page-backoffice .bo-calendar-mobile__preview{display:grid;gap:16px;}
+        .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__unit-header{display:flex;flex-direction:column;gap:6px;}
+        .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__unit-property{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__list{display:grid;gap:12px;}
+        .page-backoffice .bo-calendar-mobile__booking{display:grid;gap:6px;padding:14px 16px;border-radius:18px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 12px 26px rgba(249,115,22,.14);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__booking:hover{transform:translateY(-2px);box-shadow:0 18px 32px rgba(249,115,22,.2);}
+        .page-backoffice .bo-calendar-mobile__booking.is-confirmed{border-color:#10b981;background:rgba(16,185,129,.18);}
+        .page-backoffice .bo-calendar-mobile__booking.is-pending{border-color:#facc15;background:rgba(250,204,21,.22);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__booking.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__booking-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__guest{font-weight:600;color:#9a3412;font-size:.9rem;}
+        .page-backoffice .bo-calendar-mobile__badge{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+        .page-backoffice .bo-calendar-mobile__badge.is-confirmed{background:rgba(16,185,129,.18);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__badge.is-pending{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__badge.is-blocked{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__booking-meta{font-size:.78rem;color:inherit;opacity:.85;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__empty{padding:14px;border-radius:16px;background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
         .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
         .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
         .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}

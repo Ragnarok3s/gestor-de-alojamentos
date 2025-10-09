@@ -1116,90 +1116,99 @@ function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
 function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, esc }) {
   if (!month) return '';
 
-  const normalized = normalizeCalendarBookings(bookings, dayjs);
-  const monthStart = month.startOf('month');
-  const daysInMonth = month.daysInMonth();
-  const todayIso = dayjs().format('YYYY-MM-DD');
+  const normalized = normalizeCalendarBookings(bookings, dayjs)
+    .sort((a, b) => dayjs(a.checkinISO).diff(dayjs(b.checkinISO)) || (a.id || 0) - (b.id || 0));
 
-  const dayDescriptors = Array.from({ length: daysInMonth }, (_, index) => {
-    const date = monthStart.add(index, 'day');
-    return {
-      iso: date.format('YYYY-MM-DD'),
-      label: date.format('DD'),
-      isWeekend: date.day() === 0 || date.day() === 6,
-      isToday: date.format('YYYY-MM-DD') === todayIso
-    };
+  const unitsMap = new Map((units || []).map(unit => [unit.id, { ...unit }]));
+  const grouped = new Map();
+
+  normalized.forEach(booking => {
+    const unitId = booking.unit_id;
+    if (unitId == null) return;
+
+    if (!grouped.has(unitId)) {
+      grouped.set(unitId, []);
+    }
+    grouped.get(unitId).push(booking);
+
+    if (!unitsMap.has(unitId)) {
+      unitsMap.set(unitId, {
+        id: unitId,
+        name: booking.unit_name || `Unidade #${unitId || booking.id}`,
+        property_name: booking.property_name || ''
+      });
+    } else if (!unitsMap.get(unitId).property_name && booking.property_name) {
+      unitsMap.get(unitId).property_name = booking.property_name;
+    }
   });
 
-  const unitsToRender = (units && units.length)
-    ? units.map(unit => ({ id: unit.id, name: unit.name || `Unidade #${unit.id}` }))
-    : Array.from(new Map(normalized
-        .filter(booking => booking.unit_id != null)
-        .map(booking => [
-          booking.unit_id,
-          { id: booking.unit_id, name: booking.unit_name || `Unidade #${booking.unit_id}` }
-        ])
-      ).values());
-
-  if (!unitsToRender.length || !dayDescriptors.length) {
-    return '';
-  }
+  if (!unitsMap.size) return '';
 
   const legend = `
     <div class="bo-calendar-mobile__legend">
-      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--confirmed"></span>Reservada</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--confirmed"></span>Confirmada</span>
       <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--pending"></span>Pendente</span>
-      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--available"></span>Disponível</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--blocked"></span>Bloqueio/Outro</span>
     </div>
   `;
 
-  const headerRow = `
-    <div class="bo-calendar-mobile__header" aria-hidden="true">
-      <div class="bo-calendar-mobile__header-grid">
-        ${dayDescriptors.map(day => `
-          <div class="bo-calendar-mobile__header-cell${day.isWeekend ? ' is-weekend' : ''}">${esc(day.label)}</div>
-        `).join('')}
-      </div>
-    </div>
-  `;
+  const baseUnits = (units || []).map(unit => {
+    const enriched = unitsMap.get(unit.id) || {};
+    return { ...enriched, ...unit };
+  });
+  const fallbackUnits = Array.from(unitsMap.values()).filter(unit => !baseUnits.some(existing => existing.id === unit.id));
+  const unitsToRender = [...baseUnits, ...fallbackUnits];
 
   const unitSections = unitsToRender.map(unit => {
-    const bookingsForUnit = normalized.filter(booking => booking.unit_id === unit.id);
+    const unitBookings = grouped.get(unit.id) || [];
+    const propertyName = unit.property_name || (unitBookings[0] && unitBookings[0].property_name) || '';
 
-    const cells = dayDescriptors.map(day => {
-      const cellBookings = bookingsForUnit.filter(booking => day.iso >= booking.checkinISO && day.iso < booking.checkoutISO);
+    const bookingsHtml = unitBookings.length
+      ? unitBookings.map(booking => {
+          const status = (booking.status || '').toUpperCase();
+          let statusLabel = 'Reserva';
+          let statusClass = 'is-blocked';
+          if (status === 'CONFIRMED') {
+            statusLabel = 'Confirmada';
+            statusClass = 'is-confirmed';
+          } else if (status === 'PENDING') {
+            statusLabel = 'Pendente';
+            statusClass = 'is-pending';
+          } else if (status === 'BLOCKED') {
+            statusLabel = 'Bloqueio';
+          }
 
-      let statusClass = 'is-available';
-      let statusText = 'Disponível';
-      if (cellBookings.length) {
-        const hasPending = cellBookings.some(booking => (booking.status || '').toUpperCase() === 'PENDING');
-        statusClass = hasPending ? 'is-pending' : 'is-confirmed';
-        statusText = cellBookings
-          .map(booking => `${booking.guest_name || 'Reserva'} (${booking.checkinLabel} → ${booking.checkoutLabel})`)
-          .join(' · ');
-      }
+          const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
+          const metaParts = [
+            `${booking.checkinLabel} → ${booking.checkoutLabel}`,
+            `${nights} noite${nights === 1 ? '' : 's'}`
+          ];
+          if (booking.agency) metaParts.push(booking.agency);
+          const meta = metaParts.map(part => esc(part)).join(' · ');
 
-      const ariaLabel = esc(`${unit.name} · Dia ${day.label} · ${statusText}`);
-      const title = esc(`Dia ${day.label} · ${statusText}`);
-      const classes = [
-        'bo-calendar-mobile__cell',
-        statusClass,
-        day.isWeekend ? 'is-weekend' : '',
-        day.isToday ? 'is-today' : ''
-      ].filter(Boolean).join(' ');
+          const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+          const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
 
-      return `
-        <div class="${classes}" title="${title}" aria-label="${ariaLabel}" data-status="${esc(statusClass.replace('is-', ''))}">
-          <span class="bo-calendar-mobile__day">${esc(day.label)}</span>
-        </div>
-      `;
-    }).join('');
+          return `
+            <a href="${esc(href)}" class="bo-calendar-mobile__booking ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+              <div class="bo-calendar-mobile__booking-header">
+                <span class="bo-calendar-mobile__guest">${guest}</span>
+                <span class="bo-calendar-mobile__badge ${statusClass}">${esc(statusLabel)}</span>
+              </div>
+              <div class="bo-calendar-mobile__booking-meta">${meta}</div>
+            </a>
+          `;
+        }).join('')
+      : '<div class="bo-calendar-mobile__empty">Sem reservas neste período.</div>';
 
     return `
       <section class="bo-calendar-mobile__unit" aria-label="Reservas da unidade ${esc(unit.name)}">
-        <header class="bo-calendar-mobile__unit-name">${esc(unit.name)}</header>
-        <div class="bo-calendar-mobile__grid" role="row">
-          ${cells}
+        <header class="bo-calendar-mobile__unit-header">
+          <h3 class="bo-calendar-mobile__unit-name">${esc(unit.name || `Unidade #${unit.id}`)}</h3>
+          ${propertyName ? `<span class="bo-calendar-mobile__unit-property">${esc(propertyName)}</span>` : ''}
+        </header>
+        <div class="bo-calendar-mobile__list">
+          ${bookingsHtml}
         </div>
       </section>
     `;
@@ -1208,8 +1217,9 @@ function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, es
   return `
     <div class="bo-calendar-mobile" data-calendar-mobile>
       ${legend}
-      ${headerRow}
-      ${unitSections}
+      <div class="bo-calendar-mobile__preview">
+        ${unitSections}
+      </div>
     </div>
   `;
 }
