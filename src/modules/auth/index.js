@@ -83,6 +83,8 @@ module.exports = function registerAuthRoutes(app, context) {
         ? '/limpeza/tarefas'
         : userCan(userContext, 'calendar.view')
         ? '/calendar'
+        : userCan(userContext, 'owners.portal.view')
+        ? '/owners'
         : '/';
     res.redirect(safeNext || defaultRedirect);
   });

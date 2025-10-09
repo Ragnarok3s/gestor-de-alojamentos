@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS units (
   UNIQUE(property_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS property_owners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(property_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_property_owners_user ON property_owners(user_id);
+CREATE INDEX IF NOT EXISTS idx_property_owners_property ON property_owners(property_id);
+
 CREATE TABLE IF NOT EXISTS channel_import_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_key TEXT NOT NULL,
@@ -155,6 +167,18 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   meta_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS user_permission_overrides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL,
+  is_granted INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, permission)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_permission_overrides_user ON user_permission_overrides(user_id);
 
 CREATE TABLE IF NOT EXISTS booking_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -23,6 +23,7 @@ const path = require('path');
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
+const registerOwnersPortal = require('./src/modules/owners');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
@@ -146,7 +147,8 @@ const ROLE_LABELS = {
   rececao: 'Receção',
   gestao: 'Gestão',
   direcao: 'Direção',
-  limpeza: 'Limpeza'
+  limpeza: 'Limpeza',
+  owner: 'Owners (Portal)'
 };
 
 const ROLE_PERMISSIONS = {
@@ -188,6 +190,7 @@ const ROLE_PERMISSIONS = {
     'automation.view',
     'automation.export',
     'audit.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -214,6 +217,7 @@ const ROLE_PERMISSIONS = {
     'audit.view',
     'users.manage',
     'logs.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -221,7 +225,8 @@ const ROLE_PERMISSIONS = {
   limpeza: new Set([
     'housekeeping.view',
     'housekeeping.complete'
-  ])
+  ]),
+  owner: new Set(['owners.portal.view'])
 };
 
 const ALL_PERMISSIONS = new Set();
@@ -237,6 +242,15 @@ function normalizeRole(role) {
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
   if (key === 'limpeza' || key === 'limpezas' || key === 'housekeeping') return 'limpeza';
   if (
+    key === 'owners' ||
+    key === 'owner' ||
+    key === 'proprietario' ||
+    key === 'proprietária' ||
+    key === 'proprietaria' ||
+    key === 'proprietário'
+  )
+    return 'owner';
+  if (
     key === 'rececao' ||
     key === 'receção' ||
     key === 'recepcao' ||
@@ -251,6 +265,22 @@ function normalizeRole(role) {
 function buildUserContext(sessRow) {
   const role = normalizeRole(sessRow.role);
   const permissions = new Set(ROLE_PERMISSIONS[role] || []);
+  if (sessRow && sessRow.user_id && role !== MASTER_ROLE) {
+    try {
+      const overrides = selectUserPermissionOverridesStmt.all(sessRow.user_id);
+      overrides.forEach(entry => {
+        const permission = entry && entry.permission;
+        if (!permission || !ALL_PERMISSIONS.has(permission)) return;
+        if (entry.is_granted) {
+          permissions.add(permission);
+        } else {
+          permissions.delete(permission);
+        }
+      });
+    } catch (err) {
+      console.warn('Falha ao carregar privilégios personalizados:', err.message);
+    }
+  }
   return {
     id: sessRow.user_id,
     username: sessRow.username,
@@ -294,6 +324,19 @@ const adminBookingUpdateStmt = db.prepare(
      WHERE id = ?
   `
   ).trim()
+);
+
+const selectUserPermissionOverridesStmt = db.prepare(
+  'SELECT permission, is_granted FROM user_permission_overrides WHERE user_id = ?'
+);
+const selectAllPermissionOverridesStmt = db.prepare(
+  'SELECT user_id, permission, is_granted FROM user_permission_overrides'
+);
+const deletePermissionOverridesForUserStmt = db.prepare(
+  'DELETE FROM user_permission_overrides WHERE user_id = ?'
+);
+const insertPermissionOverrideStmt = db.prepare(
+  'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
 );
 
 function logSessionEvent(userId, action, req) {
@@ -1823,6 +1866,17 @@ function requireAdmin(req,res,next){
   next();
 }
 
+function requireDev(req, res, next) {
+  const sess = getSession(req.cookies.adm, req);
+  if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+  const user = buildUserContext(sess);
+  req.user = user;
+  if (!user || user.role !== MASTER_ROLE) {
+    return res.status(403).send('Sem permissão');
+  }
+  next();
+}
+
 function userHasBackofficeAccess(user) {
   if (!user) return false;
   const normalizedRole = user.role ? normalizeRole(user.role) : null;
@@ -2008,6 +2062,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
 
   if (!isHousekeepingOnly) {
     pushNavLink('search', '/search', 'Pesquisar');
+  }
+  if (can('owners.portal.view')) {
+    pushNavLink('owners', '/owners', 'Área de proprietários');
   }
   if (can('calendar.view')) {
     pushNavLink('calendar', '/calendar', 'Mapa de reservas');
@@ -2951,10 +3008,15 @@ const context = {
   requirePermission,
   requireAnyPermission,
   requireAdmin,
+  requireDev,
   buildUserNotifications,
   overlaps,
   unitAvailable,
   rateQuote,
+  selectUserPermissionOverridesStmt,
+  selectAllPermissionOverridesStmt,
+  deletePermissionOverridesForUserStmt,
+  insertPermissionOverrideStmt,
   compressImage,
   removeBrandingLogo,
   selectPropertyById,
@@ -2977,6 +3039,7 @@ const context = {
 
 registerAuthRoutes(app, context);
 registerFrontoffice(app, context);
+registerOwnersPortal(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================

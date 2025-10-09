@@ -115,9 +115,14 @@ module.exports = function registerBackoffice(app, context) {
     requirePermission,
     requireAnyPermission,
     requireAdmin,
+    requireDev,
     overlaps,
     unitAvailable,
     rateQuote,
+    selectUserPermissionOverridesStmt,
+    selectAllPermissionOverridesStmt,
+    deletePermissionOverridesForUserStmt,
+    insertPermissionOverrideStmt,
     emailTemplates,
     bookingEmailer,
     channelIntegrations,
@@ -2019,8 +2024,8 @@ module.exports = function registerBackoffice(app, context) {
       .filter(record => record.supportsManual && record.manualFormats && record.manualFormats.length)
       .map(
         record => `
-          <li class="flex items-center justify-between gap-2">
-            <span class="text-xs font-medium text-slate-700">${esc(record.name)}</span>
+          <li class="flex items-center justify-between gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-3 py-2 text-xs">
+            <span class="font-medium text-slate-700">${esc(record.name)}</span>
             <span class="text-[11px] uppercase tracking-wide text-slate-500">${esc(record.manualFormats.join(', '))}</span>
           </li>`
       )
@@ -2090,101 +2095,226 @@ module.exports = function registerBackoffice(app, context) {
       }
     }
 
+    const totalChannels = channelRecords.length;
+    const autoActiveCount = channelRecords.filter(record => {
+      const settings = record.settings || {};
+      return record.supportsAuto && settings.autoEnabled && settings.autoUrl;
+    }).length;
+    const manualEnabledCount = channelRecords.filter(record => record.supportsManual).length;
+    const channelsNeedingAttention = channelRecords.filter(record => {
+      const settings = record.settings || {};
+      const autoEnabled = record.supportsAuto && settings.autoEnabled;
+      return (autoEnabled && !settings.autoUrl) || record.last_status === 'failed' || record.last_error;
+    }).length;
+
+    let lastSyncMoment = null;
+    channelRecords.forEach(record => {
+      if (record.last_synced_at) {
+        const candidate = dayjs(record.last_synced_at);
+        if (candidate.isValid() && (!lastSyncMoment || candidate.isAfter(lastSyncMoment))) {
+          lastSyncMoment = candidate;
+        }
+      }
+    });
+    const lastSyncLabel = lastSyncMoment ? lastSyncMoment.format('DD/MM/YYYY HH:mm') : 'Sem registos';
+    const recentImportCount = channelRecentImports.length;
+
+    const channelAlerts = channelRecords
+      .map(record => {
+        const settings = record.settings || {};
+        const issues = [];
+        if (record.supportsAuto && settings.autoEnabled && !settings.autoUrl) {
+          issues.push('Auto-sync ativo sem URL configurado');
+        }
+        if (record.last_status === 'failed') {
+          issues.push('Última sincronização falhou');
+        }
+        if (record.last_error) {
+          issues.push(record.last_error);
+        }
+        return issues.length ? { name: record.name, issues } : null;
+      })
+      .filter(Boolean);
+    const channelAlertsHtml = channelAlerts.length
+      ? channelAlerts
+          .map(alert => {
+            const issuesList = alert.issues.map(issue => `<li>${esc(issue)}</li>`).join('');
+            return `
+              <li class="rounded-xl border border-rose-200/70 bg-rose-50/70 p-3 space-y-1">
+                <p class="text-sm font-semibold text-rose-700">${esc(alert.name)}</p>
+                <ul class="list-disc pl-4 text-xs text-rose-600 space-y-1">${issuesList}</ul>
+              </li>`;
+          })
+          .join('')
+      : '<p class="bo-empty text-sm">Sem alertas pendentes.</p>';
+
     const channelCardsHtml = channelRecords.length
       ? channelRecords
           .map(channel => {
             const autoSettings = channel.settings || {};
-            const lastSyncLabel = channel.last_synced_at ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm') : 'Nunca sincronizado';
-            const status = channel.last_status || '';
+            const autoEnabled = channel.supportsAuto && !!autoSettings.autoEnabled;
+            const autoConfigured = autoEnabled && !!autoSettings.autoUrl;
+            const autoBadgeLabel = autoConfigured
+              ? 'Auto-sync ativo'
+              : autoEnabled
+              ? 'Auto-sync incompleto'
+              : 'Auto-sync desligado';
+            const autoBadgeClass = autoConfigured
+              ? 'bg-emerald-100 text-emerald-700'
+              : autoEnabled
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-slate-100 text-slate-600';
+            const manualBadge = channel.supportsManual
+              ? '<span class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">Upload manual</span>'
+              : '';
+            const needsAttention =
+              (autoEnabled && !autoSettings.autoUrl) || channel.last_status === 'failed' || !!channel.last_error;
+            const attentionBadge = needsAttention
+              ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700">Rever configuração</span>'
+              : '';
+            const lastSyncLabel = channel.last_synced_at
+              ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm')
+              : 'Nunca sincronizado';
+            const statusLabel = channel.last_status
+              ? channel.last_status === 'processed'
+                ? 'Sincronização concluída'
+                : channel.last_status === 'partial'
+                ? 'Processada com avisos'
+                : channel.last_status === 'failed'
+                ? 'Falhou'
+                : channel.last_status
+              : autoConfigured
+              ? 'Aguardando próxima execução'
+              : '';
             const statusClass =
-              status === 'failed'
+              channel.last_status === 'failed'
                 ? 'text-rose-600'
-                : status === 'processed'
-                ? 'text-emerald-600'
-                : status === 'partial'
+                : channel.last_status === 'partial'
                 ? 'text-amber-600'
+                : channel.last_status === 'processed'
+                ? 'text-emerald-600'
                 : 'text-slate-500';
             const summary = channel.last_summary || null;
             const summaryBadges = summary
               ? `
-                <div class="mt-2 flex flex-wrap gap-2 text-[11px]">
-                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} nova${summary.insertedCount === 1 ? '' : 's'}</span>
-                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicada${summary.duplicateCount === 1 ? '' : 's'}</span>` : ''}
+                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
+                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
+                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
                   ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
-                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-600">${summary.errorCount} erro${summary.errorCount === 1 ? '' : 's'}</span>` : ''}
+                  ${summary.conflictCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.conflictCount} conflitos</span>` : ''}
+                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">${summary.errorCount} erros</span>` : ''}
                 </div>`
               : '';
-            const autoForm = channel.supportsAuto
-              ? `
-                <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="grid gap-3 mt-3">
-                  <label class="form-field">
-                    <span class="form-label">Ligação automática</span>
-                    <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
-                  </label>
-                  <div class="grid gap-3 md:grid-cols-3">
-                    <label class="form-field">
-                      <span class="form-label">Formato</span>
-                      <select name="autoFormat" class="input">
-                        <option value="">Deteção automática</option>
-                        ${channel.autoFormats && channel.autoFormats.length
-                          ? channel.autoFormats
-                              .map(format => `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(format.toUpperCase())}</option>`)
-                              .join('')
-                          : ''}
-                      </select>
-                    </label>
-                    <label class="form-field">
-                      <span class="form-label">Estado das reservas</span>
-                      <select name="defaultStatus" class="input">
-                        <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
-                        <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
-                      </select>
-                    </label>
-                    <label class="form-field">
-                      <span class="form-label">Fuso horário</span>
-                      <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
-                    </label>
-                  </div>
-                  <div class="grid gap-3 md:grid-cols-2">
-                    <label class="form-field">
-                      <span class="form-label">Utilizador (opcional)</span>
-                      <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
-                    </label>
-                    <label class="form-field">
-                      <span class="form-label">Palavra-passe (opcional)</span>
-                      <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
-                    </label>
-                  </div>
-                  <label class="inline-flex items-center gap-2 text-sm">
-                    <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
-                    <span>Ativar sincronização automática</span>
-                  </label>
-                  <div class="flex flex-wrap gap-2">
-                    <button class="btn btn-primary">Guardar integração</button>
-                  </div>
-                </form>
-                <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="mt-2 inline-flex">
-                  <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
-                </form>`
-              : '<p class="text-sm text-slate-500">Este canal apenas suporta importação manual.</p>';
-            const manualHint = channel.supportsManual && channel.manualFormats && channel.manualFormats.length
-              ? `<p class="text-xs text-slate-500">Importação manual: ${esc(channel.manualFormats.join(', ').toUpperCase())}</p>`
+            const manualInfo = channel.supportsManual
+              ? `<p class="text-xs text-slate-500">Ficheiros suportados: ${esc(
+                  (channel.manualFormats || []).map(format => format.toUpperCase()).join(', ') || '—'
+                )}. Utilize a área de upload manual para carregar exportações do canal.</p>`
+              : '<p class="text-xs text-slate-500">Este canal é gerido apenas através da sincronização automática.</p>';
+            const defaultStatusLabel = autoSettings.defaultStatus === 'PENDING' ? 'Pendente' : 'Confirmada';
+            const summaryDetails = summary
+              ? `<div class="border-t border-slate-200/70 pt-2">
+                  <p class="text-xs font-medium text-slate-600">Última execução</p>
+                  <p class="text-xs text-slate-500">${summary.insertedCount || 0} novas · ${summary.duplicateCount || 0} duplicadas · ${summary.conflictCount || 0} conflitos · ${summary.unmatchedCount || 0} sem correspondência · ${summary.errorCount || 0} erros</p>
+                </div>`
               : '';
+            const infoPanel = `
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+                <p class="text-xs text-slate-500">Reservas importadas com estado <span class="font-semibold text-slate-700">${esc(
+                  defaultStatusLabel
+                )}</span>.</p>
+                ${manualInfo}
+                ${summaryDetails}
+              </div>`;
+            const autoForm = channel.supportsAuto
+              ? `<div class="rounded-xl border border-slate-200 bg-white/70 p-3">
+                  <h4 class="text-sm font-semibold text-slate-700">Configuração automática</h4>
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="grid gap-3 mt-3">
+                    <label class="form-field">
+                      <span class="form-label">Ligação automática</span>
+                      <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
+                    </label>
+                    <div class="grid gap-3 md:grid-cols-3">
+                      <label class="form-field">
+                        <span class="form-label">Formato</span>
+                        <select name="autoFormat" class="input">
+                          <option value="">Deteção automática</option>
+                          ${
+                            channel.autoFormats && channel.autoFormats.length
+                              ? channel.autoFormats
+                                  .map(
+                                    format =>
+                                      `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(
+                                        format.toUpperCase()
+                                      )}</option>`
+                                  )
+                                  .join('')
+                              : ''
+                          }
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Estado das reservas</span>
+                        <select name="defaultStatus" class="input">
+                          <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
+                          <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Fuso horário</span>
+                        <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
+                      </label>
+                    </div>
+                    <div class="grid gap-3 md:grid-cols-2">
+                      <label class="form-field">
+                        <span class="form-label">Utilizador (opcional)</span>
+                        <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Palavra-passe (opcional)</span>
+                        <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
+                      </label>
+                    </div>
+                    <label class="form-field">
+                      <span class="form-label">Notas internas</span>
+                      <textarea name="notes" class="input" rows="3" placeholder="Instruções, contactos ou credenciais adicionais.">${esc(autoSettings.notes || '')}</textarea>
+                    </label>
+                    <label class="inline-flex items-center gap-2 text-sm">
+                      <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
+                      <span>Ativar sincronização automática</span>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                      <button class="btn btn-primary">Guardar integração</button>
+                    </div>
+                  </form>
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="mt-2 inline-flex">
+                    <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
+                  </form>
+                </div>`
+              : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
             return `
-              <article class="rounded-2xl border border-amber-200 bg-white/80 p-4 space-y-2">
-                <header>
-                  <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
-                  ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
-                  <p class="text-xs text-slate-500 mt-1">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${status ? ` · <span class="${statusClass}">${esc(status)}</span>` : ''}${channel.last_error ? `<br/><span class="text-rose-600">${esc(channel.last_error)}</span>` : ''}</p>
-                  ${summaryBadges}
+              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
+                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
+                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
+                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
+                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
+                    ${summaryBadges}
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
+                    ${manualBadge}
+                    ${attentionBadge}
+                  </div>
                 </header>
-                ${autoForm}
-                ${manualHint}
+                <div class="grid gap-4 lg:grid-cols-2">
+                  ${autoForm}
+                  ${infoPanel}
+                </div>
               </article>`;
           })
           .join('')
       : '<p class="bo-empty">Nenhuma integração configurada.</p>';
-
     const channelImportsRows = channelRecentImports.length
       ? channelRecentImports
           .map(batch => {
@@ -2322,7 +2452,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
-      { id: 'channels', label: 'Integrações', icon: 'share-2', allowed: canManageIntegrations },
+      { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
@@ -3307,33 +3437,60 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="channels">
+              <section class="bo-pane" data-bo-pane="channel-manager">
                 <div class="bo-card">
-                  <h2>Integrações de canais</h2>
-                  <p class="bo-subtitle">Configure as ligações automáticas aos canais externos e acompanhe o estado de cada sincronização.</p>
-                  ${channelNoticeHtml ? `<div class="mt-3">${channelNoticeHtml}</div>` : ''}
-                  <div class="mt-4 space-y-4">${channelCardsHtml}</div>
+                  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <h2>Channel Manager</h2>
+                      <p class="bo-subtitle">Centralize as integrações com Booking.com, Airbnb, i-escape e Splendia numa única área de controlo.</p>
+                    </div>
+                    <div class="text-xs text-slate-500">Última sincronização registada: <span class="font-medium text-slate-700">${esc(lastSyncLabel)}</span></div>
+                  </div>
+                  ${channelNoticeHtml ? `<div class="mt-4">${channelNoticeHtml}</div>` : ''}
+                  <div class="bo-metrics bo-metrics--wrap mt-4">
+                    <div class="bo-metric"><strong>${totalChannels}</strong><span>Canais disponíveis</span></div>
+                    <div class="bo-metric"><strong>${autoActiveCount}</strong><span>Auto-sync ativos</span></div>
+                    <div class="bo-metric"><strong>${manualEnabledCount}</strong><span>Importações manuais</span></div>
+                    <div class="bo-metric"><strong>${channelsNeedingAttention}</strong><span>Alertas a resolver</span></div>
+                    <div class="bo-metric"><strong>${recentImportCount}</strong><span>Importações recentes</span></div>
+                  </div>
                 </div>
 
-                <div class="grid gap-6 lg:grid-cols-2">
-                  <div class="bo-card">
-                    <h3 class="bo-section-title">Importação manual</h3>
-                    <p class="bo-subtitle">Faça upload dos ficheiros exportados pelas plataformas para atualizar as reservas automaticamente.</p>
-                    ${manualFormatsLegend ? `<ul class="mt-3 space-y-2">${manualFormatsLegend}</ul>` : ''}
-                    <div class="mt-4">${manualUploadSection}</div>
+                <div class="grid gap-6 xl:grid-cols-[2fr_1fr]">
+                  <div class="space-y-6">
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Conexões de canais</h3>
+                      <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
+                      <div class="mt-4 space-y-4">${channelCardsHtml}</div>
+                    </div>
+
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Upload manual de reservas</h3>
+                      <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
+                      ${manualFormatsLegend ? `<ul class="mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
+                      <div class="mt-4">${manualUploadSection}</div>
+                    </div>
                   </div>
 
-                  <div class="bo-card">
-                    <h3 class="bo-section-title">Histórico de importações</h3>
-                    <div class="bo-table responsive-table mt-3">
-                      <table class="w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-slate-500">
-                            <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
-                          </tr>
-                        </thead>
-                        <tbody>${channelImportsRows}</tbody>
-                      </table>
+                  <div class="space-y-6">
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Alertas do Channel Manager</h3>
+                      <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
+                      <div class="mt-3 space-y-3">${channelAlertsHtml}</div>
+                    </div>
+
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Histórico de importações</h3>
+                      <div class="bo-table responsive-table mt-3">
+                        <table class="w-full text-sm">
+                          <thead>
+                            <tr class="text-left text-slate-500">
+                              <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
+                            </tr>
+                          </thead>
+                          <tbody>${channelImportsRows}</tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3601,10 +3758,10 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
           autoUrl: req.body.autoUrl || null,
           autoFormat: req.body.autoFormat || null
         });
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(`settings:${channelKey}`)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`settings:${channelKey}`)}#channel-manager`);
       } catch (err) {
         console.warn('Falha ao guardar configuração de canal:', err.message);
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
       }
     }
   );
@@ -3621,15 +3778,15 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
           reason: 'manual-trigger'
         });
         if (result && result.skipped) {
-          return res.redirect(`/admin?channel_notice=${encodeURIComponent(`skipped:${channelKey}`)}#channels`);
+          return res.redirect(`/admin?channel_notice=${encodeURIComponent(`skipped:${channelKey}`)}#channel-manager`);
         }
         const summary = result && result.summary ? result.summary : {};
         logActivity(req.user.id, 'channel.sync.manual', 'channel', channelKey, summary);
         const payload = `sync:${channelKey}:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
       } catch (err) {
         console.warn('Falha ao sincronizar canal:', err.message);
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
       }
     }
   );
@@ -3659,10 +3816,10 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
         const summary = result && result.summary ? result.summary : {};
         logActivity(req.user.id, 'channel.import.manual', 'channel', channelKey, summary);
         const payload = `imported:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
       } catch (err) {
         console.warn('Falha ao importar reservas do canal:', err.message);
-        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
       }
     }
   );
@@ -5408,15 +5565,91 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     { key: 'rececao', label: ROLE_LABELS.rececao },
     { key: 'gestao', label: ROLE_LABELS.gestao },
     { key: 'direcao', label: ROLE_LABELS.direcao },
-    { key: 'limpeza', label: ROLE_LABELS.limpeza }
+    { key: 'limpeza', label: ROLE_LABELS.limpeza },
+    { key: 'owner', label: ROLE_LABELS.owner }
   ];
   if (isDevOperator) {
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
+  }
+  const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const query = req.query || {};
+  const successMessage = query.updated === 'permissions' ? 'Permissões personalizadas atualizadas com sucesso.' : null;
+  let errorMessage = null;
+  if (query.error === 'permissions_forbidden') {
+    errorMessage = 'Não é possível alterar as permissões desse utilizador.';
+  } else if (query.error === 'permissions_invalid') {
+    errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+  }
+
+  let permissionGroupEntries = [];
+  let permissionPayload = null;
+  if (isDevOperator) {
+    const grouped = {};
+    Array.from(ALL_PERMISSIONS)
+      .sort((a, b) => a.localeCompare(b, 'pt'))
+      .forEach(permission => {
+        const [groupKey] = permission.split('.');
+        const key = groupKey || 'outros';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push({
+          key: permission,
+          label: permission.replace(/\./g, ' → ')
+        });
+      });
+    permissionGroupEntries = Object.entries(grouped)
+      .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
+      .map(([groupKey, permissions]) => ({ groupKey, permissions }));
+
+    const overridesByUser = {};
+    selectAllPermissionOverridesStmt.all().forEach(row => {
+      if (!row || !row.user_id || !row.permission) return;
+      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+      overridesByUser[row.user_id].push({
+        permission: row.permission,
+        is_granted: row.is_granted ? 1 : 0
+      });
+    });
+
+    const baseByUser = {};
+    const effectiveByUser = {};
+    users.forEach(user => {
+      const baseSet = new Set(ROLE_PERMISSIONS[user.role_key] || []);
+      baseByUser[user.id] = Array.from(baseSet);
+      const effectiveSet = new Set(baseSet);
+      (overridesByUser[user.id] || []).forEach(entry => {
+        if (!entry || !entry.permission || !ALL_PERMISSIONS.has(entry.permission)) return;
+        if (entry.is_granted) {
+          effectiveSet.add(entry.permission);
+        } else {
+          effectiveSet.delete(entry.permission);
+        }
+      });
+      effectiveByUser[user.id] = Array.from(effectiveSet);
+    });
+
+    const roleLabelsByUser = Object.fromEntries(
+      users.map(user => [user.id, ROLE_LABELS[user.role_key] || user.role_key])
+    );
+    const devUser = users.find(u => u.role_key === MASTER_ROLE) || null;
+    const payload = {
+      base: baseByUser,
+      effective: effectiveByUser,
+      overrides: overridesByUser,
+      roleLabels: roleLabelsByUser,
+      devUserId: devUser ? devUser.id : null
+    };
+    permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
   }
   const theme = resolveBrandingForRequest(req);
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+    ${errorMessage
+      ? `<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+      : ''}
+    ${successMessage
+      ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
+      : ''}
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <section class="card p-4">
@@ -5425,12 +5658,30 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required name="username" class="input" placeholder="Utilizador" />
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
-          <select name="role" class="input">
-            <option value="rececao">Receção</option>
-            <option value="gestao">Gestão</option>
-            <option value="direcao">Direção</option>
-            <option value="limpeza">Limpeza</option>
+          <select name="role" id="create-user-role" class="input">
+            ${roleOptions
+              .filter(opt => opt.key !== MASTER_ROLE)
+              .map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`)
+              .join('')}
           </select>
+          <div id="owner-property-select" class="rounded-lg border border-slate-200 bg-slate-50 p-3 hidden" aria-hidden="true" style="display:none;">
+            <p class="text-sm text-slate-600 mb-2">Selecione as propriedades a que este owner terá acesso.</p>
+            ${propertyChoices.length
+              ? `<div class="grid max-h-48 gap-2 overflow-y-auto pr-1">
+                  ${propertyChoices
+                    .map(
+                      prop => `
+                        <label class="flex items-center gap-2 text-sm">
+                          <input type="checkbox" name="property_ids" value="${prop.id}" class="accent-slate-700" />
+                          <span>${esc(prop.name)}</span>
+                        </label>
+                      `
+                    )
+                    .join('')}
+                </div>`
+              : '<p class="text-sm text-slate-500">Ainda não existem propriedades registadas para atribuir.</p>'}
+            <p class="mt-3 text-xs text-slate-500">Este passo é obrigatório para contas Owners.</p>
+          </div>
           <button class="btn btn-primary">Criar</button>
         </form>
       </section>
@@ -5458,12 +5709,64 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           </select>
           <label class="text-sm" for="user-role-role">Novo perfil</label>
           <select id="user-role-role" name="role" class="input">
-            ${roleOptions.map(opt => `<option value="${opt.key}">${esc(opt.label)}</option>`).join('')}
+            ${roleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
           </select>
           <button class="btn btn-primary">Atualizar privilégios</button>
         </form>
         <p class="text-sm text-slate-500 mt-2">As sessões ativas serão terminadas ao atualizar as permissões.</p>
       </section>
+
+      ${isDevOperator
+        ? html`
+            <section class="card p-4 md:col-span-2">
+              <h2 class="font-semibold mb-3">Permissões personalizadas</h2>
+              <form id="user-permissions-form" method="post" action="/admin/users/permissions" class="grid gap-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Selecionar utilizador</span>
+                  <select id="user-permissions-user" name="user_id" class="input" required>
+                    <option value="">— Escolher —</option>
+                    ${users
+                      .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                      .join('')}
+                  </select>
+                </label>
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 max-h-72 overflow-y-auto" data-permission-checkboxes>
+                  ${permissionGroupEntries
+                    .map(
+                      group => `
+                        <fieldset class="mb-3 last:mb-0">
+                          <legend class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">${esc(group.groupKey.replace(/_/g, ' '))}</legend>
+                          <div class="grid gap-2 md:grid-cols-2">
+                            ${group.permissions
+                              .map(
+                                perm => `
+                                  <label class="flex items-start gap-2 text-sm leading-snug">
+                                    <input type="checkbox" class="mt-1 accent-slate-700" name="permissions" value="${esc(perm.key)}" />
+                                    <span>${esc(perm.label)}</span>
+                                  </label>
+                                `
+                              )
+                              .join('')}
+                          </div>
+                        </fieldset>
+                      `
+                    )
+                    .join('')}
+                </div>
+                <div class="rounded border border-slate-200 bg-white/60 p-3 text-xs text-slate-600" data-permission-summary>
+                  <p><strong>Perfil base:</strong> <span data-summary-role>—</span> · <span data-summary-base-count>0</span> permissões base</p>
+                  <p><strong>Ajustes personalizados:</strong> <span data-summary-added>0 adicionadas</span>, <span data-summary-removed>0 removidas</span></p>
+                </div>
+                <p class="text-xs text-amber-600 hidden" data-permission-guard>As permissões da conta de desenvolvimento não podem ser alteradas.</p>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+                  <button class="btn btn-primary" data-permission-submit>Guardar permissões</button>
+                </div>
+              </form>
+            </section>
+            ${permissionPayload ? html`<script id="user-permissions-data" type="application/json">${permissionPayload}</script>` : ''}
+          `
+        : ''}
     </div>
 
     <section class="card p-4 mt-6">
@@ -5501,6 +5804,115 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </table>
       </div>
     </section>
+
+    <script>
+      (function(){
+        const roleSelect = document.getElementById('create-user-role');
+        const ownerSection = document.getElementById('owner-property-select');
+        if(!roleSelect || !ownerSection) return;
+        const checkboxes = ownerSection.querySelectorAll('input[type="checkbox"]');
+        function syncOwnerSection(){
+          const isOwner = roleSelect.value === 'owner';
+          ownerSection.classList.toggle('hidden', !isOwner);
+          ownerSection.style.display = isOwner ? 'block' : 'none';
+          ownerSection.setAttribute('aria-hidden', isOwner ? 'false' : 'true');
+          checkboxes.forEach(box => {
+            box.disabled = !isOwner;
+            if(!isOwner) box.checked = false;
+          });
+        }
+        roleSelect.addEventListener('change', syncOwnerSection);
+        syncOwnerSection();
+      })();
+    </script>
+
+    ${isDevOperator && permissionPayload ? html`
+      <script>
+        (function(){
+          const dataEl = document.getElementById('user-permissions-data');
+          const form = document.getElementById('user-permissions-form');
+          if (!dataEl || !form) return;
+          let payload = {};
+          try {
+            payload = JSON.parse(dataEl.textContent || '{}');
+          } catch (err) {
+            console.error('Permissões personalizadas: payload inválido', err);
+            return;
+          }
+          const userSelect = document.getElementById('user-permissions-user');
+          const checkboxes = Array.from(form.querySelectorAll('input[name="permissions"]'));
+          const summaryRole = form.querySelector('[data-summary-role]');
+          const summaryBaseCount = form.querySelector('[data-summary-base-count]');
+          const summaryAdded = form.querySelector('[data-summary-added]');
+          const summaryRemoved = form.querySelector('[data-summary-removed]');
+          const guardNotice = form.querySelector('[data-permission-guard]');
+          const submitButton = form.querySelector('[data-permission-submit]');
+
+          const baseSetFor = (userId) => new Set((payload.base && payload.base[userId]) || []);
+          const effectiveSetFor = (userId) => new Set((payload.effective && payload.effective[userId]) || []);
+          const isDevTarget = (userId) => payload.devUserId != null && String(payload.devUserId) === String(userId);
+
+          function applyStoredState() {
+            const userId = userSelect.value;
+            if (!userId) {
+              checkboxes.forEach(box => {
+                box.checked = false;
+                box.disabled = true;
+              });
+              if (summaryRole) summaryRole.textContent = '—';
+              if (summaryBaseCount) summaryBaseCount.textContent = '0';
+              if (summaryAdded) summaryAdded.textContent = '0 adicionadas';
+              if (summaryRemoved) summaryRemoved.textContent = '0 removidas';
+              if (guardNotice) guardNotice.classList.add('hidden');
+              if (submitButton) submitButton.disabled = true;
+              return;
+            }
+            const effective = effectiveSetFor(userId);
+            const devLocked = isDevTarget(userId);
+            checkboxes.forEach(box => {
+              box.checked = effective.has(box.value);
+              box.disabled = devLocked;
+            });
+            if (summaryRole) summaryRole.textContent = (payload.roleLabels && payload.roleLabels[userId]) || '—';
+            if (summaryBaseCount) summaryBaseCount.textContent = baseSetFor(userId).size || 0;
+            if (guardNotice) guardNotice.classList.toggle('hidden', !devLocked);
+            if (submitButton) submitButton.disabled = devLocked;
+          }
+
+          function updateSummary() {
+            const userId = userSelect.value;
+            if (!userId) return;
+            const base = baseSetFor(userId);
+            let added = 0;
+            let removed = 0;
+            checkboxes.forEach(box => {
+              const hasBase = base.has(box.value);
+              if (box.checked && !hasBase) added += 1;
+              if (!box.checked && hasBase) removed += 1;
+            });
+            if (summaryAdded) summaryAdded.textContent = added + ' adicionadas';
+            if (summaryRemoved) summaryRemoved.textContent = removed + ' removidas';
+          }
+
+          if (userSelect) {
+            userSelect.addEventListener('change', () => {
+              applyStoredState();
+              updateSummary();
+            });
+          }
+          checkboxes.forEach(box => {
+            box.addEventListener('change', () => {
+              if (!userSelect.value) return;
+              if (submitButton) submitButton.disabled = isDevTarget(userSelect.value);
+              updateSummary();
+            });
+          });
+
+          applyStoredState();
+          updateSummary();
+        })();
+      </script>
+    ` : ''}
 
     ${isDevOperator ? html`
       <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">
@@ -5611,8 +6023,51 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   if (exists) return res.status(400).send('Utilizador já existe.');
   const hash = bcrypt.hashSync(password, 10);
   const roleKey = normalizeRole(role);
-  const result = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, roleKey);
-  logActivity(req.user.id, 'user:create', 'user', result.lastInsertRowid, { username, role: roleKey });
+  let ownerPropertyIds = [];
+  if (roleKey === 'owner') {
+    const rawPropertyIds = req.body.property_ids;
+    const selectable = new Set(
+      db
+        .prepare('SELECT id FROM properties ORDER BY id')
+        .all()
+        .map(row => Number(row.id))
+    );
+    const normalizedSelection = Array.isArray(rawPropertyIds)
+      ? rawPropertyIds
+      : rawPropertyIds != null
+      ? [rawPropertyIds]
+      : [];
+    ownerPropertyIds = Array.from(
+      new Set(
+        normalizedSelection
+          .map(value => Number.parseInt(value, 10))
+          .filter(value => Number.isInteger(value) && selectable.has(value))
+      )
+    );
+    if (!ownerPropertyIds.length) {
+      return res.status(400).send('Selecione pelo menos uma propriedade para o owner.');
+    }
+  }
+  const insertUser = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)');
+  const assignOwnerProperty = db.prepare('INSERT INTO property_owners(property_id, user_id) VALUES (?, ?)');
+  let newUserId = null;
+  db.transaction(() => {
+    const result = insertUser.run(username, hash, roleKey);
+    newUserId = Number(result.lastInsertRowid);
+    if (roleKey === 'owner' && ownerPropertyIds.length) {
+      ownerPropertyIds.forEach(propertyId => {
+        assignOwnerProperty.run(propertyId, newUserId);
+      });
+    }
+  })();
+  if (!newUserId) {
+    return res.status(500).send('Não foi possível criar o utilizador.');
+  }
+  logActivity(req.user.id, 'user:create', 'user', newUserId, {
+    username,
+    role: roleKey,
+    properties: ownerPropertyIds
+  });
   res.redirect('/admin/utilizadores');
 });
 
@@ -5644,10 +6099,92 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
     return res.redirect('/admin/utilizadores');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
+  if (currentRole === 'owner' && newRole !== 'owner') {
+    db.prepare('DELETE FROM property_owners WHERE user_id = ?').run(target.id);
+  }
   revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/permissions', requireDev, (req, res) => {
+  const rawUserId = req.body && req.body.user_id;
+  const userId = Number.parseInt(rawUserId, 10);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const normalizedRole = normalizeRole(target.role);
+  if (normalizedRole === MASTER_ROLE) {
+    return res.redirect('/admin/utilizadores?error=permissions_forbidden');
+  }
+
+  const existingOverrides = selectUserPermissionOverridesStmt.all(target.id).map(entry => ({
+    permission: entry.permission,
+    is_granted: entry.is_granted ? 1 : 0
+  }));
+  const existingMap = new Map(existingOverrides.map(entry => [entry.permission, entry.is_granted]));
+
+  const rawPermissions = req.body ? req.body.permissions : null;
+  const normalizedSelection = Array.isArray(rawPermissions)
+    ? rawPermissions
+    : rawPermissions != null
+    ? [rawPermissions]
+    : [];
+  const desiredSet = new Set();
+  normalizedSelection.forEach(value => {
+    const key = String(value || '').trim();
+    if (ALL_PERMISSIONS.has(key)) desiredSet.add(key);
+  });
+
+  const baseSet = new Set(ROLE_PERMISSIONS[normalizedRole] || []);
+  const overridesToPersist = [];
+  Array.from(ALL_PERMISSIONS).forEach(permission => {
+    const baseHas = baseSet.has(permission);
+    const wantHas = desiredSet.has(permission);
+    if (baseHas === wantHas) return;
+    overridesToPersist.push({ permission, is_granted: wantHas ? 1 : 0 });
+  });
+
+  let changed = false;
+  if (existingOverrides.length !== overridesToPersist.length) {
+    changed = true;
+  } else {
+    for (const entry of overridesToPersist) {
+      if (!existingMap.has(entry.permission) || existingMap.get(entry.permission) !== entry.is_granted) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  if (changed) {
+    const apply = db.transaction(() => {
+      deletePermissionOverridesForUserStmt.run(target.id);
+      overridesToPersist.forEach(entry => {
+        insertPermissionOverrideStmt.run(target.id, entry.permission, entry.is_granted);
+      });
+    });
+    apply();
+    revokeUserSessions(target.id);
+    logChange(
+      req.user.id,
+      'user',
+      Number(target.id),
+      'permissions_update',
+      { overrides: existingOverrides },
+      { overrides: overridesToPersist }
+    );
+    const added = overridesToPersist.filter(entry => entry.is_granted).map(entry => entry.permission);
+    const removed = overridesToPersist.filter(entry => !entry.is_granted).map(entry => entry.permission);
+    logActivity(req.user.id, 'user:permissions_update', 'user', Number(target.id), { added, removed });
+  }
+
+  res.redirect('/admin/utilizadores?updated=permissions');
 });
 
 app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{
