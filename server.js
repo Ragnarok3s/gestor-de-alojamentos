@@ -999,16 +999,6 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-channelIntegrations
-  .autoSyncAll({ reason: 'startup' })
-  .catch(err => console.warn('Integração de canais (startup):', err.message));
-
-setInterval(() => {
-  channelIntegrations
-    .autoSyncAll({ reason: 'interval' })
-    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
-}, 30 * 60 * 1000);
-
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
@@ -1572,6 +1562,16 @@ const channelIntegrations = createChannelIntegrationService({
   ensureDir,
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
+
+channelIntegrations
+  .autoSyncAll({ reason: 'startup' })
+  .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+setInterval(() => {
+  channelIntegrations
+    .autoSyncAll({ reason: 'interval' })
+    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
 
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
