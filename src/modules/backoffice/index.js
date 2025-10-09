@@ -203,11 +203,13 @@ module.exports = function registerBackoffice(app, context) {
   const featureBuilderSource = fs.readFileSync(path.join(scriptsDir, 'feature-builder-runtime.js'), 'utf8');
   const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
+  const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
+  const revenueDashboardScript = inlineScript(revenueDashboardSource);
 
   function renderDashboardTabsScript(defaultPaneId) {
     const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
@@ -2012,6 +2014,7 @@ module.exports = function registerBackoffice(app, context) {
     const navItems = [
       { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
+      { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
@@ -2090,6 +2093,224 @@ module.exports = function registerBackoffice(app, context) {
           })
           .join('')
       : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem dados de receita.</td></tr>';
+
+    function normalizeChannelLabel(rawValue) {
+      const value = (rawValue || '').trim();
+      if (!value) return 'Direto';
+      const lower = value.toLowerCase();
+      if (lower === 'booking' || lower === 'booking.com') return 'Booking.com';
+      if (lower === 'airbnb') return 'Airbnb';
+      if (lower === 'expedia') return 'Expedia';
+      if (lower === 'vrbo') return 'Vrbo';
+      return value
+        .split(' ')
+        .map(part => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
+        .join(' ');
+    }
+
+    const revenueRangeDays = 30;
+    const revenueRangeEnd = dayjs().endOf('day');
+    const revenueRangeStart = revenueRangeEnd.subtract(revenueRangeDays - 1, 'day').startOf('day');
+    const revenueRangeEndExclusive = revenueRangeEnd.add(1, 'day');
+    const revenueDayCount = revenueRangeEnd.diff(revenueRangeStart, 'day') + 1;
+
+    const revenueBookings = db
+      .prepare(
+        `SELECT b.id,
+                b.checkin,
+                b.checkout,
+                b.total_cents,
+                b.agency,
+                b.created_at
+           FROM bookings b
+          WHERE b.status = 'CONFIRMED'
+            AND b.checkout > ?
+            AND b.checkin < ?`
+      )
+      .all(revenueRangeStart.format('YYYY-MM-DD'), revenueRangeEndExclusive.format('YYYY-MM-DD'));
+
+    const revenueDailyIndex = new Map();
+    const revenueDailyRaw = [];
+    for (let i = 0; i < revenueDayCount; i++) {
+      const day = revenueRangeStart.add(i, 'day');
+      const key = day.format('YYYY-MM-DD');
+      revenueDailyIndex.set(key, {
+        date: key,
+        label: day.format('DD/MM'),
+        display: day.format('DD MMM'),
+        revenueCents: 0,
+        nightsSold: 0,
+        bookingIds: new Set(),
+        createdCount: 0
+      });
+      revenueDailyRaw.push(revenueDailyIndex.get(key));
+    }
+
+    const bookingStayNights = new Map();
+    const channelRevenueCents = new Map();
+
+    revenueBookings.forEach(booking => {
+      const stayStart = dayjs(booking.checkin);
+      const stayEnd = dayjs(booking.checkout);
+      if (!stayStart.isValid() || !stayEnd.isValid()) return;
+      const totalNights = Math.max(1, dateRangeNights(booking.checkin, booking.checkout));
+      bookingStayNights.set(booking.id, totalNights);
+      const nightlyRate = totalNights ? (booking.total_cents || 0) / totalNights : booking.total_cents || 0;
+      const channelLabel = normalizeChannelLabel(booking.agency);
+
+      if (booking.created_at) {
+        const createdAt = dayjs(booking.created_at);
+        if (createdAt.isValid()) {
+          const createdKey = createdAt.format('YYYY-MM-DD');
+          const createdRecord = revenueDailyIndex.get(createdKey);
+          if (createdRecord) {
+            createdRecord.createdCount = (createdRecord.createdCount || 0) + 1;
+          }
+        }
+      }
+
+      let cursor = stayStart.isAfter(revenueRangeStart) ? stayStart : revenueRangeStart;
+      const cursorEnd = stayEnd.isBefore(revenueRangeEndExclusive) ? stayEnd : revenueRangeEndExclusive;
+      while (cursor.isBefore(cursorEnd)) {
+        const key = cursor.format('YYYY-MM-DD');
+        const record = revenueDailyIndex.get(key);
+        if (record) {
+          record.revenueCents += nightlyRate;
+          record.nightsSold += 1;
+          record.bookingIds.add(booking.id);
+          channelRevenueCents.set(channelLabel, (channelRevenueCents.get(channelLabel) || 0) + nightlyRate);
+        }
+        cursor = cursor.add(1, 'day');
+      }
+    });
+
+    const totalUnitsNights = totalUnitsCount * revenueDayCount;
+
+    const revenueDaily = revenueDailyRaw.map(record => {
+      const bookingIds = Array.from(record.bookingIds.values());
+      const revenueCents = Math.round(record.revenueCents || 0);
+      const nightsSold = Math.round(record.nightsSold || 0);
+      const bookingsCount = bookingIds.length;
+      const staysTotal = bookingIds.reduce((sum, id) => sum + (bookingStayNights.get(id) || 0), 0);
+      const averageStay = bookingsCount ? staysTotal / bookingsCount : 0;
+      const adrCents = nightsSold ? Math.round(revenueCents / nightsSold) : 0;
+      const revparCents = totalUnitsCount ? Math.round(revenueCents / Math.max(totalUnitsCount, 1)) : 0;
+      const occupancyRate = totalUnitsCount ? Math.min(1, nightsSold / Math.max(totalUnitsCount, 1)) : 0;
+      const bookingPaceCount = record.createdCount || 0;
+      return {
+        date: record.date,
+        label: record.label,
+        display: record.display,
+        revenueCents,
+        nightsSold,
+        bookingsCount,
+        createdCount: bookingPaceCount,
+        adrCents,
+        revparCents,
+        occupancyRate,
+        averageStay,
+        bookingPace: bookingPaceCount
+      };
+    });
+
+    const totalRevenueCents = revenueDaily.reduce((sum, row) => sum + (row.revenueCents || 0), 0);
+    const totalNightsSold = revenueDaily.reduce((sum, row) => sum + (row.nightsSold || 0), 0);
+    const totalReservations = revenueBookings.length;
+    const totalBookingCreations = revenueDaily.reduce((sum, row) => sum + (row.createdCount || 0), 0);
+
+    const revenueSummary = {
+      revenueCents: totalRevenueCents,
+      adrCents: totalNightsSold ? Math.round(totalRevenueCents / totalNightsSold) : 0,
+      revparCents: totalUnitsNights ? Math.round(totalRevenueCents / Math.max(totalUnitsNights, 1)) : 0,
+      occupancyRate: totalUnitsNights ? totalNightsSold / Math.max(totalUnitsNights, 1) : 0,
+      nights: totalNightsSold,
+      reservations: totalReservations,
+      averageStay: totalReservations ? totalNightsSold / Math.max(totalReservations, 1) : 0,
+      bookingPace: revenueDayCount ? totalBookingCreations / Math.max(revenueDayCount, 1) : 0,
+      createdTotal: totalBookingCreations
+    };
+
+    const channelTotals = Array.from(channelRevenueCents.entries()).map(([name, cents]) => ({
+      name,
+      revenueCents: Math.round(cents || 0)
+    }));
+    channelTotals.sort((a, b) => (b.revenueCents || 0) - (a.revenueCents || 0));
+    const channelTotalCents = channelTotals.reduce((sum, item) => sum + (item.revenueCents || 0), 0);
+    const revenueChannels = (channelTotals.length ? channelTotals : [{ name: 'Direto', revenueCents: 0 }]).map(item => ({
+      ...item,
+      percentage: channelTotalCents ? item.revenueCents / Math.max(channelTotalCents, 1) : 0
+    }));
+
+    const revenueRangeLabel = `${revenueRangeStart.format('DD/MM/YYYY')} – ${revenueRangeEnd.format('DD/MM/YYYY')}`;
+    const revenueAnalytics = {
+      range: {
+        start: revenueRangeStart.format('YYYY-MM-DD'),
+        end: revenueRangeEnd.format('YYYY-MM-DD'),
+        label: revenueRangeLabel,
+        dayCount: revenueDayCount
+      },
+      summary: revenueSummary,
+      daily: revenueDaily,
+      channels: revenueChannels
+    };
+    const revenueAnalyticsJson = jsonScriptPayload(revenueAnalytics);
+
+    const numberFormatter = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0 });
+    const decimalFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+    const revenueSummaryLabels = {
+      revenue: `€ ${eur(revenueSummary.revenueCents || 0)}`,
+      adr: revenueSummary.adrCents ? `€ ${eur(revenueSummary.adrCents)}` : '€ 0,00',
+      revpar: revenueSummary.revparCents ? `€ ${eur(revenueSummary.revparCents)}` : '€ 0,00',
+      occupancy: percentFormatter.format(revenueSummary.occupancyRate || 0),
+      nights: numberFormatter.format(revenueSummary.nights || 0),
+      reservations: numberFormatter.format(revenueSummary.reservations || 0),
+      averageStay: decimalFormatter.format(revenueSummary.averageStay || 0),
+      bookingPace: decimalFormatter.format(revenueSummary.bookingPace || 0)
+    };
+
+    const revenueChannelsHtml = revenueChannels
+      .map(channel => {
+        const revenueLabel = `€ ${eur(channel.revenueCents || 0)}`;
+        const pctLabel = percentFormatter.format(channel.percentage || 0);
+        return `
+          <li class="flex items-center justify-between gap-3">
+            <div>
+              <div class="font-semibold text-slate-700">${esc(channel.name)}</div>
+              <div class="text-xs text-slate-500">${revenueLabel}</div>
+            </div>
+            <div class="text-sm font-semibold text-slate-600">${pctLabel}</div>
+          </li>`;
+      })
+      .join('');
+
+    const revenueDailyTableRows = revenueDaily.length
+      ? revenueDaily
+          .map(row => {
+            const revenueLabel = `€ ${eur(row.revenueCents || 0)}`;
+            const adrLabel = row.nightsSold ? `€ ${eur(row.adrCents || 0)}` : '—';
+            const revparLabel = `€ ${eur(row.revparCents || 0)}`;
+            const occupancyLabel = row.nightsSold ? percentFormatter.format(row.occupancyRate || 0) : '—';
+            const nightsLabel = numberFormatter.format(row.nightsSold || 0);
+            const bookingsLabel = numberFormatter.format(row.bookingsCount || 0);
+            const averageStayLabel = row.bookingsCount ? decimalFormatter.format(row.averageStay || 0) : '—';
+            const bookingPaceLabel = row.createdCount ? numberFormatter.format(row.createdCount || 0) : '—';
+            return `
+              <tr>
+                <td data-label="Data"><span class="table-cell-value">${esc(row.display || row.label)}</span></td>
+                <td data-label="Receita">${revenueLabel}</td>
+                <td data-label="ADR">${adrLabel}</td>
+                <td data-label="RevPAR">${revparLabel}</td>
+                <td data-label="Ocupação">${occupancyLabel}</td>
+                <td data-label="Reservas">${bookingsLabel}</td>
+                <td data-label="Noites">${nightsLabel}</td>
+                <td data-label="Estadia média">${averageStayLabel}</td>
+                <td data-label="Booking pace">${bookingPaceLabel}</td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="9" class="text-sm text-center text-slate-500">Sem dados de revenue para o período analisado.</td></tr>';
 
     const statisticsCard = html`
       <div class="bo-card space-y-6">
@@ -2701,6 +2922,84 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
+              <section class="bo-pane" data-bo-pane="revenue">
+                <div class="bo-card">
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h2>Painel de revenue</h2>
+                      <p class="bo-subtitle">Desempenho dos últimos ${revenueRangeDays} dias com foco em receita e ocupação.</p>
+                    </div>
+                    <div class="text-xs text-slate-500">Período analisado: <span data-revenue-range>${esc(revenueRangeLabel)}</span></div>
+                  </div>
+                  <div class="bo-metrics bo-metrics--wrap mt-4" data-revenue-summary>
+                    <div class="bo-metric"><strong data-revenue-metric="revenue">${esc(revenueSummaryLabels.revenue)}</strong><span>Receita total</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="adr">${esc(revenueSummaryLabels.adr)}</strong><span>ADR médio</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="revpar">${esc(revenueSummaryLabels.revpar)}</strong><span>RevPAR</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="occupancy">${esc(revenueSummaryLabels.occupancy)}</strong><span>Ocupação</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="nights">${esc(revenueSummaryLabels.nights)}</strong><span>Noites vendidas</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="reservations">${esc(revenueSummaryLabels.reservations)}</strong><span>Reservas</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="averageStay">${esc(revenueSummaryLabels.averageStay)}</strong><span>Estadia média (noites)</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="bookingPace">${esc(revenueSummaryLabels.bookingPace)}</strong><span>Booking pace (média diária)</span></div>
+                  </div>
+                </div>
+
+                <div class="grid gap-6 lg:grid-cols-3">
+                  <div class="bo-card lg:col-span-2">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Receita vs noites</h3>
+                        <p class="bo-subtitle">Comparativo diário entre receita gerada e noites vendidas.</p>
+                      </div>
+                    </div>
+                    <div style="height:260px">
+                      <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
+                    </div>
+                  </div>
+                  <div class="bo-card">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Canais de venda</h3>
+                        <p class="bo-subtitle">Distribuição da receita confirmada.</p>
+                      </div>
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-1">
+                      <div style="height:220px">
+                        <canvas id="revenue-channel-chart" aria-label="Gráfico de canais de revenue"></canvas>
+                      </div>
+                      <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
+                    </div>
+                  </div>
+                  <div class="bo-card lg:col-span-3">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Ocupação diária</h3>
+                        <p class="bo-subtitle">Percentual de ocupação ao longo do período.</p>
+                      </div>
+                    </div>
+                    <div style="height:260px">
+                      <canvas id="revenue-occupancy-chart" aria-label="Gráfico de barras de ocupação diária"></canvas>
+                    </div>
+                  </div>
+                </div>
+
+                <p class="bo-empty" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
+
+                <div class="bo-card">
+                  <h3 class="bo-section-title">Resumo diário detalhado</h3>
+                  <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
+                  <div class="bo-table responsive-table mt-3">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-slate-500">
+                          <th>Data</th><th>Receita</th><th>ADR</th><th>RevPAR</th><th>Ocupação</th><th>Reservas</th><th>Noites</th><th>Estadia média</th><th>Booking pace</th>
+                        </tr>
+                      </thead>
+                      <tbody id="revenue-daily-table">${revenueDailyTableRows}</tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
               <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
                 ${canViewAutomation ? statisticsCard : '<div class="bo-card"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
               </section>
@@ -2804,7 +3103,9 @@ module.exports = function registerBackoffice(app, context) {
               </section>
             </div>
           </div>
+          <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
           <script>${featureBuilderScript}</script>
+          <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
         `
       })

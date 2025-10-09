@@ -830,7 +830,10 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 
   const calendarGridHtml = propertyId
     ? bookings.length
-      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })
+      ? html`
+          ${renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })}
+          ${renderReservationCalendarGridMobile({ month, bookings, units, dayjs, esc })}
+        `
       : '<div class="bo-calendar-empty-state">Não foram encontradas reservas para os filtros selecionados.</div>'
     : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
 
@@ -990,6 +993,17 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 });
 
 
+function normalizeCalendarBookings(bookings, dayjs) {
+  return bookings.map(booking => ({
+    ...booking,
+    checkinISO: booking.checkinISO || booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
+    checkoutISO: booking.checkoutISO || booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
+    checkinLabel: booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
+    checkoutLabel: booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
+    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
+  }));
+}
+
 function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule }) {
   if (!month) return '';
   const monthStart = month.startOf('month');
@@ -999,14 +1013,7 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
   const totalCells = Math.ceil((offset + totalDays) / 7) * 7;
   const todayIso = dayjs().format('YYYY-MM-DD');
 
-  const normalized = bookings.map(booking => ({
-    ...booking,
-    checkinISO: booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
-    checkoutISO: booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
-    checkinLabel: booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
-    checkoutLabel: booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
-    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
-  }));
+  const normalized = normalizeCalendarBookings(bookings, dayjs);
 
   const headerHtml = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
     .map(label => `<div class="bo-calendar-grid__day">${label}</div>`)
@@ -1045,9 +1052,11 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
   }).join('');
 
   return `
-    <div class="bo-calendar-grid">
-      ${headerHtml}
-      ${cellsHtml}
+    <div class="bo-calendar-grid-wrapper">
+      <div class="bo-calendar-grid">
+        ${headerHtml}
+        ${cellsHtml}
+      </div>
     </div>
   `;
 }
@@ -1101,6 +1110,166 @@ function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
         ${agency}
       </div>
     </a>
+  `;
+}
+
+function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, esc }) {
+  if (!month) return '';
+
+  const normalized = normalizeCalendarBookings(bookings, dayjs)
+    .sort((a, b) => dayjs(a.checkinISO).diff(dayjs(b.checkinISO)) || (a.id || 0) - (b.id || 0));
+
+  const unitsMap = new Map((units || []).map(unit => [unit.id, { ...unit }]));
+  const grouped = new Map();
+
+  normalized.forEach(booking => {
+    const unitId = booking.unit_id;
+    if (unitId == null) return;
+
+    if (!grouped.has(unitId)) {
+      grouped.set(unitId, []);
+    }
+    grouped.get(unitId).push(booking);
+
+    if (!unitsMap.has(unitId)) {
+      unitsMap.set(unitId, {
+        id: unitId,
+        name: booking.unit_name || `Unidade #${unitId || booking.id}`,
+        property_name: booking.property_name || ''
+      });
+    } else if (!unitsMap.get(unitId).property_name && booking.property_name) {
+      unitsMap.get(unitId).property_name = booking.property_name;
+    }
+  });
+
+  if (!unitsMap.size) return '';
+
+  const legend = `
+    <div class="bo-calendar-mobile__legend">
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--confirmed"></span>Confirmada</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--pending"></span>Pendente</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--blocked"></span>Bloqueio/Outro</span>
+    </div>
+  `;
+
+  const overviewRows = normalized.length
+    ? normalized.map(booking => {
+        const status = (booking.status || '').toUpperCase();
+        let statusLabel = 'Reserva';
+        let statusClass = 'is-blocked';
+        if (status === 'CONFIRMED') {
+          statusLabel = 'Confirmada';
+          statusClass = 'is-confirmed';
+        } else if (status === 'PENDING') {
+          statusLabel = 'Pendente';
+          statusClass = 'is-pending';
+        } else if (status === 'BLOCKED') {
+          statusLabel = 'Bloqueio';
+        }
+
+        const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+        const unitName = esc(booking.unit_name || `Unidade #${booking.unit_id}`);
+        const property = booking.property_name ? esc(booking.property_name) : '';
+        const location = property ? `${unitName} · ${property}` : unitName;
+        const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
+        const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
+        const meta = `${booking.checkinLabel} → ${booking.checkoutLabel} · ${nights} noite${nights === 1 ? '' : 's'}`;
+
+        return `
+          <a href="${esc(href)}" class="bo-calendar-mobile__overview-row ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+            <span class="bo-calendar-mobile__overview-unit">${location}</span>
+            <span class="bo-calendar-mobile__overview-guest">${guest}</span>
+            <span class="bo-calendar-mobile__overview-dates">${esc(meta)}</span>
+            <span class="bo-calendar-mobile__overview-status ${statusClass}">${esc(statusLabel)}</span>
+          </a>
+        `;
+      }).join('')
+    : '<div class="bo-calendar-mobile__overview-empty">Sem reservas neste período.</div>';
+
+  const baseUnits = (units || []).map(unit => {
+    const enriched = unitsMap.get(unit.id) || {};
+    return { ...enriched, ...unit };
+  });
+  const fallbackUnits = Array.from(unitsMap.values()).filter(unit => !baseUnits.some(existing => existing.id === unit.id));
+  const unitsToRender = [...baseUnits, ...fallbackUnits];
+
+  const unitSections = unitsToRender.map(unit => {
+    const unitBookings = grouped.get(unit.id) || [];
+    const propertyName = unit.property_name || (unitBookings[0] && unitBookings[0].property_name) || '';
+
+    const bookingsHtml = unitBookings.length
+      ? unitBookings.map(booking => {
+          const status = (booking.status || '').toUpperCase();
+          let statusLabel = 'Reserva';
+          let statusClass = 'is-blocked';
+          if (status === 'CONFIRMED') {
+            statusLabel = 'Confirmada';
+            statusClass = 'is-confirmed';
+          } else if (status === 'PENDING') {
+            statusLabel = 'Pendente';
+            statusClass = 'is-pending';
+          } else if (status === 'BLOCKED') {
+            statusLabel = 'Bloqueio';
+          }
+
+          const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
+          const metaParts = [
+            `${booking.checkinLabel} → ${booking.checkoutLabel}`,
+            `${nights} noite${nights === 1 ? '' : 's'}`
+          ];
+          if (booking.agency) metaParts.push(booking.agency);
+          const meta = metaParts.map(part => esc(part)).join(' · ');
+
+          const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+          const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
+
+          return `
+            <a href="${esc(href)}" class="bo-calendar-mobile__booking ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+              <div class="bo-calendar-mobile__booking-header">
+                <span class="bo-calendar-mobile__guest">${guest}</span>
+                <span class="bo-calendar-mobile__badge ${statusClass}">${esc(statusLabel)}</span>
+              </div>
+              <div class="bo-calendar-mobile__booking-meta">${meta}</div>
+            </a>
+          `;
+        }).join('')
+      : '<div class="bo-calendar-mobile__empty">Sem reservas neste período.</div>';
+
+    return `
+      <section class="bo-calendar-mobile__unit" aria-label="Reservas da unidade ${esc(unit.name)}">
+        <header class="bo-calendar-mobile__unit-header">
+          <h3 class="bo-calendar-mobile__unit-name">${esc(unit.name || `Unidade #${unit.id}`)}</h3>
+          ${propertyName ? `<span class="bo-calendar-mobile__unit-property">${esc(propertyName)}</span>` : ''}
+        </header>
+        <div class="bo-calendar-mobile__list">
+          ${bookingsHtml}
+        </div>
+      </section>
+    `;
+  }).join('');
+
+  return `
+    <div class="bo-calendar-mobile" data-calendar-mobile>
+      ${legend}
+      <section class="bo-calendar-mobile__overview" aria-label="Pré-visualização de todas as reservas">
+        <header class="bo-calendar-mobile__overview-header">
+          <h3 class="bo-calendar-mobile__overview-title">Resumo de reservas</h3>
+          <p class="bo-calendar-mobile__overview-hint">Visão rápida em formato tabela semelhante ao Excel.</p>
+        </header>
+        <div class="bo-calendar-mobile__overview-grid">
+          <div class="bo-calendar-mobile__overview-row bo-calendar-mobile__overview-row--head">
+            <span class="bo-calendar-mobile__overview-head">Unidade</span>
+            <span class="bo-calendar-mobile__overview-head">Hóspede</span>
+            <span class="bo-calendar-mobile__overview-head">Datas</span>
+            <span class="bo-calendar-mobile__overview-head">Estado</span>
+          </div>
+          ${overviewRows}
+        </div>
+      </section>
+      <div class="bo-calendar-mobile__preview">
+        ${unitSections}
+      </div>
+    </div>
   `;
 }
 
