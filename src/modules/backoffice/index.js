@@ -5890,8 +5890,8 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
               if (box.checked && !hasBase) added += 1;
               if (!box.checked && hasBase) removed += 1;
             });
-            if (summaryAdded) summaryAdded.textContent = `${added} adicionadas`;
-            if (summaryRemoved) summaryRemoved.textContent = `${removed} removidas`;
+            if (summaryAdded) summaryAdded.textContent = added + ' adicionadas';
+            if (summaryRemoved) summaryRemoved.textContent = removed + ' removidas';
           }
 
           if (userSelect) {
