@@ -27,6 +27,10 @@ const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
+const { createEmailTemplateService } = require('./src/services/email-templates');
+const { createMailer } = require('./src/services/mailer');
+const { createBookingEmailer } = require('./src/services/booking-emails');
+const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -995,6 +999,16 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
+channelIntegrations
+  .autoSyncAll({ reason: 'startup' })
+  .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+setInterval(() => {
+  channelIntegrations
+    .autoSyncAll({ reason: 'interval' })
+    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
+
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
@@ -1036,11 +1050,13 @@ if (!masterUser) {
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
 const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
-const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING };
+const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
+const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS };
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
 ensureDir(UPLOAD_BRANDING);
+ensureDir(UPLOAD_CHANNEL_IMPORTS);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1081,6 +1097,27 @@ const uploadBrandingAsset = multer({
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif|svg\+xml)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
+  }
+});
+
+const channelImportStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    ensureDir(UPLOAD_CHANNEL_IMPORTS);
+    cb(null, UPLOAD_CHANNEL_IMPORTS);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname || '') || '.dat').toLowerCase();
+    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
+  }
+});
+
+const uploadChannelFile = multer({
+  storage: channelImportStorage,
+  limits: { fileSize: 6 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = new Set(['.csv', '.tsv', '.xlsx', '.xls', '.ics', '.ical', '.json']);
+    const ext = (path.extname(file.originalname || '') || '').toLowerCase();
+    cb(allowed.has(ext) ? null : new Error('Formato de ficheiro não suportado'), allowed.has(ext));
   }
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
@@ -1523,6 +1560,18 @@ const slugify = (value) =>
     .replace(/[^a-z0-9]+/gi, '-')
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
+
+const emailTemplates = createEmailTemplateService({ db, dayjs });
+const mailer = createMailer({ logger: console });
+const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
+const channelIntegrations = createChannelIntegrationService({
+  db,
+  dayjs,
+  slugify,
+  ExcelJS,
+  ensureDir,
+  uploadsDir: UPLOAD_CHANNEL_IMPORTS
+});
 
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
@@ -2249,6 +2298,54 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-filters__actions{display:flex;flex-wrap:wrap;gap:12px;}
         .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
         .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
+        .page-backoffice .bo-calendar-grid-wrapper{position:relative;}
+        .page-backoffice .bo-calendar-mobile{display:none;}
+        .page-backoffice .bo-calendar-mobile__legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__legend-item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;}
+        .page-backoffice .bo-calendar-mobile__legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--blocked{background:#38bdf8;}
+        .page-backoffice .bo-calendar-mobile__overview{display:grid;gap:14px;padding:18px;border-radius:24px;background:#fff;border:1px solid rgba(249,115,22,.18);box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__overview-header{display:grid;gap:4px;}
+        .page-backoffice .bo-calendar-mobile__overview-title{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-hint{margin:0;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-grid{display:grid;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__overview-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(120px,1fr) minmax(150px,1.1fr) minmax(90px,.7fr);align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid rgba(249,115,22,.14);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__overview-row:hover{transform:translateY(-1px);box-shadow:0 16px 28px rgba(249,115,22,.18);}
+        .page-backoffice .bo-calendar-mobile__overview-row--head{background:#fff;border:1px solid rgba(249,115,22,.16);box-shadow:none;padding:10px 14px;}
+        .page-backoffice .bo-calendar-mobile__overview-row--head span{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-row > span{display:block;font-size:.78rem;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__overview-unit{font-weight:600;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-guest{color:#9a3412;font-weight:500;}
+        .page-backoffice .bo-calendar-mobile__overview-dates{color:inherit;font-size:.74rem;opacity:.85;}
+        .page-backoffice .bo-calendar-mobile__overview-status{justify-self:start;font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:6px 12px;border-radius:999px;background:rgba(148,163,184,.22);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed{border-color:rgba(16,185,129,.45);background:rgba(16,185,129,.12);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed .bo-calendar-mobile__overview-status{background:rgba(16,185,129,.2);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending{border-color:rgba(250,204,21,.5);background:rgba(250,204,21,.16);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending .bo-calendar-mobile__overview-status{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked .bo-calendar-mobile__overview-status{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__overview-empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed rgba(249,115,22,.35);background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
+        .page-backoffice .bo-calendar-mobile__preview{display:grid;gap:16px;}
+        .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__unit-header{display:flex;flex-direction:column;gap:6px;}
+        .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__unit-property{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__list{display:grid;gap:12px;}
+        .page-backoffice .bo-calendar-mobile__booking{display:grid;gap:6px;padding:14px 16px;border-radius:18px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 12px 26px rgba(249,115,22,.14);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__booking:hover{transform:translateY(-2px);box-shadow:0 18px 32px rgba(249,115,22,.2);}
+        .page-backoffice .bo-calendar-mobile__booking.is-confirmed{border-color:#10b981;background:rgba(16,185,129,.18);}
+        .page-backoffice .bo-calendar-mobile__booking.is-pending{border-color:#facc15;background:rgba(250,204,21,.22);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__booking.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__booking-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__guest{font-weight:600;color:#9a3412;font-size:.9rem;}
+        .page-backoffice .bo-calendar-mobile__badge{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+        .page-backoffice .bo-calendar-mobile__badge.is-confirmed{background:rgba(16,185,129,.18);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__badge.is-pending{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__badge.is-blocked{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__booking-meta{font-size:.78rem;color:inherit;opacity:.85;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__empty{padding:14px;border-radius:16px;background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
         .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
         .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
         .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
@@ -2289,7 +2386,12 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
         .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
         @media (max-width:900px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:16px;}}
-        @media (max-width:720px){.page-backoffice .bo-calendar-grid{border-radius:22px;}.page-backoffice .bo-calendar-toolbar{gap:12px;}}
+        @media (max-width:720px){
+          .page-backoffice .bo-calendar-board{gap:18px;}
+          .page-backoffice .bo-calendar-grid-wrapper{display:none;}
+          .page-backoffice .bo-calendar-mobile{display:grid;gap:16px;}
+          .page-backoffice .bo-calendar-toolbar{gap:12px;}
+        }
         .page-backoffice .bo-table{overflow:auto;}
         .page-backoffice .bo-table table{min-width:100%;border-collapse:collapse;}
         .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}
@@ -2748,6 +2850,7 @@ const context = {
   sharp,
   upload,
   uploadBrandingAsset,
+  uploadChannelFile,
   paths,
   ExcelJS,
   brandingStore,
@@ -2792,6 +2895,7 @@ const context = {
   rememberActiveBrandingProperty,
   isSafeRedirectTarget,
   resolveBrandingForRequest,
+  channelIntegrations,
   wantsJson,
   formatAuditValue,
   renderAuditDiff,
@@ -2808,6 +2912,9 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  emailTemplates,
+  mailer,
+  bookingEmailer,
   secureCookies,
   csrfProtection,
   requireLogin,

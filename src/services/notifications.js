@@ -58,7 +58,7 @@ function buildUserNotifications(options = {}) {
         const createdAt = parseDate(dayjs, row.created_at);
         const meta = createdAt ? createdAt.format('DD/MM HH:mm') : '';
         notifications.push({
-          title: 'Reserva pendente',
+          title: 'Reserva a aguardar confirmação',
           message: `${row.guest_name || 'Sem hóspede'} · ${row.property_name} · ${row.unit_name}`,
           meta,
           severity: 'warning',
