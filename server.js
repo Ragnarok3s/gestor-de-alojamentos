@@ -2249,6 +2249,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-filters__actions{display:flex;flex-wrap:wrap;gap:12px;}
         .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
         .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
+        .page-backoffice .bo-calendar-grid-wrapper{position:relative;}
         .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
         .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
         .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
@@ -2289,7 +2290,15 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
         .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
         @media (max-width:900px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:16px;}}
-        @media (max-width:720px){.page-backoffice .bo-calendar-grid{border-radius:22px;}.page-backoffice .bo-calendar-toolbar{gap:12px;}}
+        @media (max-width:720px){
+          .page-backoffice .bo-calendar-board{gap:18px;}
+          .page-backoffice .bo-calendar-grid-wrapper{margin:0 -20px;padding:0 20px 12px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
+          .page-backoffice .bo-calendar-grid{border-radius:22px;min-width:calc(180px * 7);grid-template-columns:repeat(7,minmax(180px,1fr));}
+          .page-backoffice .bo-calendar-grid__day,
+          .page-backoffice .bo-calendar-grid__cell{min-width:180px;}
+          .page-backoffice .bo-calendar-grid__cell{min-height:170px;padding:16px;}
+          .page-backoffice .bo-calendar-toolbar{gap:12px;}
+        }
         .page-backoffice .bo-table{overflow:auto;}
         .page-backoffice .bo-table table{min-width:100%;border-collapse:collapse;}
         .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}

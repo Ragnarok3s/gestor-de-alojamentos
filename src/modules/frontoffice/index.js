@@ -1045,9 +1045,11 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
   }).join('');
 
   return `
-    <div class="bo-calendar-grid">
-      ${headerHtml}
-      ${cellsHtml}
+    <div class="bo-calendar-grid-wrapper">
+      <div class="bo-calendar-grid">
+        ${headerHtml}
+        ${cellsHtml}
+      </div>
     </div>
   `;
 }
