@@ -40,6 +40,20 @@ CREATE TABLE IF NOT EXISTS units (
   UNIQUE(property_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS channel_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_key TEXT NOT NULL,
+  source TEXT NOT NULL,
+  file_name TEXT,
+  original_name TEXT,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'processed',
+  summary_json TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
+);
+
 /* Bookings: checkin incluído, checkout exclusivo (YYYY-MM-DD) */
 CREATE TABLE IF NOT EXISTS bookings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +71,12 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL DEFAULT 'CONFIRMED',
   external_ref TEXT,
   confirmation_token TEXT,
+  source_channel TEXT,
+  import_batch_id INTEGER REFERENCES channel_import_batches(id) ON DELETE SET NULL,
+  import_source TEXT,
+  imported_at TEXT,
+  source_payload TEXT,
+  import_notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -156,6 +176,22 @@ CREATE TABLE IF NOT EXISTS email_templates (
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS channel_integrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_key TEXT UNIQUE NOT NULL,
+  channel_name TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  settings_json TEXT,
+  credentials_json TEXT,
+  last_synced_at TEXT,
+  last_status TEXT,
+  last_error TEXT,
+  last_summary_json TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS housekeeping_tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,
@@ -234,6 +270,12 @@ function runLightMigrations(db) {
     ensureColumn('email_templates', 'metadata_json', 'TEXT');
     ensureTimestampColumn('email_templates', 'updated_at');
     ensureColumn('email_templates', 'updated_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+    ensureColumn('bookings', 'source_channel', 'TEXT');
+    ensureColumn('bookings', 'import_batch_id', 'INTEGER REFERENCES channel_import_batches(id) ON DELETE SET NULL');
+    ensureColumn('bookings', 'import_source', 'TEXT');
+    ensureColumn('bookings', 'imported_at', 'TEXT');
+    ensureColumn('bookings', 'source_payload', 'TEXT');
+    ensureColumn('bookings', 'import_notes', 'TEXT');
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }

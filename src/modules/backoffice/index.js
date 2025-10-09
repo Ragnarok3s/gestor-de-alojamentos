@@ -77,6 +77,7 @@ module.exports = function registerBackoffice(app, context) {
     sharp,
     upload,
     uploadBrandingAsset,
+    uploadChannelFile,
     paths,
     getSession,
     createSession,
@@ -119,6 +120,7 @@ module.exports = function registerBackoffice(app, context) {
     rateQuote,
     emailTemplates,
     bookingEmailer,
+    channelIntegrations,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
     ALL_PERMISSIONS,
@@ -1947,6 +1949,7 @@ module.exports = function registerBackoffice(app, context) {
     const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
     const canManageUsers = userCan(req.user, 'users.manage');
     const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
+    const canManageIntegrations = canManageEmailTemplates;
     const canViewCalendar = userCan(req.user, 'calendar.view');
 
     let housekeepingSummary = null;
@@ -2004,6 +2007,253 @@ module.exports = function registerBackoffice(app, context) {
       automationCache,
       ensureAutomationFresh
     });
+
+    const channelRecords = channelIntegrations.listIntegrations();
+    const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
+    const channelRecentImports = channelIntegrations.listRecentImports(12);
+    const manualChannelOptions = channelRecords
+      .filter(record => record.supportsManual)
+      .map(record => `<option value="${record.key}">${esc(record.name)}</option>`)
+      .join('');
+    const manualFormatsLegend = channelRecords
+      .filter(record => record.supportsManual && record.manualFormats && record.manualFormats.length)
+      .map(
+        record => `
+          <li class="flex items-center justify-between gap-2">
+            <span class="text-xs font-medium text-slate-700">${esc(record.name)}</span>
+            <span class="text-[11px] uppercase tracking-wide text-slate-500">${esc(record.manualFormats.join(', '))}</span>
+          </li>`
+      )
+      .join('');
+    const channelNoticeRaw = typeof req.query.channel_notice === 'string' ? req.query.channel_notice : '';
+    const buildChannelNotice = (tone, text) => {
+      const toneClass =
+        tone === 'success'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : tone === 'warning'
+          ? 'border-amber-200 bg-amber-50 text-amber-700'
+          : 'border-rose-200 bg-rose-50 text-rose-700';
+      return `<div class="rounded-2xl border px-4 py-3 text-sm leading-relaxed ${toneClass}">${esc(text)}</div>`;
+    };
+    let channelNoticeHtml = '';
+    if (channelNoticeRaw) {
+      if (channelNoticeRaw.startsWith('imported:')) {
+        const parts = channelNoticeRaw.split(':');
+        const inserted = Number(parts[1] || 0);
+        const unmatched = Number(parts[2] || 0);
+        const duplicates = Number(parts[3] || 0);
+        const conflicts = Number(parts[4] || 0);
+        const errorsCount = Number(parts[5] || 0);
+        const fragments = [`${inserted} reserva${inserted === 1 ? '' : 's'} adicionada${inserted === 1 ? '' : 's'}`];
+        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
+        if (conflicts) fragments.push(`${conflicts} em conflito`);
+        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
+        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
+        channelNoticeHtml = buildChannelNotice(
+          errorsCount || conflicts ? 'warning' : 'success',
+          `Importação concluída: ${fragments.join(' · ')}.`
+        );
+      } else if (channelNoticeRaw.startsWith('sync:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const inserted = Number(parts[2] || 0);
+        const unmatched = Number(parts[3] || 0);
+        const duplicates = Number(parts[4] || 0);
+        const conflicts = Number(parts[5] || 0);
+        const errorsCount = Number(parts[6] || 0);
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        const fragments = [`${inserted} nova${inserted === 1 ? '' : 's'}`];
+        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
+        if (conflicts) fragments.push(`${conflicts} em conflito`);
+        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
+        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
+        channelNoticeHtml = buildChannelNotice(
+          errorsCount || conflicts ? 'warning' : 'success',
+          `Sincronização de ${channelName}: ${fragments.join(' · ')}.`
+        );
+      } else if (channelNoticeRaw.startsWith('settings:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        channelNoticeHtml = buildChannelNotice('success', `Definições de ${channelName} guardadas com sucesso.`);
+      } else if (channelNoticeRaw.startsWith('skipped:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        channelNoticeHtml = buildChannelNotice(
+          'warning',
+          `Sincronização ignorada. Verifique a configuração automática de ${channelName}.`
+        );
+      } else if (channelNoticeRaw.startsWith('error:')) {
+        const message = channelNoticeRaw.slice(6).trim() || 'Erro inesperado ao processar a integração.';
+        channelNoticeHtml = buildChannelNotice('danger', `Erro na integração: ${message}.`);
+      }
+    }
+
+    const channelCardsHtml = channelRecords.length
+      ? channelRecords
+          .map(channel => {
+            const autoSettings = channel.settings || {};
+            const lastSyncLabel = channel.last_synced_at ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm') : 'Nunca sincronizado';
+            const status = channel.last_status || '';
+            const statusClass =
+              status === 'failed'
+                ? 'text-rose-600'
+                : status === 'processed'
+                ? 'text-emerald-600'
+                : status === 'partial'
+                ? 'text-amber-600'
+                : 'text-slate-500';
+            const summary = channel.last_summary || null;
+            const summaryBadges = summary
+              ? `
+                <div class="mt-2 flex flex-wrap gap-2 text-[11px]">
+                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} nova${summary.insertedCount === 1 ? '' : 's'}</span>
+                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicada${summary.duplicateCount === 1 ? '' : 's'}</span>` : ''}
+                  ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
+                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-600">${summary.errorCount} erro${summary.errorCount === 1 ? '' : 's'}</span>` : ''}
+                </div>`
+              : '';
+            const autoForm = channel.supportsAuto
+              ? `
+                <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="grid gap-3 mt-3">
+                  <label class="form-field">
+                    <span class="form-label">Ligação automática</span>
+                    <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
+                  </label>
+                  <div class="grid gap-3 md:grid-cols-3">
+                    <label class="form-field">
+                      <span class="form-label">Formato</span>
+                      <select name="autoFormat" class="input">
+                        <option value="">Deteção automática</option>
+                        ${channel.autoFormats && channel.autoFormats.length
+                          ? channel.autoFormats
+                              .map(format => `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(format.toUpperCase())}</option>`)
+                              .join('')
+                          : ''}
+                      </select>
+                    </label>
+                    <label class="form-field">
+                      <span class="form-label">Estado das reservas</span>
+                      <select name="defaultStatus" class="input">
+                        <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
+                        <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
+                      </select>
+                    </label>
+                    <label class="form-field">
+                      <span class="form-label">Fuso horário</span>
+                      <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
+                    </label>
+                  </div>
+                  <div class="grid gap-3 md:grid-cols-2">
+                    <label class="form-field">
+                      <span class="form-label">Utilizador (opcional)</span>
+                      <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
+                    </label>
+                    <label class="form-field">
+                      <span class="form-label">Palavra-passe (opcional)</span>
+                      <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
+                    </label>
+                  </div>
+                  <label class="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
+                    <span>Ativar sincronização automática</span>
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button class="btn btn-primary">Guardar integração</button>
+                  </div>
+                </form>
+                <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="mt-2 inline-flex">
+                  <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
+                </form>`
+              : '<p class="text-sm text-slate-500">Este canal apenas suporta importação manual.</p>';
+            const manualHint = channel.supportsManual && channel.manualFormats && channel.manualFormats.length
+              ? `<p class="text-xs text-slate-500">Importação manual: ${esc(channel.manualFormats.join(', ').toUpperCase())}</p>`
+              : '';
+            return `
+              <article class="rounded-2xl border border-amber-200 bg-white/80 p-4 space-y-2">
+                <header>
+                  <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
+                  ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
+                  <p class="text-xs text-slate-500 mt-1">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${status ? ` · <span class="${statusClass}">${esc(status)}</span>` : ''}${channel.last_error ? `<br/><span class="text-rose-600">${esc(channel.last_error)}</span>` : ''}</p>
+                  ${summaryBadges}
+                </header>
+                ${autoForm}
+                ${manualHint}
+              </article>`;
+          })
+          .join('')
+      : '<p class="bo-empty">Nenhuma integração configurada.</p>';
+
+    const channelImportsRows = channelRecentImports.length
+      ? channelRecentImports
+          .map(batch => {
+            const createdLabel = batch.created_at ? dayjs(batch.created_at).format('DD/MM/YYYY HH:mm') : '—';
+            const sourceLabel =
+              batch.source === 'manual-upload'
+                ? 'Upload manual'
+                : batch.source === 'auto-fetch'
+                ? 'Sincronização automática'
+                : batch.source || '—';
+            const status = batch.status || '—';
+            const statusClass =
+              status === 'failed'
+                ? 'text-rose-600'
+                : status === 'partial'
+                ? 'text-amber-600'
+                : status === 'processed'
+                ? 'text-emerald-600'
+                : 'text-slate-500';
+            const summary = batch.summary || {};
+            const parts = [];
+            if (summary.insertedCount != null) parts.push(`${summary.insertedCount} novas`);
+            if (summary.duplicateCount) parts.push(`${summary.duplicateCount} duplicadas`);
+            if (summary.conflictCount) parts.push(`${summary.conflictCount} conflitos`);
+            if (summary.unmatchedCount) parts.push(`${summary.unmatchedCount} sem correspondência`);
+            if (summary.errorCount) parts.push(`${summary.errorCount} erros`);
+            const statsLabel = parts.length ? parts.join(' · ') : 'Sem detalhes';
+            const channelName = channelNameMap.get(batch.channel_key) || batch.channel_key;
+            return `
+              <tr>
+                <td data-label="Data"><span class="table-cell-value">${esc(createdLabel)}</span></td>
+                <td data-label="Canal"><span class="table-cell-value">${esc(channelName)}</span></td>
+                <td data-label="Origem"><span class="table-cell-value">${esc(sourceLabel)}</span></td>
+                <td data-label="Estado"><span class="table-cell-value ${statusClass}">${esc(status)}</span></td>
+                <td data-label="Resumo"><span class="table-cell-value">${esc(statsLabel)}</span></td>
+                <td data-label="Autor"><span class="table-cell-value">${esc(batch.username || '—')}</span></td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="6" class="py-6 text-center text-sm text-slate-500">Sem importações registadas.</td></tr>';
+
+    const manualUploadSection = manualChannelOptions
+      ? `
+        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="grid gap-3">
+          <div class="grid gap-3 md:grid-cols-2">
+            <label class="form-field">
+              <span class="form-label">Canal</span>
+              <select name="channel_key" class="input" required>
+                <option value="" disabled selected hidden>Seleciona um canal</option>
+                ${manualChannelOptions}
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Estado das reservas</span>
+              <select name="target_status" class="input">
+                <option value="CONFIRMED">Confirmada</option>
+                <option value="PENDING">Pendente</option>
+              </select>
+            </label>
+          </div>
+          <label class="form-field">
+            <span class="form-label">Ficheiro de reservas</span>
+            <input type="file" name="file" class="input" required accept=".csv,.tsv,.xlsx,.xls,.ics,.ical,.json" />
+          </label>
+          <div>
+            <button class="btn btn-primary">Importar reservas</button>
+          </div>
+        </form>`
+      : '<p class="bo-empty">Nenhum canal com importação manual disponível.</p>';
 
     const emailTemplateRecords = emailTemplates.listTemplates();
     const emailTemplateCards = emailTemplateRecords.length
@@ -2072,6 +2322,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
+      { id: 'channels', label: 'Integrações', icon: 'share-2', allowed: canManageIntegrations },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
@@ -3056,6 +3307,38 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
+              <section class="bo-pane" data-bo-pane="channels">
+                <div class="bo-card">
+                  <h2>Integrações de canais</h2>
+                  <p class="bo-subtitle">Configure as ligações automáticas aos canais externos e acompanhe o estado de cada sincronização.</p>
+                  ${channelNoticeHtml ? `<div class="mt-3">${channelNoticeHtml}</div>` : ''}
+                  <div class="mt-4 space-y-4">${channelCardsHtml}</div>
+                </div>
+
+                <div class="grid gap-6 lg:grid-cols-2">
+                  <div class="bo-card">
+                    <h3 class="bo-section-title">Importação manual</h3>
+                    <p class="bo-subtitle">Faça upload dos ficheiros exportados pelas plataformas para atualizar as reservas automaticamente.</p>
+                    ${manualFormatsLegend ? `<ul class="mt-3 space-y-2">${manualFormatsLegend}</ul>` : ''}
+                    <div class="mt-4">${manualUploadSection}</div>
+                  </div>
+
+                  <div class="bo-card">
+                    <h3 class="bo-section-title">Histórico de importações</h3>
+                    <div class="bo-table responsive-table mt-3">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
+                          </tr>
+                        </thead>
+                        <tbody>${channelImportsRows}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
                 ${canViewAutomation ? statisticsCard : '<div class="bo-card"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
               </section>
@@ -3293,7 +3576,98 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   res.send('\ufeff' + csv);
 });
 
-app.post('/admin/emails/templates/:key', requireLogin, requirePermission('bookings.edit'), (req, res) => {
+  app.post(
+    '/admin/channel-integrations/:key/settings',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    (req, res) => {
+      const channelKey = String(req.params.key || '').trim();
+      try {
+        channelIntegrations.saveIntegrationSettings(
+          channelKey,
+          {
+            autoEnabled: req.body.autoEnabled === '1' || req.body.autoEnabled === 'on',
+            autoUrl: req.body.autoUrl,
+            autoFormat: req.body.autoFormat,
+            defaultStatus: req.body.defaultStatus,
+            autoUsername: req.body.autoUsername,
+            autoPassword: req.body.autoPassword,
+            timezone: req.body.timezone,
+            notes: req.body.notes
+          },
+          req.user.id
+        );
+        logActivity(req.user.id, 'channel.settings.save', 'channel', channelKey, {
+          autoUrl: req.body.autoUrl || null,
+          autoFormat: req.body.autoFormat || null
+        });
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`settings:${channelKey}`)}#channels`);
+      } catch (err) {
+        console.warn('Falha ao guardar configuração de canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-integrations/:key/sync',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    async (req, res) => {
+      const channelKey = String(req.params.key || '').trim();
+      try {
+        const result = await channelIntegrations.autoSyncChannel(channelKey, {
+          userId: req.user.id,
+          reason: 'manual-trigger'
+        });
+        if (result && result.skipped) {
+          return res.redirect(`/admin?channel_notice=${encodeURIComponent(`skipped:${channelKey}`)}#channels`);
+        }
+        const summary = result && result.summary ? result.summary : {};
+        logActivity(req.user.id, 'channel.sync.manual', 'channel', channelKey, summary);
+        const payload = `sync:${channelKey}:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channels`);
+      } catch (err) {
+        console.warn('Falha ao sincronizar canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-imports/upload',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    uploadChannelFile.single('file'),
+    async (req, res) => {
+      const channelKey = String(req.body.channel_key || '').trim();
+      if (!channelKey) {
+        return res.status(400).send('Canal obrigatório.');
+      }
+      if (!req.file) {
+        return res.status(400).send('Ficheiro obrigatório.');
+      }
+      try {
+        const targetStatus = req.body.target_status === 'PENDING' ? 'PENDING' : 'CONFIRMED';
+        const result = await channelIntegrations.importFromFile({
+          channelKey,
+          filePath: req.file.path,
+          originalName: req.file.originalname,
+          uploadedBy: req.user.id,
+          targetStatus
+        });
+        const summary = result && result.summary ? result.summary : {};
+        logActivity(req.user.id, 'channel.import.manual', 'channel', channelKey, summary);
+        const payload = `imported:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channels`);
+      } catch (err) {
+        console.warn('Falha ao importar reservas do canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channels`);
+      }
+    }
+  );
+
+  app.post('/admin/emails/templates/:key', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const key = String(req.params.key || '').trim();
   try {
     const updated = emailTemplates.updateTemplate(key, { subject: req.body.subject, body: req.body.body }, req.user.id);

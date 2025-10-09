@@ -30,6 +30,7 @@ const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
+const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1039,11 +1040,13 @@ if (!masterUser) {
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
 const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
-const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING };
+const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
+const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS };
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
 ensureDir(UPLOAD_BRANDING);
+ensureDir(UPLOAD_CHANNEL_IMPORTS);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1084,6 +1087,27 @@ const uploadBrandingAsset = multer({
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif|svg\+xml)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
+  }
+});
+
+const channelImportStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    ensureDir(UPLOAD_CHANNEL_IMPORTS);
+    cb(null, UPLOAD_CHANNEL_IMPORTS);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname || '') || '.dat').toLowerCase();
+    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
+  }
+});
+
+const uploadChannelFile = multer({
+  storage: channelImportStorage,
+  limits: { fileSize: 6 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = new Set(['.csv', '.tsv', '.xlsx', '.xls', '.ics', '.ical', '.json']);
+    const ext = (path.extname(file.originalname || '') || '').toLowerCase();
+    cb(allowed.has(ext) ? null : new Error('Formato de ficheiro não suportado'), allowed.has(ext));
   }
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
@@ -1530,6 +1554,24 @@ const slugify = (value) =>
 const emailTemplates = createEmailTemplateService({ db, dayjs });
 const mailer = createMailer({ logger: console });
 const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
+const channelIntegrations = createChannelIntegrationService({
+  db,
+  dayjs,
+  slugify,
+  ExcelJS,
+  ensureDir,
+  uploadsDir: UPLOAD_CHANNEL_IMPORTS
+});
+
+channelIntegrations
+  .autoSyncAll({ reason: 'startup' })
+  .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+setInterval(() => {
+  channelIntegrations
+    .autoSyncAll({ reason: 'interval' })
+    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
 
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
@@ -2808,6 +2850,7 @@ const context = {
   sharp,
   upload,
   uploadBrandingAsset,
+  uploadChannelFile,
   paths,
   ExcelJS,
   brandingStore,
@@ -2852,6 +2895,7 @@ const context = {
   rememberActiveBrandingProperty,
   isSafeRedirectTarget,
   resolveBrandingForRequest,
+  channelIntegrations,
   wantsJson,
   formatAuditValue,
   renderAuditDiff,
