@@ -23,10 +23,15 @@ const path = require('path');
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
+const registerOwnersPortal = require('./src/modules/owners');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
+const { createEmailTemplateService } = require('./src/services/email-templates');
+const { createMailer } = require('./src/services/mailer');
+const { createBookingEmailer } = require('./src/services/booking-emails');
+const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -142,7 +147,8 @@ const ROLE_LABELS = {
   rececao: 'Receção',
   gestao: 'Gestão',
   direcao: 'Direção',
-  limpeza: 'Limpeza'
+  limpeza: 'Limpeza',
+  owner: 'Owners (Portal)'
 };
 
 const ROLE_PERMISSIONS = {
@@ -184,6 +190,7 @@ const ROLE_PERMISSIONS = {
     'automation.view',
     'automation.export',
     'audit.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -210,6 +217,7 @@ const ROLE_PERMISSIONS = {
     'audit.view',
     'users.manage',
     'logs.view',
+    'owners.portal.view',
     'housekeeping.view',
     'housekeeping.manage',
     'housekeeping.complete'
@@ -217,7 +225,8 @@ const ROLE_PERMISSIONS = {
   limpeza: new Set([
     'housekeeping.view',
     'housekeeping.complete'
-  ])
+  ]),
+  owner: new Set(['owners.portal.view'])
 };
 
 const ALL_PERMISSIONS = new Set();
@@ -233,6 +242,15 @@ function normalizeRole(role) {
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
   if (key === 'limpeza' || key === 'limpezas' || key === 'housekeeping') return 'limpeza';
   if (
+    key === 'owners' ||
+    key === 'owner' ||
+    key === 'proprietario' ||
+    key === 'proprietária' ||
+    key === 'proprietaria' ||
+    key === 'proprietário'
+  )
+    return 'owner';
+  if (
     key === 'rececao' ||
     key === 'receção' ||
     key === 'recepcao' ||
@@ -247,6 +265,22 @@ function normalizeRole(role) {
 function buildUserContext(sessRow) {
   const role = normalizeRole(sessRow.role);
   const permissions = new Set(ROLE_PERMISSIONS[role] || []);
+  if (sessRow && sessRow.user_id && role !== MASTER_ROLE) {
+    try {
+      const overrides = selectUserPermissionOverridesStmt.all(sessRow.user_id);
+      overrides.forEach(entry => {
+        const permission = entry && entry.permission;
+        if (!permission || !ALL_PERMISSIONS.has(permission)) return;
+        if (entry.is_granted) {
+          permissions.add(permission);
+        } else {
+          permissions.delete(permission);
+        }
+      });
+    } catch (err) {
+      console.warn('Falha ao carregar privilégios personalizados:', err.message);
+    }
+  }
   return {
     id: sessRow.user_id,
     username: sessRow.username,
@@ -290,6 +324,19 @@ const adminBookingUpdateStmt = db.prepare(
      WHERE id = ?
   `
   ).trim()
+);
+
+const selectUserPermissionOverridesStmt = db.prepare(
+  'SELECT permission, is_granted FROM user_permission_overrides WHERE user_id = ?'
+);
+const selectAllPermissionOverridesStmt = db.prepare(
+  'SELECT user_id, permission, is_granted FROM user_permission_overrides'
+);
+const deletePermissionOverridesForUserStmt = db.prepare(
+  'DELETE FROM user_permission_overrides WHERE user_id = ?'
+);
+const insertPermissionOverrideStmt = db.prepare(
+  'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
 );
 
 function logSessionEvent(userId, action, req) {
@@ -421,7 +468,7 @@ function formatDateRangeShort(start, endExclusive) {
   const startDay = dayjs(start);
   const endDay = dayjs(endExclusive).subtract(1, 'day');
   if (!endDay.isAfter(startDay)) return startDay.format('DD/MM');
-  return `${startDay.format('DD/MM')} → ${endDay.format('DD/MM')}`;
+  return `${startDay.format('DD/MM')} - ${endDay.format('DD/MM')}`;
 }
 
 function safeJsonParse(str) {
@@ -667,7 +714,7 @@ function runAutomationSweep(trigger = 'manual') {
           severity: 'danger',
           created_at: started.toISOString(),
           title: 'Sobreposição de reservas',
-          message: `${u.property_name} · ${u.name}: ${prev.guest_name} (${dayjs(prev.checkin).format('DD/MM')}→${dayjs(prev.checkout).format('DD/MM')}) sobrepõe ${curr.guest_name} (${dayjs(curr.checkin).format('DD/MM')}→${dayjs(curr.checkout).format('DD/MM')}).`
+          message: `${u.property_name} · ${u.name}: ${prev.guest_name} (${dayjs(prev.checkin).format('DD/MM')} - ${dayjs(prev.checkout).format('DD/MM')}) sobrepõe ${curr.guest_name} (${dayjs(curr.checkin).format('DD/MM')} - ${dayjs(curr.checkout).format('DD/MM')}).`
         });
       }
     }
@@ -709,7 +756,7 @@ function runAutomationSweep(trigger = 'manual') {
     const title = 'Reserva cancelada';
     const guest = payload.guest_name || 'Reserva';
     const stayRange = payload.checkin && payload.checkout
-      ? `${dayjs(payload.checkin).format('DD/MM')}→${dayjs(payload.checkout).format('DD/MM')}`
+      ? `${dayjs(payload.checkin).format('DD/MM')} - ${dayjs(payload.checkout).format('DD/MM')}`
       : '';
     const unitLabel = unitInfo ? `${unitInfo.property_name} · ${unitInfo.name}` : `Unidade #${payload.unit_id || '?'}`;
     notifications.push({
@@ -1036,11 +1083,13 @@ if (!masterUser) {
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
 const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
-const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING };
+const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
+const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS };
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
 ensureDir(UPLOAD_BRANDING);
+ensureDir(UPLOAD_CHANNEL_IMPORTS);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1081,6 +1130,27 @@ const uploadBrandingAsset = multer({
   fileFilter: (req, file, cb) => {
     const ok = /image\/(png|jpe?g|webp|gif|svg\+xml)$/i.test(file.mimetype || '');
     cb(ok ? null : new Error('Tipo de imagem inválido'), ok);
+  }
+});
+
+const channelImportStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    ensureDir(UPLOAD_CHANNEL_IMPORTS);
+    cb(null, UPLOAD_CHANNEL_IMPORTS);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname || '') || '.dat').toLowerCase();
+    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
+  }
+});
+
+const uploadChannelFile = multer({
+  storage: channelImportStorage,
+  limits: { fileSize: 6 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = new Set(['.csv', '.tsv', '.xlsx', '.xls', '.ics', '.ical', '.json']);
+    const ext = (path.extname(file.originalname || '') || '').toLowerCase();
+    cb(allowed.has(ext) ? null : new Error('Formato de ficheiro não suportado'), allowed.has(ext));
   }
 });
 app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
@@ -1524,6 +1594,28 @@ const slugify = (value) =>
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
 
+const emailTemplates = createEmailTemplateService({ db, dayjs });
+const mailer = createMailer({ logger: console });
+const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
+const channelIntegrations = createChannelIntegrationService({
+  db,
+  dayjs,
+  slugify,
+  ExcelJS,
+  ensureDir,
+  uploadsDir: UPLOAD_CHANNEL_IMPORTS
+});
+
+channelIntegrations
+  .autoSyncAll({ reason: 'startup' })
+  .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+setInterval(() => {
+  channelIntegrations
+    .autoSyncAll({ reason: 'interval' })
+    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
+
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
   if ((req.headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest') return true;
@@ -1774,6 +1866,17 @@ function requireAdmin(req,res,next){
   next();
 }
 
+function requireDev(req, res, next) {
+  const sess = getSession(req.cookies.adm, req);
+  if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+  const user = buildUserContext(sess);
+  req.user = user;
+  if (!user || user.role !== MASTER_ROLE) {
+    return res.status(403).send('Sem permissão');
+  }
+  next();
+}
+
 function userHasBackofficeAccess(user) {
   if (!user) return false;
   const normalizedRole = user.role ? normalizeRole(user.role) : null;
@@ -1959,6 +2062,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
 
   if (!isHousekeepingOnly) {
     pushNavLink('search', '/search', 'Pesquisar');
+  }
+  if (can('owners.portal.view')) {
+    pushNavLink('owners', '/owners', 'Área de proprietários');
   }
   if (can('calendar.view')) {
     pushNavLink('calendar', '/calendar', 'Mapa de reservas');
@@ -2249,19 +2355,73 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-filters__actions{display:flex;flex-wrap:wrap;gap:12px;}
         .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
         .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
+        .page-backoffice .bo-calendar-grid-wrapper{position:relative;overflow-x:auto;overflow-y:hidden;padding:0 6px 12px;border-radius:30px;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}
+        .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar{height:8px;}
+        .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-thumb{background:rgba(249,115,22,.35);border-radius:999px;}
+        .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-track{background:rgba(254,243,199,.65);border-radius:999px;}
+        .page-backoffice .bo-calendar-grid-viewport{position:relative;min-width:max(100%,980px);border-radius:28px;background:#fff;border:1px solid rgba(249,115,22,.2);box-shadow:0 24px 46px rgba(249,115,22,.12);overflow:hidden;}
+        .page-backoffice .bo-calendar-mobile{display:none;}
+        .page-backoffice .bo-calendar-mobile__legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__legend-item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;}
+        .page-backoffice .bo-calendar-mobile__legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--blocked{background:#38bdf8;}
+        .page-backoffice .bo-calendar-mobile__overview{display:grid;gap:14px;padding:18px;border-radius:24px;background:#fff;border:1px solid rgba(249,115,22,.18);box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__overview-header{display:grid;gap:4px;}
+        .page-backoffice .bo-calendar-mobile__overview-title{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-hint{margin:0;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-grid{display:grid;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__overview-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(120px,1fr) minmax(150px,1.1fr) minmax(90px,.7fr);align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid rgba(249,115,22,.14);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__overview-row:hover{transform:translateY(-1px);box-shadow:0 16px 28px rgba(249,115,22,.18);}
+        .page-backoffice .bo-calendar-mobile__overview-row--head{background:#fff;border:1px solid rgba(249,115,22,.16);box-shadow:none;padding:10px 14px;}
+        .page-backoffice .bo-calendar-mobile__overview-row--head span{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__overview-row > span{display:block;font-size:.78rem;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__overview-unit{font-weight:600;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__overview-guest{color:#9a3412;font-weight:500;}
+        .page-backoffice .bo-calendar-mobile__overview-dates{color:inherit;font-size:.74rem;opacity:.85;}
+        .page-backoffice .bo-calendar-mobile__overview-status{justify-self:start;font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:6px 12px;border-radius:999px;background:rgba(148,163,184,.22);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed{border-color:rgba(16,185,129,.45);background:rgba(16,185,129,.12);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed .bo-calendar-mobile__overview-status{background:rgba(16,185,129,.2);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending{border-color:rgba(250,204,21,.5);background:rgba(250,204,21,.16);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-pending .bo-calendar-mobile__overview-status{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__overview-row.is-blocked .bo-calendar-mobile__overview-status{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__overview-empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed rgba(249,115,22,.35);background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
+        .page-backoffice .bo-calendar-mobile__preview{display:grid;gap:16px;}
+        .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__unit-header{display:flex;flex-direction:column;gap:6px;}
+        .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
+        .page-backoffice .bo-calendar-mobile__unit-property{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__list{display:grid;gap:12px;}
+        .page-backoffice .bo-calendar-mobile__booking{display:grid;gap:6px;padding:14px 16px;border-radius:18px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 12px 26px rgba(249,115,22,.14);transition:transform .16s ease,box-shadow .16s ease;}
+        .page-backoffice .bo-calendar-mobile__booking:hover{transform:translateY(-2px);box-shadow:0 18px 32px rgba(249,115,22,.2);}
+        .page-backoffice .bo-calendar-mobile__booking.is-confirmed{border-color:#10b981;background:rgba(16,185,129,.18);}
+        .page-backoffice .bo-calendar-mobile__booking.is-pending{border-color:#facc15;background:rgba(250,204,21,.22);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__booking.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
+        .page-backoffice .bo-calendar-mobile__booking-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__guest{font-weight:600;color:#9a3412;font-size:.9rem;}
+        .page-backoffice .bo-calendar-mobile__badge{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+        .page-backoffice .bo-calendar-mobile__badge.is-confirmed{background:rgba(16,185,129,.18);color:#047857;}
+        .page-backoffice .bo-calendar-mobile__badge.is-pending{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__badge.is-blocked{background:rgba(148,163,184,.28);color:#1f2937;}
+        .page-backoffice .bo-calendar-mobile__booking-meta{font-size:.78rem;color:inherit;opacity:.85;line-height:1.35;}
+        .page-backoffice .bo-calendar-mobile__empty{padding:14px;border-radius:16px;background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
         .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
         .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
         .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
         .page-backoffice .bo-calendar-monthlabel{font-size:.9rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9a3412;}
         .page-backoffice .bo-calendar-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;}
-        .page-backoffice .bo-calendar-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.75rem;color:#b45309;}
-        .page-backoffice .bo-calendar-legend span{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);}
+        .page-backoffice .bo-calendar-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.75rem;}
+        .page-backoffice .bo-calendar-legend__item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;color:#b45309;}
+        .page-backoffice .bo-calendar-legend__item--confirmed{background:rgba(16,185,129,.18);border-color:rgba(16,185,129,.45);color:#065f46;}
+        .page-backoffice .bo-calendar-legend__item--pending{background:rgba(250,204,21,.24);border-color:rgba(250,204,21,.45);color:#92400e;}
         .page-backoffice .bo-calendar-actions .btn{flex-shrink:0;}
         .page-backoffice .bo-calendar-hint{margin:0;color:#b45309;font-size:.75rem;font-weight:600;}
         .page-backoffice .bo-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
         .page-backoffice .bo-dot--confirmed{background:#10b981;}
         .page-backoffice .bo-dot--pending{background:#facc15;}
-        .page-backoffice .bo-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:#fff;border-radius:28px;border:1px solid rgba(249,115,22,.2);overflow:hidden;box-shadow:0 24px 46px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(140px,1fr));width:max(100%,980px);background:#fff;}
         .page-backoffice .bo-calendar-grid__day{padding:14px 10px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;background:#fff7ed;border-right:1px solid rgba(249,115,22,.18);border-bottom:1px solid rgba(249,115,22,.18);}
         .page-backoffice .bo-calendar-grid__day:nth-child(7n){border-right:none;}
         .page-backoffice .bo-calendar-grid__cell{min-height:200px;padding:18px;border-right:1px solid rgba(249,115,22,.14);border-bottom:1px solid rgba(249,115,22,.14);display:flex;flex-direction:column;gap:14px;background:#fff;position:relative;}
@@ -2288,8 +2448,35 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-entry__dates{font-size:.78rem;color:#a16207;}
         .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
         .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
-        @media (max-width:900px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:16px;}}
-        @media (max-width:720px){.page-backoffice .bo-calendar-grid{border-radius:22px;}.page-backoffice .bo-calendar-toolbar{gap:12px;}}
+        @media (max-width:1360px){.page-backoffice .bo-calendar-grid-wrapper{padding:0 4px 12px;}}
+        @media (max-width:1280px){.page-backoffice .bo-calendar-grid-viewport{min-width:max(100%,880px);}.page-backoffice .bo-calendar-grid{grid-template-columns:repeat(7,minmax(120px,1fr));width:max(100%,880px);}}
+        @media (max-width:1180px){.page-backoffice .bo-calendar-grid-viewport{min-width:max(100%,820px);}.page-backoffice .bo-calendar-grid{grid-template-columns:repeat(7,minmax(110px,1fr));width:max(100%,820px);}.page-backoffice .bo-calendar-entry{padding:12px 14px;}.page-backoffice .bo-calendar-entry__guest{font-size:.9rem;}}
+        @media (max-width:1100px){.page-backoffice .bo-calendar-grid-viewport{min-width:100%;width:100%;}.page-backoffice .bo-calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr));width:100%;}.page-backoffice .bo-calendar-grid__cell{min-height:170px;padding:14px 12px;}.page-backoffice .bo-calendar-entry{gap:6px;padding:12px;}.page-backoffice .bo-calendar-entry__meta{font-size:.76rem;}.page-backoffice .bo-calendar-entry__guest{font-size:.85rem;}}
+        @media (max-width:1024px){.page-backoffice .bo-calendar-toolbar{gap:14px;}.page-backoffice .bo-calendar-monthnav{width:100%;justify-content:space-between;}.page-backoffice .bo-calendar-monthnav .btn{flex:1 1 45%;justify-content:center;}.page-backoffice .bo-calendar-actions{flex-direction:column;align-items:stretch;gap:10px;}.page-backoffice .bo-calendar-legend{width:100%;justify-content:flex-start;}.page-backoffice .bo-calendar-legend__item{flex:1 1 160px;justify-content:center;}.page-backoffice .bo-calendar-actions .btn{width:100%;justify-content:center;}.page-backoffice .bo-calendar-grid__cell{min-height:170px;}}
+        @media (max-width:940px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:12px;}}
+        @media (max-width:960px){
+          .page-backoffice .bo-calendar-board{gap:18px;}
+          .page-backoffice .bo-calendar-grid-wrapper{display:none;}
+          .page-backoffice .bo-calendar-mobile{display:grid;gap:16px;}
+          .page-backoffice .bo-calendar-toolbar{gap:12px;}
+        }
+        @media (max-width:880px){
+          .page-backoffice .bo-calendar-mobile__overview-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px;align-items:start;text-align:left;}
+          .page-backoffice .bo-calendar-mobile__overview-row--head{display:none;}
+          .page-backoffice .bo-calendar-mobile__overview-unit,
+          .page-backoffice .bo-calendar-mobile__overview-guest{grid-column:1/-1;}
+          .page-backoffice .bo-calendar-mobile__overview-dates{grid-column:1/2;}
+          .page-backoffice .bo-calendar-mobile__overview-status{grid-column:2/3;justify-self:end;align-self:start;}
+        }
+        @media (max-width:640px){
+          .page-backoffice .bo-calendar-mobile__overview{padding:16px;gap:12px;}
+          .page-backoffice .bo-calendar-mobile__overview-grid{gap:12px;}
+          .page-backoffice .bo-calendar-mobile__overview-row{gap:8px;}
+          .page-backoffice .bo-calendar-mobile__overview-dates{font-size:.72rem;}
+          .page-backoffice .bo-calendar-mobile__unit{padding:16px;}
+          .page-backoffice .bo-calendar-mobile__booking{padding:12px 14px;}
+          .page-backoffice .bo-calendar-mobile__badge{font-size:.6rem;padding:4px 8px;}
+        }
         .page-backoffice .bo-table{overflow:auto;}
         .page-backoffice .bo-table table{min-width:100%;border-collapse:collapse;}
         .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}
@@ -2748,6 +2935,7 @@ const context = {
   sharp,
   upload,
   uploadBrandingAsset,
+  uploadChannelFile,
   paths,
   ExcelJS,
   brandingStore,
@@ -2792,6 +2980,7 @@ const context = {
   rememberActiveBrandingProperty,
   isSafeRedirectTarget,
   resolveBrandingForRequest,
+  channelIntegrations,
   wantsJson,
   formatAuditValue,
   renderAuditDiff,
@@ -2808,6 +2997,9 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  emailTemplates,
+  mailer,
+  bookingEmailer,
   secureCookies,
   csrfProtection,
   requireLogin,
@@ -2816,10 +3008,15 @@ const context = {
   requirePermission,
   requireAnyPermission,
   requireAdmin,
+  requireDev,
   buildUserNotifications,
   overlaps,
   unitAvailable,
   rateQuote,
+  selectUserPermissionOverridesStmt,
+  selectAllPermissionOverridesStmt,
+  deletePermissionOverridesForUserStmt,
+  insertPermissionOverrideStmt,
   compressImage,
   removeBrandingLogo,
   selectPropertyById,
@@ -2842,6 +3039,7 @@ const context = {
 
 registerAuthRoutes(app, context);
 registerFrontoffice(app, context);
+registerOwnersPortal(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================

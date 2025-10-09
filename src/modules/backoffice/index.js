@@ -77,6 +77,7 @@ module.exports = function registerBackoffice(app, context) {
     sharp,
     upload,
     uploadBrandingAsset,
+    uploadChannelFile,
     paths,
     getSession,
     createSession,
@@ -114,9 +115,17 @@ module.exports = function registerBackoffice(app, context) {
     requirePermission,
     requireAnyPermission,
     requireAdmin,
+    requireDev,
     overlaps,
     unitAvailable,
     rateQuote,
+    selectUserPermissionOverridesStmt,
+    selectAllPermissionOverridesStmt,
+    deletePermissionOverridesForUserStmt,
+    insertPermissionOverrideStmt,
+    emailTemplates,
+    bookingEmailer,
+    channelIntegrations,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
     ALL_PERMISSIONS,
@@ -203,11 +212,13 @@ module.exports = function registerBackoffice(app, context) {
   const featureBuilderSource = fs.readFileSync(path.join(scriptsDir, 'feature-builder-runtime.js'), 'utf8');
   const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
+  const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
+  const revenueDashboardScript = inlineScript(revenueDashboardSource);
 
   function renderDashboardTabsScript(defaultPaneId) {
     const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
@@ -1942,6 +1953,8 @@ module.exports = function registerBackoffice(app, context) {
     const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
     const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
     const canManageUsers = userCan(req.user, 'users.manage');
+    const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
+    const canManageIntegrations = canManageEmailTemplates;
     const canViewCalendar = userCan(req.user, 'calendar.view');
 
     let housekeepingSummary = null;
@@ -2000,6 +2013,430 @@ module.exports = function registerBackoffice(app, context) {
       ensureAutomationFresh
     });
 
+    const channelRecords = channelIntegrations.listIntegrations();
+    const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
+    const channelRecentImports = channelIntegrations.listRecentImports(12);
+    const manualChannelOptions = channelRecords
+      .filter(record => record.supportsManual)
+      .map(record => `<option value="${record.key}">${esc(record.name)}</option>`)
+      .join('');
+    const manualFormatsLegend = channelRecords
+      .filter(record => record.supportsManual && record.manualFormats && record.manualFormats.length)
+      .map(
+        record => `
+          <li class="flex items-center justify-between gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-3 py-2 text-xs">
+            <span class="font-medium text-slate-700">${esc(record.name)}</span>
+            <span class="text-[11px] uppercase tracking-wide text-slate-500">${esc(record.manualFormats.join(', '))}</span>
+          </li>`
+      )
+      .join('');
+    const channelNoticeRaw = typeof req.query.channel_notice === 'string' ? req.query.channel_notice : '';
+    const buildChannelNotice = (tone, text) => {
+      const toneClass =
+        tone === 'success'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : tone === 'warning'
+          ? 'border-amber-200 bg-amber-50 text-amber-700'
+          : 'border-rose-200 bg-rose-50 text-rose-700';
+      return `<div class="rounded-2xl border px-4 py-3 text-sm leading-relaxed ${toneClass}">${esc(text)}</div>`;
+    };
+    let channelNoticeHtml = '';
+    if (channelNoticeRaw) {
+      if (channelNoticeRaw.startsWith('imported:')) {
+        const parts = channelNoticeRaw.split(':');
+        const inserted = Number(parts[1] || 0);
+        const unmatched = Number(parts[2] || 0);
+        const duplicates = Number(parts[3] || 0);
+        const conflicts = Number(parts[4] || 0);
+        const errorsCount = Number(parts[5] || 0);
+        const fragments = [`${inserted} reserva${inserted === 1 ? '' : 's'} adicionada${inserted === 1 ? '' : 's'}`];
+        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
+        if (conflicts) fragments.push(`${conflicts} em conflito`);
+        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
+        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
+        channelNoticeHtml = buildChannelNotice(
+          errorsCount || conflicts ? 'warning' : 'success',
+          `Importação concluída: ${fragments.join(' · ')}.`
+        );
+      } else if (channelNoticeRaw.startsWith('sync:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const inserted = Number(parts[2] || 0);
+        const unmatched = Number(parts[3] || 0);
+        const duplicates = Number(parts[4] || 0);
+        const conflicts = Number(parts[5] || 0);
+        const errorsCount = Number(parts[6] || 0);
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        const fragments = [`${inserted} nova${inserted === 1 ? '' : 's'}`];
+        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
+        if (conflicts) fragments.push(`${conflicts} em conflito`);
+        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
+        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
+        channelNoticeHtml = buildChannelNotice(
+          errorsCount || conflicts ? 'warning' : 'success',
+          `Sincronização de ${channelName}: ${fragments.join(' · ')}.`
+        );
+      } else if (channelNoticeRaw.startsWith('settings:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        channelNoticeHtml = buildChannelNotice('success', `Definições de ${channelName} guardadas com sucesso.`);
+      } else if (channelNoticeRaw.startsWith('skipped:')) {
+        const parts = channelNoticeRaw.split(':');
+        const channelKey = parts[1] || '';
+        const channelName = channelNameMap.get(channelKey) || channelKey;
+        channelNoticeHtml = buildChannelNotice(
+          'warning',
+          `Sincronização ignorada. Verifique a configuração automática de ${channelName}.`
+        );
+      } else if (channelNoticeRaw.startsWith('error:')) {
+        const message = channelNoticeRaw.slice(6).trim() || 'Erro inesperado ao processar a integração.';
+        channelNoticeHtml = buildChannelNotice('danger', `Erro na integração: ${message}.`);
+      }
+    }
+
+    const totalChannels = channelRecords.length;
+    const autoActiveCount = channelRecords.filter(record => {
+      const settings = record.settings || {};
+      return record.supportsAuto && settings.autoEnabled && settings.autoUrl;
+    }).length;
+    const manualEnabledCount = channelRecords.filter(record => record.supportsManual).length;
+    const channelsNeedingAttention = channelRecords.filter(record => {
+      const settings = record.settings || {};
+      const autoEnabled = record.supportsAuto && settings.autoEnabled;
+      return (autoEnabled && !settings.autoUrl) || record.last_status === 'failed' || record.last_error;
+    }).length;
+
+    let lastSyncMoment = null;
+    channelRecords.forEach(record => {
+      if (record.last_synced_at) {
+        const candidate = dayjs(record.last_synced_at);
+        if (candidate.isValid() && (!lastSyncMoment || candidate.isAfter(lastSyncMoment))) {
+          lastSyncMoment = candidate;
+        }
+      }
+    });
+    const lastSyncLabel = lastSyncMoment ? lastSyncMoment.format('DD/MM/YYYY HH:mm') : 'Sem registos';
+    const recentImportCount = channelRecentImports.length;
+
+    const channelAlerts = channelRecords
+      .map(record => {
+        const settings = record.settings || {};
+        const issues = [];
+        if (record.supportsAuto && settings.autoEnabled && !settings.autoUrl) {
+          issues.push('Auto-sync ativo sem URL configurado');
+        }
+        if (record.last_status === 'failed') {
+          issues.push('Última sincronização falhou');
+        }
+        if (record.last_error) {
+          issues.push(record.last_error);
+        }
+        return issues.length ? { name: record.name, issues } : null;
+      })
+      .filter(Boolean);
+    const channelAlertsHtml = channelAlerts.length
+      ? channelAlerts
+          .map(alert => {
+            const issuesList = alert.issues.map(issue => `<li>${esc(issue)}</li>`).join('');
+            return `
+              <li class="rounded-xl border border-rose-200/70 bg-rose-50/70 p-3 space-y-1">
+                <p class="text-sm font-semibold text-rose-700">${esc(alert.name)}</p>
+                <ul class="list-disc pl-4 text-xs text-rose-600 space-y-1">${issuesList}</ul>
+              </li>`;
+          })
+          .join('')
+      : '<p class="bo-empty text-sm">Sem alertas pendentes.</p>';
+
+    const channelCardsHtml = channelRecords.length
+      ? channelRecords
+          .map(channel => {
+            const autoSettings = channel.settings || {};
+            const autoEnabled = channel.supportsAuto && !!autoSettings.autoEnabled;
+            const autoConfigured = autoEnabled && !!autoSettings.autoUrl;
+            const autoBadgeLabel = autoConfigured
+              ? 'Auto-sync ativo'
+              : autoEnabled
+              ? 'Auto-sync incompleto'
+              : 'Auto-sync desligado';
+            const autoBadgeClass = autoConfigured
+              ? 'bg-emerald-100 text-emerald-700'
+              : autoEnabled
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-slate-100 text-slate-600';
+            const manualBadge = channel.supportsManual
+              ? '<span class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">Upload manual</span>'
+              : '';
+            const needsAttention =
+              (autoEnabled && !autoSettings.autoUrl) || channel.last_status === 'failed' || !!channel.last_error;
+            const attentionBadge = needsAttention
+              ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700">Rever configuração</span>'
+              : '';
+            const lastSyncLabel = channel.last_synced_at
+              ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm')
+              : 'Nunca sincronizado';
+            const statusLabel = channel.last_status
+              ? channel.last_status === 'processed'
+                ? 'Sincronização concluída'
+                : channel.last_status === 'partial'
+                ? 'Processada com avisos'
+                : channel.last_status === 'failed'
+                ? 'Falhou'
+                : channel.last_status
+              : autoConfigured
+              ? 'Aguardando próxima execução'
+              : '';
+            const statusClass =
+              channel.last_status === 'failed'
+                ? 'text-rose-600'
+                : channel.last_status === 'partial'
+                ? 'text-amber-600'
+                : channel.last_status === 'processed'
+                ? 'text-emerald-600'
+                : 'text-slate-500';
+            const summary = channel.last_summary || null;
+            const summaryBadges = summary
+              ? `
+                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
+                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
+                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
+                  ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
+                  ${summary.conflictCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.conflictCount} conflitos</span>` : ''}
+                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">${summary.errorCount} erros</span>` : ''}
+                </div>`
+              : '';
+            const manualInfo = channel.supportsManual
+              ? `<p class="text-xs text-slate-500">Ficheiros suportados: ${esc(
+                  (channel.manualFormats || []).map(format => format.toUpperCase()).join(', ') || '—'
+                )}. Utilize a área de upload manual para carregar exportações do canal.</p>`
+              : '<p class="text-xs text-slate-500">Este canal é gerido apenas através da sincronização automática.</p>';
+            const defaultStatusLabel = autoSettings.defaultStatus === 'PENDING' ? 'Pendente' : 'Confirmada';
+            const summaryDetails = summary
+              ? `<div class="border-t border-slate-200/70 pt-2">
+                  <p class="text-xs font-medium text-slate-600">Última execução</p>
+                  <p class="text-xs text-slate-500">${summary.insertedCount || 0} novas · ${summary.duplicateCount || 0} duplicadas · ${summary.conflictCount || 0} conflitos · ${summary.unmatchedCount || 0} sem correspondência · ${summary.errorCount || 0} erros</p>
+                </div>`
+              : '';
+            const infoPanel = `
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+                <p class="text-xs text-slate-500">Reservas importadas com estado <span class="font-semibold text-slate-700">${esc(
+                  defaultStatusLabel
+                )}</span>.</p>
+                ${manualInfo}
+                ${summaryDetails}
+              </div>`;
+            const autoForm = channel.supportsAuto
+              ? `<div class="rounded-xl border border-slate-200 bg-white/70 p-3">
+                  <h4 class="text-sm font-semibold text-slate-700">Configuração automática</h4>
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="grid gap-3 mt-3">
+                    <label class="form-field">
+                      <span class="form-label">Ligação automática</span>
+                      <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
+                    </label>
+                    <div class="grid gap-3 md:grid-cols-3">
+                      <label class="form-field">
+                        <span class="form-label">Formato</span>
+                        <select name="autoFormat" class="input">
+                          <option value="">Deteção automática</option>
+                          ${
+                            channel.autoFormats && channel.autoFormats.length
+                              ? channel.autoFormats
+                                  .map(
+                                    format =>
+                                      `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(
+                                        format.toUpperCase()
+                                      )}</option>`
+                                  )
+                                  .join('')
+                              : ''
+                          }
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Estado das reservas</span>
+                        <select name="defaultStatus" class="input">
+                          <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
+                          <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Fuso horário</span>
+                        <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
+                      </label>
+                    </div>
+                    <div class="grid gap-3 md:grid-cols-2">
+                      <label class="form-field">
+                        <span class="form-label">Utilizador (opcional)</span>
+                        <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
+                      </label>
+                      <label class="form-field">
+                        <span class="form-label">Palavra-passe (opcional)</span>
+                        <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
+                      </label>
+                    </div>
+                    <label class="form-field">
+                      <span class="form-label">Notas internas</span>
+                      <textarea name="notes" class="input" rows="3" placeholder="Instruções, contactos ou credenciais adicionais.">${esc(autoSettings.notes || '')}</textarea>
+                    </label>
+                    <label class="inline-flex items-center gap-2 text-sm">
+                      <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
+                      <span>Ativar sincronização automática</span>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                      <button class="btn btn-primary">Guardar integração</button>
+                    </div>
+                  </form>
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="mt-2 inline-flex">
+                    <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
+                  </form>
+                </div>`
+              : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
+            return `
+              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
+                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
+                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
+                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
+                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
+                    ${summaryBadges}
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
+                    ${manualBadge}
+                    ${attentionBadge}
+                  </div>
+                </header>
+                <div class="grid gap-4 lg:grid-cols-2">
+                  ${autoForm}
+                  ${infoPanel}
+                </div>
+              </article>`;
+          })
+          .join('')
+      : '<p class="bo-empty">Nenhuma integração configurada.</p>';
+    const channelImportsRows = channelRecentImports.length
+      ? channelRecentImports
+          .map(batch => {
+            const createdLabel = batch.created_at ? dayjs(batch.created_at).format('DD/MM/YYYY HH:mm') : '—';
+            const sourceLabel =
+              batch.source === 'manual-upload'
+                ? 'Upload manual'
+                : batch.source === 'auto-fetch'
+                ? 'Sincronização automática'
+                : batch.source || '—';
+            const status = batch.status || '—';
+            const statusClass =
+              status === 'failed'
+                ? 'text-rose-600'
+                : status === 'partial'
+                ? 'text-amber-600'
+                : status === 'processed'
+                ? 'text-emerald-600'
+                : 'text-slate-500';
+            const summary = batch.summary || {};
+            const parts = [];
+            if (summary.insertedCount != null) parts.push(`${summary.insertedCount} novas`);
+            if (summary.duplicateCount) parts.push(`${summary.duplicateCount} duplicadas`);
+            if (summary.conflictCount) parts.push(`${summary.conflictCount} conflitos`);
+            if (summary.unmatchedCount) parts.push(`${summary.unmatchedCount} sem correspondência`);
+            if (summary.errorCount) parts.push(`${summary.errorCount} erros`);
+            const statsLabel = parts.length ? parts.join(' · ') : 'Sem detalhes';
+            const channelName = channelNameMap.get(batch.channel_key) || batch.channel_key;
+            return `
+              <tr>
+                <td data-label="Data"><span class="table-cell-value">${esc(createdLabel)}</span></td>
+                <td data-label="Canal"><span class="table-cell-value">${esc(channelName)}</span></td>
+                <td data-label="Origem"><span class="table-cell-value">${esc(sourceLabel)}</span></td>
+                <td data-label="Estado"><span class="table-cell-value ${statusClass}">${esc(status)}</span></td>
+                <td data-label="Resumo"><span class="table-cell-value">${esc(statsLabel)}</span></td>
+                <td data-label="Autor"><span class="table-cell-value">${esc(batch.username || '—')}</span></td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="6" class="py-6 text-center text-sm text-slate-500">Sem importações registadas.</td></tr>';
+
+    const manualUploadSection = manualChannelOptions
+      ? `
+        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="grid gap-3">
+          <div class="grid gap-3 md:grid-cols-2">
+            <label class="form-field">
+              <span class="form-label">Canal</span>
+              <select name="channel_key" class="input" required>
+                <option value="" disabled selected hidden>Seleciona um canal</option>
+                ${manualChannelOptions}
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Estado das reservas</span>
+              <select name="target_status" class="input">
+                <option value="CONFIRMED">Confirmada</option>
+                <option value="PENDING">Pendente</option>
+              </select>
+            </label>
+          </div>
+          <label class="form-field">
+            <span class="form-label">Ficheiro de reservas</span>
+            <input type="file" name="file" class="input" required accept=".csv,.tsv,.xlsx,.xls,.ics,.ical,.json" />
+          </label>
+          <div>
+            <button class="btn btn-primary">Importar reservas</button>
+          </div>
+        </form>`
+      : '<p class="bo-empty">Nenhum canal com importação manual disponível.</p>';
+
+    const emailTemplateRecords = emailTemplates.listTemplates();
+    const emailTemplateCards = emailTemplateRecords.length
+      ? emailTemplateRecords
+          .map(t => {
+            const updatedLabel = t.updated_at ? dayjs(t.updated_at).format('DD/MM/YYYY HH:mm') : '';
+            const updatedMeta = updatedLabel
+              ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${t.updated_by ? ` por ${esc(t.updated_by)}` : ''}</p>`
+              : '';
+            const placeholderList = t.placeholders && t.placeholders.length
+              ? `
+                <div class="text-xs text-slate-500 space-y-1">
+                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
+                  <ul class="flex flex-wrap gap-2">
+                    ${t.placeholders
+                      .map(
+                        p => `
+                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
+                            <code>${esc(`{{${p.key}}}`)}</code>
+                            <span>${esc(p.label)}</span>
+                          </li>`
+                      )
+                      .join('')}
+                  </ul>
+                </div>
+              `
+              : '';
+            return `
+              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-3">
+                <header>
+                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
+                  ${t.description ? `<p class="text-sm text-slate-500 mt-1">${esc(t.description)}</p>` : ''}
+                  ${updatedMeta}
+                </header>
+                <form method="post" action="/admin/emails/templates/${t.key}" class="grid gap-3">
+                  <label class="form-field">
+                    <span class="form-label">Assunto</span>
+                    <input name="subject" class="input" value="${esc(t.subject)}" required maxlength="160"/>
+                  </label>
+                  <label class="form-field">
+                    <span class="form-label">Mensagem</span>
+                    <textarea name="body" class="input" rows="6" required>${esc(t.body)}</textarea>
+                  </label>
+                  ${placeholderList}
+                  <div>
+                    <button class="btn btn-primary">Guardar modelo</button>
+                  </div>
+                </form>
+              </article>`;
+          })
+          .join('')
+      : '<p class="bo-empty">Sem modelos de email configurados.</p>';
+
     const broomIconSvg = `
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M3 21h4l7-7"></path>
@@ -2011,12 +2448,15 @@ module.exports = function registerBackoffice(app, context) {
 
     const navItems = [
       { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
+      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
+      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
+      { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
+      { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
-      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
+      { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
+      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
     ];
     const defaultPane = navItems.find(item => item.allowed)?.id || 'overview';
     const navButtonsHtml = navItems
@@ -2090,6 +2530,224 @@ module.exports = function registerBackoffice(app, context) {
           })
           .join('')
       : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem dados de receita.</td></tr>';
+
+    function normalizeChannelLabel(rawValue) {
+      const value = (rawValue || '').trim();
+      if (!value) return 'Direto';
+      const lower = value.toLowerCase();
+      if (lower === 'booking' || lower === 'booking.com') return 'Booking.com';
+      if (lower === 'airbnb') return 'Airbnb';
+      if (lower === 'expedia') return 'Expedia';
+      if (lower === 'vrbo') return 'Vrbo';
+      return value
+        .split(' ')
+        .map(part => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
+        .join(' ');
+    }
+
+    const revenueRangeDays = 30;
+    const revenueRangeEnd = dayjs().endOf('day');
+    const revenueRangeStart = revenueRangeEnd.subtract(revenueRangeDays - 1, 'day').startOf('day');
+    const revenueRangeEndExclusive = revenueRangeEnd.add(1, 'day');
+    const revenueDayCount = revenueRangeEnd.diff(revenueRangeStart, 'day') + 1;
+
+    const revenueBookings = db
+      .prepare(
+        `SELECT b.id,
+                b.checkin,
+                b.checkout,
+                b.total_cents,
+                b.agency,
+                b.created_at
+           FROM bookings b
+          WHERE b.status = 'CONFIRMED'
+            AND b.checkout > ?
+            AND b.checkin < ?`
+      )
+      .all(revenueRangeStart.format('YYYY-MM-DD'), revenueRangeEndExclusive.format('YYYY-MM-DD'));
+
+    const revenueDailyIndex = new Map();
+    const revenueDailyRaw = [];
+    for (let i = 0; i < revenueDayCount; i++) {
+      const day = revenueRangeStart.add(i, 'day');
+      const key = day.format('YYYY-MM-DD');
+      revenueDailyIndex.set(key, {
+        date: key,
+        label: day.format('DD/MM'),
+        display: day.format('DD MMM'),
+        revenueCents: 0,
+        nightsSold: 0,
+        bookingIds: new Set(),
+        createdCount: 0
+      });
+      revenueDailyRaw.push(revenueDailyIndex.get(key));
+    }
+
+    const bookingStayNights = new Map();
+    const channelRevenueCents = new Map();
+
+    revenueBookings.forEach(booking => {
+      const stayStart = dayjs(booking.checkin);
+      const stayEnd = dayjs(booking.checkout);
+      if (!stayStart.isValid() || !stayEnd.isValid()) return;
+      const totalNights = Math.max(1, dateRangeNights(booking.checkin, booking.checkout));
+      bookingStayNights.set(booking.id, totalNights);
+      const nightlyRate = totalNights ? (booking.total_cents || 0) / totalNights : booking.total_cents || 0;
+      const channelLabel = normalizeChannelLabel(booking.agency);
+
+      if (booking.created_at) {
+        const createdAt = dayjs(booking.created_at);
+        if (createdAt.isValid()) {
+          const createdKey = createdAt.format('YYYY-MM-DD');
+          const createdRecord = revenueDailyIndex.get(createdKey);
+          if (createdRecord) {
+            createdRecord.createdCount = (createdRecord.createdCount || 0) + 1;
+          }
+        }
+      }
+
+      let cursor = stayStart.isAfter(revenueRangeStart) ? stayStart : revenueRangeStart;
+      const cursorEnd = stayEnd.isBefore(revenueRangeEndExclusive) ? stayEnd : revenueRangeEndExclusive;
+      while (cursor.isBefore(cursorEnd)) {
+        const key = cursor.format('YYYY-MM-DD');
+        const record = revenueDailyIndex.get(key);
+        if (record) {
+          record.revenueCents += nightlyRate;
+          record.nightsSold += 1;
+          record.bookingIds.add(booking.id);
+          channelRevenueCents.set(channelLabel, (channelRevenueCents.get(channelLabel) || 0) + nightlyRate);
+        }
+        cursor = cursor.add(1, 'day');
+      }
+    });
+
+    const totalUnitsNights = totalUnitsCount * revenueDayCount;
+
+    const revenueDaily = revenueDailyRaw.map(record => {
+      const bookingIds = Array.from(record.bookingIds.values());
+      const revenueCents = Math.round(record.revenueCents || 0);
+      const nightsSold = Math.round(record.nightsSold || 0);
+      const bookingsCount = bookingIds.length;
+      const staysTotal = bookingIds.reduce((sum, id) => sum + (bookingStayNights.get(id) || 0), 0);
+      const averageStay = bookingsCount ? staysTotal / bookingsCount : 0;
+      const adrCents = nightsSold ? Math.round(revenueCents / nightsSold) : 0;
+      const revparCents = totalUnitsCount ? Math.round(revenueCents / Math.max(totalUnitsCount, 1)) : 0;
+      const occupancyRate = totalUnitsCount ? Math.min(1, nightsSold / Math.max(totalUnitsCount, 1)) : 0;
+      const bookingPaceCount = record.createdCount || 0;
+      return {
+        date: record.date,
+        label: record.label,
+        display: record.display,
+        revenueCents,
+        nightsSold,
+        bookingsCount,
+        createdCount: bookingPaceCount,
+        adrCents,
+        revparCents,
+        occupancyRate,
+        averageStay,
+        bookingPace: bookingPaceCount
+      };
+    });
+
+    const totalRevenueCents = revenueDaily.reduce((sum, row) => sum + (row.revenueCents || 0), 0);
+    const totalNightsSold = revenueDaily.reduce((sum, row) => sum + (row.nightsSold || 0), 0);
+    const totalReservations = revenueBookings.length;
+    const totalBookingCreations = revenueDaily.reduce((sum, row) => sum + (row.createdCount || 0), 0);
+
+    const revenueSummary = {
+      revenueCents: totalRevenueCents,
+      adrCents: totalNightsSold ? Math.round(totalRevenueCents / totalNightsSold) : 0,
+      revparCents: totalUnitsNights ? Math.round(totalRevenueCents / Math.max(totalUnitsNights, 1)) : 0,
+      occupancyRate: totalUnitsNights ? totalNightsSold / Math.max(totalUnitsNights, 1) : 0,
+      nights: totalNightsSold,
+      reservations: totalReservations,
+      averageStay: totalReservations ? totalNightsSold / Math.max(totalReservations, 1) : 0,
+      bookingPace: revenueDayCount ? totalBookingCreations / Math.max(revenueDayCount, 1) : 0,
+      createdTotal: totalBookingCreations
+    };
+
+    const channelTotals = Array.from(channelRevenueCents.entries()).map(([name, cents]) => ({
+      name,
+      revenueCents: Math.round(cents || 0)
+    }));
+    channelTotals.sort((a, b) => (b.revenueCents || 0) - (a.revenueCents || 0));
+    const channelTotalCents = channelTotals.reduce((sum, item) => sum + (item.revenueCents || 0), 0);
+    const revenueChannels = (channelTotals.length ? channelTotals : [{ name: 'Direto', revenueCents: 0 }]).map(item => ({
+      ...item,
+      percentage: channelTotalCents ? item.revenueCents / Math.max(channelTotalCents, 1) : 0
+    }));
+
+    const revenueRangeLabel = `${revenueRangeStart.format('DD/MM/YYYY')} – ${revenueRangeEnd.format('DD/MM/YYYY')}`;
+    const revenueAnalytics = {
+      range: {
+        start: revenueRangeStart.format('YYYY-MM-DD'),
+        end: revenueRangeEnd.format('YYYY-MM-DD'),
+        label: revenueRangeLabel,
+        dayCount: revenueDayCount
+      },
+      summary: revenueSummary,
+      daily: revenueDaily,
+      channels: revenueChannels
+    };
+    const revenueAnalyticsJson = jsonScriptPayload(revenueAnalytics);
+
+    const numberFormatter = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0 });
+    const decimalFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+    const revenueSummaryLabels = {
+      revenue: `€ ${eur(revenueSummary.revenueCents || 0)}`,
+      adr: revenueSummary.adrCents ? `€ ${eur(revenueSummary.adrCents)}` : '€ 0,00',
+      revpar: revenueSummary.revparCents ? `€ ${eur(revenueSummary.revparCents)}` : '€ 0,00',
+      occupancy: percentFormatter.format(revenueSummary.occupancyRate || 0),
+      nights: numberFormatter.format(revenueSummary.nights || 0),
+      reservations: numberFormatter.format(revenueSummary.reservations || 0),
+      averageStay: decimalFormatter.format(revenueSummary.averageStay || 0),
+      bookingPace: decimalFormatter.format(revenueSummary.bookingPace || 0)
+    };
+
+    const revenueChannelsHtml = revenueChannels
+      .map(channel => {
+        const revenueLabel = `€ ${eur(channel.revenueCents || 0)}`;
+        const pctLabel = percentFormatter.format(channel.percentage || 0);
+        return `
+          <li class="flex items-center justify-between gap-3">
+            <div>
+              <div class="font-semibold text-slate-700">${esc(channel.name)}</div>
+              <div class="text-xs text-slate-500">${revenueLabel}</div>
+            </div>
+            <div class="text-sm font-semibold text-slate-600">${pctLabel}</div>
+          </li>`;
+      })
+      .join('');
+
+    const revenueDailyTableRows = revenueDaily.length
+      ? revenueDaily
+          .map(row => {
+            const revenueLabel = `€ ${eur(row.revenueCents || 0)}`;
+            const adrLabel = row.nightsSold ? `€ ${eur(row.adrCents || 0)}` : '—';
+            const revparLabel = `€ ${eur(row.revparCents || 0)}`;
+            const occupancyLabel = row.nightsSold ? percentFormatter.format(row.occupancyRate || 0) : '—';
+            const nightsLabel = numberFormatter.format(row.nightsSold || 0);
+            const bookingsLabel = numberFormatter.format(row.bookingsCount || 0);
+            const averageStayLabel = row.bookingsCount ? decimalFormatter.format(row.averageStay || 0) : '—';
+            const bookingPaceLabel = row.createdCount ? numberFormatter.format(row.createdCount || 0) : '—';
+            return `
+              <tr>
+                <td data-label="Data"><span class="table-cell-value">${esc(row.display || row.label)}</span></td>
+                <td data-label="Receita">${revenueLabel}</td>
+                <td data-label="ADR">${adrLabel}</td>
+                <td data-label="RevPAR">${revparLabel}</td>
+                <td data-label="Ocupação">${occupancyLabel}</td>
+                <td data-label="Reservas">${bookingsLabel}</td>
+                <td data-label="Noites">${nightsLabel}</td>
+                <td data-label="Estadia média">${averageStayLabel}</td>
+                <td data-label="Booking pace">${bookingPaceLabel}</td>
+              </tr>`;
+          })
+          .join('')
+      : '<tr><td colspan="9" class="text-sm text-center text-slate-500">Sem dados de revenue para o período analisado.</td></tr>';
 
     const statisticsCard = html`
       <div class="bo-card space-y-6">
@@ -2229,7 +2887,7 @@ module.exports = function registerBackoffice(app, context) {
                           const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
                           return `
                             <tr>
-                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} → ${endLabel}</span></td>
+                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} - ${endLabel}</span></td>
                               <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
                               <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
                             </tr>`;
@@ -2356,7 +3014,7 @@ module.exports = function registerBackoffice(app, context) {
             const startDate = new Date(range.start + 'T00:00:00');
             const endDate = new Date(range.end + 'T00:00:00');
             endDate.setDate(endDate.getDate() - 1);
-            return dateFormatter.format(startDate) + ' → ' + dateFormatter.format(endDate);
+            return dateFormatter.format(startDate) + ' - ' + dateFormatter.format(endDate);
           }
 
           function describeFilters(data) {
@@ -2547,7 +3205,7 @@ module.exports = function registerBackoffice(app, context) {
           .map(b => {
             return `
               <tr>
-                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
                 <td data-label="Propriedade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
                 <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name || '—')}</span></td>
                 <td data-label="Estado"><span class="table-cell-value">${b.status === 'PENDING' ? 'PENDENTE' : 'CONFIRMADA'}</span></td>
@@ -2692,11 +3350,148 @@ module.exports = function registerBackoffice(app, context) {
                             <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
                             <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
                             <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} → ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
                             <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
                           </tr>`)
                         .join('')}</tbody>
                     </table>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" data-bo-pane="revenue">
+                <div class="bo-card">
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h2>Painel de revenue</h2>
+                      <p class="bo-subtitle">Desempenho dos últimos ${revenueRangeDays} dias com foco em receita e ocupação.</p>
+                    </div>
+                    <div class="text-xs text-slate-500">Período analisado: <span data-revenue-range>${esc(revenueRangeLabel)}</span></div>
+                  </div>
+                  <div class="bo-metrics bo-metrics--wrap mt-4" data-revenue-summary>
+                    <div class="bo-metric"><strong data-revenue-metric="revenue">${esc(revenueSummaryLabels.revenue)}</strong><span>Receita total</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="adr">${esc(revenueSummaryLabels.adr)}</strong><span>ADR médio</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="revpar">${esc(revenueSummaryLabels.revpar)}</strong><span>RevPAR</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="occupancy">${esc(revenueSummaryLabels.occupancy)}</strong><span>Ocupação</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="nights">${esc(revenueSummaryLabels.nights)}</strong><span>Noites vendidas</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="reservations">${esc(revenueSummaryLabels.reservations)}</strong><span>Reservas</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="averageStay">${esc(revenueSummaryLabels.averageStay)}</strong><span>Estadia média (noites)</span></div>
+                    <div class="bo-metric"><strong data-revenue-metric="bookingPace">${esc(revenueSummaryLabels.bookingPace)}</strong><span>Booking pace (média diária)</span></div>
+                  </div>
+                </div>
+
+                <div class="grid gap-6 lg:grid-cols-3">
+                  <div class="bo-card lg:col-span-2">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Receita vs noites</h3>
+                        <p class="bo-subtitle">Comparativo diário entre receita gerada e noites vendidas.</p>
+                      </div>
+                    </div>
+                    <div style="height:260px">
+                      <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
+                    </div>
+                  </div>
+                  <div class="bo-card">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Canais de venda</h3>
+                        <p class="bo-subtitle">Distribuição da receita confirmada.</p>
+                      </div>
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-1">
+                      <div style="height:220px">
+                        <canvas id="revenue-channel-chart" aria-label="Gráfico de canais de revenue"></canvas>
+                      </div>
+                      <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
+                    </div>
+                  </div>
+                  <div class="bo-card lg:col-span-3">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                      <div>
+                        <h3 class="bo-section-title">Ocupação diária</h3>
+                        <p class="bo-subtitle">Percentual de ocupação ao longo do período.</p>
+                      </div>
+                    </div>
+                    <div style="height:260px">
+                      <canvas id="revenue-occupancy-chart" aria-label="Gráfico de barras de ocupação diária"></canvas>
+                    </div>
+                  </div>
+                </div>
+
+                <p class="bo-empty" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
+
+                <div class="bo-card">
+                  <h3 class="bo-section-title">Resumo diário detalhado</h3>
+                  <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
+                  <div class="bo-table responsive-table mt-3">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-left text-slate-500">
+                          <th>Data</th><th>Receita</th><th>ADR</th><th>RevPAR</th><th>Ocupação</th><th>Reservas</th><th>Noites</th><th>Estadia média</th><th>Booking pace</th>
+                        </tr>
+                      </thead>
+                      <tbody id="revenue-daily-table">${revenueDailyTableRows}</tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" data-bo-pane="channel-manager">
+                <div class="bo-card">
+                  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <h2>Channel Manager</h2>
+                      <p class="bo-subtitle">Centralize as integrações com Booking.com, Airbnb, i-escape e Splendia numa única área de controlo.</p>
+                    </div>
+                    <div class="text-xs text-slate-500">Última sincronização registada: <span class="font-medium text-slate-700">${esc(lastSyncLabel)}</span></div>
+                  </div>
+                  ${channelNoticeHtml ? `<div class="mt-4">${channelNoticeHtml}</div>` : ''}
+                  <div class="bo-metrics bo-metrics--wrap mt-4">
+                    <div class="bo-metric"><strong>${totalChannels}</strong><span>Canais disponíveis</span></div>
+                    <div class="bo-metric"><strong>${autoActiveCount}</strong><span>Auto-sync ativos</span></div>
+                    <div class="bo-metric"><strong>${manualEnabledCount}</strong><span>Importações manuais</span></div>
+                    <div class="bo-metric"><strong>${channelsNeedingAttention}</strong><span>Alertas a resolver</span></div>
+                    <div class="bo-metric"><strong>${recentImportCount}</strong><span>Importações recentes</span></div>
+                  </div>
+                </div>
+
+                <div class="grid gap-6 xl:grid-cols-[2fr_1fr]">
+                  <div class="space-y-6">
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Conexões de canais</h3>
+                      <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
+                      <div class="mt-4 space-y-4">${channelCardsHtml}</div>
+                    </div>
+
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Upload manual de reservas</h3>
+                      <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
+                      ${manualFormatsLegend ? `<ul class="mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
+                      <div class="mt-4">${manualUploadSection}</div>
+                    </div>
+                  </div>
+
+                  <div class="space-y-6">
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Alertas do Channel Manager</h3>
+                      <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
+                      <div class="mt-3 space-y-3">${channelAlertsHtml}</div>
+                    </div>
+
+                    <div class="bo-card">
+                      <h3 class="bo-section-title">Histórico de importações</h3>
+                      <div class="bo-table responsive-table mt-3">
+                        <table class="w-full text-sm">
+                          <thead>
+                            <tr class="text-left text-slate-500">
+                              <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
+                            </tr>
+                          </thead>
+                          <tbody>${channelImportsRows}</tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -2734,6 +3529,18 @@ module.exports = function registerBackoffice(app, context) {
                       </div>
                     `
                   : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
+              </section>
+
+              <section class="bo-pane" data-bo-pane="emails">
+                ${canManageEmailTemplates
+                  ? html`
+                      <div class="bo-card">
+                        <h2>Emails de reserva</h2>
+                        <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
+                        <div class="space-y-6">${emailTemplateCards}</div>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
               </section>
 
               <section class="bo-pane" data-bo-pane="branding">
@@ -2804,7 +3611,9 @@ module.exports = function registerBackoffice(app, context) {
               </section>
             </div>
           </div>
+          <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
           <script>${featureBuilderScript}</script>
+          <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
         `
       })
@@ -2826,7 +3635,7 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   const rows = [];
   rows.push(['Secção', 'Referência', 'Valor']);
   const rangeEnd = dayjs(operational.range.end).subtract(1, 'day');
-  const rangeLabel = `${operational.range.start} → ${rangeEnd.isValid() ? rangeEnd.format('YYYY-MM-DD') : operational.range.end}`;
+  const rangeLabel = `${operational.range.start} - ${rangeEnd.isValid() ? rangeEnd.format('YYYY-MM-DD') : operational.range.end}`;
   rows.push(['Filtro', 'Período', `${operational.monthLabel} (${rangeLabel})`]);
   if (operational.filters.propertyLabel) {
     rows.push(['Filtro', 'Propriedade', operational.filters.propertyLabel]);
@@ -2894,7 +3703,7 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
     const endLabel = dayjs(w.end).subtract(1, 'day').format('YYYY-MM-DD');
     rows.push([
       'Resumo semanal',
-      `${dayjs(w.start).format('YYYY-MM-DD')} → ${endLabel}`,
+      `${dayjs(w.start).format('YYYY-MM-DD')} - ${endLabel}`,
       `${Math.round((w.occupancyRate || 0) * 100)}% · ${w.confirmedNights} noites`
     ]);
   });
@@ -2922,6 +3731,112 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send('\ufeff' + csv);
+});
+
+  app.post(
+    '/admin/channel-integrations/:key/settings',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    (req, res) => {
+      const channelKey = String(req.params.key || '').trim();
+      try {
+        channelIntegrations.saveIntegrationSettings(
+          channelKey,
+          {
+            autoEnabled: req.body.autoEnabled === '1' || req.body.autoEnabled === 'on',
+            autoUrl: req.body.autoUrl,
+            autoFormat: req.body.autoFormat,
+            defaultStatus: req.body.defaultStatus,
+            autoUsername: req.body.autoUsername,
+            autoPassword: req.body.autoPassword,
+            timezone: req.body.timezone,
+            notes: req.body.notes
+          },
+          req.user.id
+        );
+        logActivity(req.user.id, 'channel.settings.save', 'channel', channelKey, {
+          autoUrl: req.body.autoUrl || null,
+          autoFormat: req.body.autoFormat || null
+        });
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`settings:${channelKey}`)}#channel-manager`);
+      } catch (err) {
+        console.warn('Falha ao guardar configuração de canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-integrations/:key/sync',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    async (req, res) => {
+      const channelKey = String(req.params.key || '').trim();
+      try {
+        const result = await channelIntegrations.autoSyncChannel(channelKey, {
+          userId: req.user.id,
+          reason: 'manual-trigger'
+        });
+        if (result && result.skipped) {
+          return res.redirect(`/admin?channel_notice=${encodeURIComponent(`skipped:${channelKey}`)}#channel-manager`);
+        }
+        const summary = result && result.summary ? result.summary : {};
+        logActivity(req.user.id, 'channel.sync.manual', 'channel', channelKey, summary);
+        const payload = `sync:${channelKey}:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
+      } catch (err) {
+        console.warn('Falha ao sincronizar canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-imports/upload',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    uploadChannelFile.single('file'),
+    async (req, res) => {
+      const channelKey = String(req.body.channel_key || '').trim();
+      if (!channelKey) {
+        return res.status(400).send('Canal obrigatório.');
+      }
+      if (!req.file) {
+        return res.status(400).send('Ficheiro obrigatório.');
+      }
+      try {
+        const targetStatus = req.body.target_status === 'PENDING' ? 'PENDING' : 'CONFIRMED';
+        const result = await channelIntegrations.importFromFile({
+          channelKey,
+          filePath: req.file.path,
+          originalName: req.file.originalname,
+          uploadedBy: req.user.id,
+          targetStatus
+        });
+        const summary = result && result.summary ? result.summary : {};
+        logActivity(req.user.id, 'channel.import.manual', 'channel', channelKey, summary);
+        const payload = `imported:${summary.insertedCount || 0}:${summary.unmatchedCount || 0}:${summary.duplicateCount || 0}:${summary.conflictCount || 0}:${summary.errorCount || 0}`;
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
+      } catch (err) {
+        console.warn('Falha ao importar reservas do canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
+      }
+    }
+  );
+
+  app.post('/admin/emails/templates/:key', requireLogin, requirePermission('bookings.edit'), (req, res) => {
+  const key = String(req.params.key || '').trim();
+  try {
+    const updated = emailTemplates.updateTemplate(key, { subject: req.body.subject, body: req.body.body }, req.user.id);
+    logActivity(req.user.id, 'email_template.update', 'email_template', updated && updated.id ? updated.id : null, {
+      key,
+      subject: updated ? updated.subject : req.body.subject
+    });
+    res.redirect('/admin#emails');
+  } catch (err) {
+    console.warn('Falha ao atualizar modelo de email:', err.message);
+    res.status(400).send(err.message);
+  }
 });
 
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
@@ -3828,8 +4743,10 @@ app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'),
 app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const id = req.params.id;
   const b = db.prepare(`
-    SELECT b.*, u.capacity, u.base_price_cents
-      FROM bookings b JOIN units u ON u.id = b.unit_id
+    SELECT b.*, u.capacity, u.base_price_cents, u.name AS unit_name, u.property_id, p.name AS property_name
+      FROM bookings b
+      JOIN units u ON u.id = b.unit_id
+      JOIN properties p ON p.id = u.property_id
      WHERE b.id = ?
   `).get(id);
   if (!b) return res.status(404).send('Reserva não encontrada');
@@ -3891,6 +4808,28 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
     },
     { checkin, checkout, adults, children, status, total_cents: q.total_cents }
   );
+
+  const statusChangedToConfirmed = b.status !== 'CONFIRMED' && status === 'CONFIRMED';
+  if (statusChangedToConfirmed) {
+    const updatedBooking = db
+      .prepare(
+        `SELECT b.*, u.name AS unit_name, u.property_id, p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.id = ?`
+      )
+      .get(id);
+    if (updatedBooking) {
+      const branding = resolveBrandingForRequest(req, {
+        propertyId: updatedBooking.property_id,
+        propertyName: updatedBooking.property_name
+      });
+      bookingEmailer
+        .sendGuestEmail({ booking: updatedBooking, templateKey: 'booking_confirmed_guest', branding, request: req })
+        .catch(err => console.warn('Falha ao enviar email de confirmação:', err.message));
+    }
+  }
 
   res.redirect(`/admin/bookings/${id}`);
 });
@@ -4626,15 +5565,91 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     { key: 'rececao', label: ROLE_LABELS.rececao },
     { key: 'gestao', label: ROLE_LABELS.gestao },
     { key: 'direcao', label: ROLE_LABELS.direcao },
-    { key: 'limpeza', label: ROLE_LABELS.limpeza }
+    { key: 'limpeza', label: ROLE_LABELS.limpeza },
+    { key: 'owner', label: ROLE_LABELS.owner }
   ];
   if (isDevOperator) {
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
+  }
+  const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const query = req.query || {};
+  const successMessage = query.updated === 'permissions' ? 'Permissões personalizadas atualizadas com sucesso.' : null;
+  let errorMessage = null;
+  if (query.error === 'permissions_forbidden') {
+    errorMessage = 'Não é possível alterar as permissões desse utilizador.';
+  } else if (query.error === 'permissions_invalid') {
+    errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+  }
+
+  let permissionGroupEntries = [];
+  let permissionPayload = null;
+  if (isDevOperator) {
+    const grouped = {};
+    Array.from(ALL_PERMISSIONS)
+      .sort((a, b) => a.localeCompare(b, 'pt'))
+      .forEach(permission => {
+        const [groupKey] = permission.split('.');
+        const key = groupKey || 'outros';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push({
+          key: permission,
+          label: permission.replace(/\./g, ' → ')
+        });
+      });
+    permissionGroupEntries = Object.entries(grouped)
+      .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
+      .map(([groupKey, permissions]) => ({ groupKey, permissions }));
+
+    const overridesByUser = {};
+    selectAllPermissionOverridesStmt.all().forEach(row => {
+      if (!row || !row.user_id || !row.permission) return;
+      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+      overridesByUser[row.user_id].push({
+        permission: row.permission,
+        is_granted: row.is_granted ? 1 : 0
+      });
+    });
+
+    const baseByUser = {};
+    const effectiveByUser = {};
+    users.forEach(user => {
+      const baseSet = new Set(ROLE_PERMISSIONS[user.role_key] || []);
+      baseByUser[user.id] = Array.from(baseSet);
+      const effectiveSet = new Set(baseSet);
+      (overridesByUser[user.id] || []).forEach(entry => {
+        if (!entry || !entry.permission || !ALL_PERMISSIONS.has(entry.permission)) return;
+        if (entry.is_granted) {
+          effectiveSet.add(entry.permission);
+        } else {
+          effectiveSet.delete(entry.permission);
+        }
+      });
+      effectiveByUser[user.id] = Array.from(effectiveSet);
+    });
+
+    const roleLabelsByUser = Object.fromEntries(
+      users.map(user => [user.id, ROLE_LABELS[user.role_key] || user.role_key])
+    );
+    const devUser = users.find(u => u.role_key === MASTER_ROLE) || null;
+    const payload = {
+      base: baseByUser,
+      effective: effectiveByUser,
+      overrides: overridesByUser,
+      roleLabels: roleLabelsByUser,
+      devUserId: devUser ? devUser.id : null
+    };
+    permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
   }
   const theme = resolveBrandingForRequest(req);
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+    ${errorMessage
+      ? `<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+      : ''}
+    ${successMessage
+      ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
+      : ''}
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <section class="card p-4">
@@ -4643,12 +5658,30 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required name="username" class="input" placeholder="Utilizador" />
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
-          <select name="role" class="input">
-            <option value="rececao">Receção</option>
-            <option value="gestao">Gestão</option>
-            <option value="direcao">Direção</option>
-            <option value="limpeza">Limpeza</option>
+          <select name="role" id="create-user-role" class="input">
+            ${roleOptions
+              .filter(opt => opt.key !== MASTER_ROLE)
+              .map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`)
+              .join('')}
           </select>
+          <div id="owner-property-select" class="rounded-lg border border-slate-200 bg-slate-50 p-3 hidden" aria-hidden="true" style="display:none;">
+            <p class="text-sm text-slate-600 mb-2">Selecione as propriedades a que este owner terá acesso.</p>
+            ${propertyChoices.length
+              ? `<div class="grid max-h-48 gap-2 overflow-y-auto pr-1">
+                  ${propertyChoices
+                    .map(
+                      prop => `
+                        <label class="flex items-center gap-2 text-sm">
+                          <input type="checkbox" name="property_ids" value="${prop.id}" class="accent-slate-700" />
+                          <span>${esc(prop.name)}</span>
+                        </label>
+                      `
+                    )
+                    .join('')}
+                </div>`
+              : '<p class="text-sm text-slate-500">Ainda não existem propriedades registadas para atribuir.</p>'}
+            <p class="mt-3 text-xs text-slate-500">Este passo é obrigatório para contas Owners.</p>
+          </div>
           <button class="btn btn-primary">Criar</button>
         </form>
       </section>
@@ -4676,12 +5709,64 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           </select>
           <label class="text-sm" for="user-role-role">Novo perfil</label>
           <select id="user-role-role" name="role" class="input">
-            ${roleOptions.map(opt => `<option value="${opt.key}">${esc(opt.label)}</option>`).join('')}
+            ${roleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
           </select>
           <button class="btn btn-primary">Atualizar privilégios</button>
         </form>
         <p class="text-sm text-slate-500 mt-2">As sessões ativas serão terminadas ao atualizar as permissões.</p>
       </section>
+
+      ${isDevOperator
+        ? html`
+            <section class="card p-4 md:col-span-2">
+              <h2 class="font-semibold mb-3">Permissões personalizadas</h2>
+              <form id="user-permissions-form" method="post" action="/admin/users/permissions" class="grid gap-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Selecionar utilizador</span>
+                  <select id="user-permissions-user" name="user_id" class="input" required>
+                    <option value="">— Escolher —</option>
+                    ${users
+                      .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                      .join('')}
+                  </select>
+                </label>
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 max-h-72 overflow-y-auto" data-permission-checkboxes>
+                  ${permissionGroupEntries
+                    .map(
+                      group => `
+                        <fieldset class="mb-3 last:mb-0">
+                          <legend class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">${esc(group.groupKey.replace(/_/g, ' '))}</legend>
+                          <div class="grid gap-2 md:grid-cols-2">
+                            ${group.permissions
+                              .map(
+                                perm => `
+                                  <label class="flex items-start gap-2 text-sm leading-snug">
+                                    <input type="checkbox" class="mt-1 accent-slate-700" name="permissions" value="${esc(perm.key)}" />
+                                    <span>${esc(perm.label)}</span>
+                                  </label>
+                                `
+                              )
+                              .join('')}
+                          </div>
+                        </fieldset>
+                      `
+                    )
+                    .join('')}
+                </div>
+                <div class="rounded border border-slate-200 bg-white/60 p-3 text-xs text-slate-600" data-permission-summary>
+                  <p><strong>Perfil base:</strong> <span data-summary-role>—</span> · <span data-summary-base-count>0</span> permissões base</p>
+                  <p><strong>Ajustes personalizados:</strong> <span data-summary-added>0 adicionadas</span>, <span data-summary-removed>0 removidas</span></p>
+                </div>
+                <p class="text-xs text-amber-600 hidden" data-permission-guard>As permissões da conta de desenvolvimento não podem ser alteradas.</p>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+                  <button class="btn btn-primary" data-permission-submit>Guardar permissões</button>
+                </div>
+              </form>
+            </section>
+            ${permissionPayload ? html`<script id="user-permissions-data" type="application/json">${permissionPayload}</script>` : ''}
+          `
+        : ''}
     </div>
 
     <section class="card p-4 mt-6">
@@ -4719,6 +5804,115 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </table>
       </div>
     </section>
+
+    <script>
+      (function(){
+        const roleSelect = document.getElementById('create-user-role');
+        const ownerSection = document.getElementById('owner-property-select');
+        if(!roleSelect || !ownerSection) return;
+        const checkboxes = ownerSection.querySelectorAll('input[type="checkbox"]');
+        function syncOwnerSection(){
+          const isOwner = roleSelect.value === 'owner';
+          ownerSection.classList.toggle('hidden', !isOwner);
+          ownerSection.style.display = isOwner ? 'block' : 'none';
+          ownerSection.setAttribute('aria-hidden', isOwner ? 'false' : 'true');
+          checkboxes.forEach(box => {
+            box.disabled = !isOwner;
+            if(!isOwner) box.checked = false;
+          });
+        }
+        roleSelect.addEventListener('change', syncOwnerSection);
+        syncOwnerSection();
+      })();
+    </script>
+
+    ${isDevOperator && permissionPayload ? html`
+      <script>
+        (function(){
+          const dataEl = document.getElementById('user-permissions-data');
+          const form = document.getElementById('user-permissions-form');
+          if (!dataEl || !form) return;
+          let payload = {};
+          try {
+            payload = JSON.parse(dataEl.textContent || '{}');
+          } catch (err) {
+            console.error('Permissões personalizadas: payload inválido', err);
+            return;
+          }
+          const userSelect = document.getElementById('user-permissions-user');
+          const checkboxes = Array.from(form.querySelectorAll('input[name="permissions"]'));
+          const summaryRole = form.querySelector('[data-summary-role]');
+          const summaryBaseCount = form.querySelector('[data-summary-base-count]');
+          const summaryAdded = form.querySelector('[data-summary-added]');
+          const summaryRemoved = form.querySelector('[data-summary-removed]');
+          const guardNotice = form.querySelector('[data-permission-guard]');
+          const submitButton = form.querySelector('[data-permission-submit]');
+
+          const baseSetFor = (userId) => new Set((payload.base && payload.base[userId]) || []);
+          const effectiveSetFor = (userId) => new Set((payload.effective && payload.effective[userId]) || []);
+          const isDevTarget = (userId) => payload.devUserId != null && String(payload.devUserId) === String(userId);
+
+          function applyStoredState() {
+            const userId = userSelect.value;
+            if (!userId) {
+              checkboxes.forEach(box => {
+                box.checked = false;
+                box.disabled = true;
+              });
+              if (summaryRole) summaryRole.textContent = '—';
+              if (summaryBaseCount) summaryBaseCount.textContent = '0';
+              if (summaryAdded) summaryAdded.textContent = '0 adicionadas';
+              if (summaryRemoved) summaryRemoved.textContent = '0 removidas';
+              if (guardNotice) guardNotice.classList.add('hidden');
+              if (submitButton) submitButton.disabled = true;
+              return;
+            }
+            const effective = effectiveSetFor(userId);
+            const devLocked = isDevTarget(userId);
+            checkboxes.forEach(box => {
+              box.checked = effective.has(box.value);
+              box.disabled = devLocked;
+            });
+            if (summaryRole) summaryRole.textContent = (payload.roleLabels && payload.roleLabels[userId]) || '—';
+            if (summaryBaseCount) summaryBaseCount.textContent = baseSetFor(userId).size || 0;
+            if (guardNotice) guardNotice.classList.toggle('hidden', !devLocked);
+            if (submitButton) submitButton.disabled = devLocked;
+          }
+
+          function updateSummary() {
+            const userId = userSelect.value;
+            if (!userId) return;
+            const base = baseSetFor(userId);
+            let added = 0;
+            let removed = 0;
+            checkboxes.forEach(box => {
+              const hasBase = base.has(box.value);
+              if (box.checked && !hasBase) added += 1;
+              if (!box.checked && hasBase) removed += 1;
+            });
+            if (summaryAdded) summaryAdded.textContent = added + ' adicionadas';
+            if (summaryRemoved) summaryRemoved.textContent = removed + ' removidas';
+          }
+
+          if (userSelect) {
+            userSelect.addEventListener('change', () => {
+              applyStoredState();
+              updateSummary();
+            });
+          }
+          checkboxes.forEach(box => {
+            box.addEventListener('change', () => {
+              if (!userSelect.value) return;
+              if (submitButton) submitButton.disabled = isDevTarget(userSelect.value);
+              updateSummary();
+            });
+          });
+
+          applyStoredState();
+          updateSummary();
+        })();
+      </script>
+    ` : ''}
 
     ${isDevOperator ? html`
       <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">
@@ -4829,8 +6023,51 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   if (exists) return res.status(400).send('Utilizador já existe.');
   const hash = bcrypt.hashSync(password, 10);
   const roleKey = normalizeRole(role);
-  const result = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, roleKey);
-  logActivity(req.user.id, 'user:create', 'user', result.lastInsertRowid, { username, role: roleKey });
+  let ownerPropertyIds = [];
+  if (roleKey === 'owner') {
+    const rawPropertyIds = req.body.property_ids;
+    const selectable = new Set(
+      db
+        .prepare('SELECT id FROM properties ORDER BY id')
+        .all()
+        .map(row => Number(row.id))
+    );
+    const normalizedSelection = Array.isArray(rawPropertyIds)
+      ? rawPropertyIds
+      : rawPropertyIds != null
+      ? [rawPropertyIds]
+      : [];
+    ownerPropertyIds = Array.from(
+      new Set(
+        normalizedSelection
+          .map(value => Number.parseInt(value, 10))
+          .filter(value => Number.isInteger(value) && selectable.has(value))
+      )
+    );
+    if (!ownerPropertyIds.length) {
+      return res.status(400).send('Selecione pelo menos uma propriedade para o owner.');
+    }
+  }
+  const insertUser = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)');
+  const assignOwnerProperty = db.prepare('INSERT INTO property_owners(property_id, user_id) VALUES (?, ?)');
+  let newUserId = null;
+  db.transaction(() => {
+    const result = insertUser.run(username, hash, roleKey);
+    newUserId = Number(result.lastInsertRowid);
+    if (roleKey === 'owner' && ownerPropertyIds.length) {
+      ownerPropertyIds.forEach(propertyId => {
+        assignOwnerProperty.run(propertyId, newUserId);
+      });
+    }
+  })();
+  if (!newUserId) {
+    return res.status(500).send('Não foi possível criar o utilizador.');
+  }
+  logActivity(req.user.id, 'user:create', 'user', newUserId, {
+    username,
+    role: roleKey,
+    properties: ownerPropertyIds
+  });
   res.redirect('/admin/utilizadores');
 });
 
@@ -4862,10 +6099,92 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
     return res.redirect('/admin/utilizadores');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
+  if (currentRole === 'owner' && newRole !== 'owner') {
+    db.prepare('DELETE FROM property_owners WHERE user_id = ?').run(target.id);
+  }
   revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/permissions', requireDev, (req, res) => {
+  const rawUserId = req.body && req.body.user_id;
+  const userId = Number.parseInt(rawUserId, 10);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=permissions_invalid');
+  }
+  const normalizedRole = normalizeRole(target.role);
+  if (normalizedRole === MASTER_ROLE) {
+    return res.redirect('/admin/utilizadores?error=permissions_forbidden');
+  }
+
+  const existingOverrides = selectUserPermissionOverridesStmt.all(target.id).map(entry => ({
+    permission: entry.permission,
+    is_granted: entry.is_granted ? 1 : 0
+  }));
+  const existingMap = new Map(existingOverrides.map(entry => [entry.permission, entry.is_granted]));
+
+  const rawPermissions = req.body ? req.body.permissions : null;
+  const normalizedSelection = Array.isArray(rawPermissions)
+    ? rawPermissions
+    : rawPermissions != null
+    ? [rawPermissions]
+    : [];
+  const desiredSet = new Set();
+  normalizedSelection.forEach(value => {
+    const key = String(value || '').trim();
+    if (ALL_PERMISSIONS.has(key)) desiredSet.add(key);
+  });
+
+  const baseSet = new Set(ROLE_PERMISSIONS[normalizedRole] || []);
+  const overridesToPersist = [];
+  Array.from(ALL_PERMISSIONS).forEach(permission => {
+    const baseHas = baseSet.has(permission);
+    const wantHas = desiredSet.has(permission);
+    if (baseHas === wantHas) return;
+    overridesToPersist.push({ permission, is_granted: wantHas ? 1 : 0 });
+  });
+
+  let changed = false;
+  if (existingOverrides.length !== overridesToPersist.length) {
+    changed = true;
+  } else {
+    for (const entry of overridesToPersist) {
+      if (!existingMap.has(entry.permission) || existingMap.get(entry.permission) !== entry.is_granted) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  if (changed) {
+    const apply = db.transaction(() => {
+      deletePermissionOverridesForUserStmt.run(target.id);
+      overridesToPersist.forEach(entry => {
+        insertPermissionOverrideStmt.run(target.id, entry.permission, entry.is_granted);
+      });
+    });
+    apply();
+    revokeUserSessions(target.id);
+    logChange(
+      req.user.id,
+      'user',
+      Number(target.id),
+      'permissions_update',
+      { overrides: existingOverrides },
+      { overrides: overridesToPersist }
+    );
+    const added = overridesToPersist.filter(entry => entry.is_granted).map(entry => entry.permission);
+    const removed = overridesToPersist.filter(entry => !entry.is_granted).map(entry => entry.permission);
+    logActivity(req.user.id, 'user:permissions_update', 'user', Number(target.id), { added, removed });
+  }
+
+  res.redirect('/admin/utilizadores?updated=permissions');
 });
 
 app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{

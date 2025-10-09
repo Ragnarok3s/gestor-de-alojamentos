@@ -40,6 +40,32 @@ CREATE TABLE IF NOT EXISTS units (
   UNIQUE(property_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS property_owners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(property_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_property_owners_user ON property_owners(user_id);
+CREATE INDEX IF NOT EXISTS idx_property_owners_property ON property_owners(property_id);
+
+CREATE TABLE IF NOT EXISTS channel_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_key TEXT NOT NULL,
+  source TEXT NOT NULL,
+  file_name TEXT,
+  original_name TEXT,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'processed',
+  summary_json TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
+);
+
 /* Bookings: checkin incluído, checkout exclusivo (YYYY-MM-DD) */
 CREATE TABLE IF NOT EXISTS bookings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +83,12 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL DEFAULT 'CONFIRMED',
   external_ref TEXT,
   confirmation_token TEXT,
+  source_channel TEXT,
+  import_batch_id INTEGER REFERENCES channel_import_batches(id) ON DELETE SET NULL,
+  import_source TEXT,
+  imported_at TEXT,
+  source_payload TEXT,
+  import_notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -136,12 +168,52 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS user_permission_overrides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL,
+  is_granted INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, permission)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_permission_overrides_user ON user_permission_overrides(user_id);
+
 CREATE TABLE IF NOT EXISTS booking_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   note TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_key TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  metadata_json TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_integrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_key TEXT UNIQUE NOT NULL,
+  channel_name TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  settings_json TEXT,
+  credentials_json TEXT,
+  last_synced_at TEXT,
+  last_status TEXT,
+  last_error TEXT,
+  last_summary_json TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS housekeeping_tasks (
@@ -218,6 +290,16 @@ function runLightMigrations(db) {
     ensureColumn('sessions', 'user_agent', 'TEXT');
     ensureTimestampColumn('sessions', 'created_at');
     ensureTimestampColumn('sessions', 'last_seen_at');
+    ensureColumn('email_templates', 'description', 'TEXT');
+    ensureColumn('email_templates', 'metadata_json', 'TEXT');
+    ensureTimestampColumn('email_templates', 'updated_at');
+    ensureColumn('email_templates', 'updated_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+    ensureColumn('bookings', 'source_channel', 'TEXT');
+    ensureColumn('bookings', 'import_batch_id', 'INTEGER REFERENCES channel_import_batches(id) ON DELETE SET NULL');
+    ensureColumn('bookings', 'import_source', 'TEXT');
+    ensureColumn('bookings', 'imported_at', 'TEXT');
+    ensureColumn('bookings', 'source_payload', 'TEXT');
+    ensureColumn('bookings', 'import_notes', 'TEXT');
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }
