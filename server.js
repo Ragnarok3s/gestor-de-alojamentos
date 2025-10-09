@@ -2250,6 +2250,28 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
         .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
         .page-backoffice .bo-calendar-grid-wrapper{position:relative;}
+        .page-backoffice .bo-calendar-mobile{display:none;}
+        .page-backoffice .bo-calendar-mobile__legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;}
+        .page-backoffice .bo-calendar-mobile__legend-item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;}
+        .page-backoffice .bo-calendar-mobile__legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
+        .page-backoffice .bo-calendar-mobile__legend-dot--available{background:#10b981;}
+        .page-backoffice .bo-calendar-mobile__header{display:grid;gap:10px;}
+        .page-backoffice .bo-calendar-mobile__header-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+        .page-backoffice .bo-calendar-mobile__header-cell{padding:6px 0;border-radius:12px;background:#fed7aa;color:#9a3412;font-size:.68rem;font-weight:700;text-align:center;text-transform:uppercase;letter-spacing:.08em;}
+        .page-backoffice .bo-calendar-mobile__header-cell.is-weekend{background:#fde68a;}
+        .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:12px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
+        .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.85rem;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.08em;}
+        .page-backoffice .bo-calendar-mobile__grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+        .page-backoffice .bo-calendar-mobile__cell{position:relative;aspect-ratio:1;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:700;color:#fff;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease;}
+        .page-backoffice .bo-calendar-mobile__cell:hover{transform:translateY(-1px);}
+        .page-backoffice .bo-calendar-mobile__cell.is-available{background:#10b981;}
+        .page-backoffice .bo-calendar-mobile__cell.is-pending{background:#facc15;color:#92400e;}
+        .page-backoffice .bo-calendar-mobile__cell.is-confirmed{background:#fb7185;}
+        .page-backoffice .bo-calendar-mobile__cell.is-weekend{box-shadow:0 0 0 2px rgba(253,230,138,.55) inset;}
+        .page-backoffice .bo-calendar-mobile__cell.is-today{outline:2px solid rgba(59,130,246,.6);outline-offset:2px;}
+        .page-backoffice .bo-calendar-mobile__day{display:block;}
         .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
         .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
         .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
@@ -2292,11 +2314,8 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         @media (max-width:900px){.page-backoffice .bo-calendar-grid__cell{min-height:160px;padding:16px;}}
         @media (max-width:720px){
           .page-backoffice .bo-calendar-board{gap:18px;}
-          .page-backoffice .bo-calendar-grid-wrapper{margin:0 -20px;padding:0 20px 12px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
-          .page-backoffice .bo-calendar-grid{border-radius:22px;min-width:calc(180px * 7);grid-template-columns:repeat(7,minmax(180px,1fr));}
-          .page-backoffice .bo-calendar-grid__day,
-          .page-backoffice .bo-calendar-grid__cell{min-width:180px;}
-          .page-backoffice .bo-calendar-grid__cell{min-height:170px;padding:16px;}
+          .page-backoffice .bo-calendar-grid-wrapper{display:none;}
+          .page-backoffice .bo-calendar-mobile{display:grid;gap:16px;}
           .page-backoffice .bo-calendar-toolbar{gap:12px;}
         }
         .page-backoffice .bo-table{overflow:auto;}
