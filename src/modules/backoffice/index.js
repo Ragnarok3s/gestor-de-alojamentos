@@ -2462,6 +2462,7 @@ module.exports = function registerBackoffice(app, context) {
     const navButtonsHtml = navItems
       .map(item => {
         const classes = ['bo-tab'];
+        if (item.id === 'channel-manager') classes.push('bo-tab--compact');
         if (item.id === defaultPane) classes.push('is-active');
         const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
         const iconMarkup = item.iconSvg
