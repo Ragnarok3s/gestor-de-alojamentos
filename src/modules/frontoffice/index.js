@@ -1449,9 +1449,11 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
 
   return `
     <div class="bo-calendar-grid-wrapper">
-      <div class="bo-calendar-grid">
-        ${headerHtml}
-        ${cellsHtml}
+      <div class="bo-calendar-grid-viewport">
+        <div class="bo-calendar-grid">
+          ${headerHtml}
+          ${cellsHtml}
+        </div>
       </div>
     </div>
   `;
