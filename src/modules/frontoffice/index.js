@@ -28,7 +28,8 @@ module.exports = function registerFrontoffice(app, context) {
     overlaps,
     ExcelJS,
     rescheduleBookingUpdateStmt,
-    rescheduleBlockUpdateStmt
+    rescheduleBlockUpdateStmt,
+    bookingEmailer
   } = context;
 
   function inlineScript(source) {
@@ -807,7 +808,14 @@ app.post('/book', (req, res) => {
   const totalGuests = adults + children;
   const agencyValue = agency || 'DIRECT';
 
-  const u = db.prepare('SELECT * FROM units WHERE id = ?').get(unitId);
+  const u = db
+    .prepare(
+      `SELECT u.*, p.name AS property_name, p.id AS property_id
+         FROM units u
+         JOIN properties p ON p.id = u.property_id
+        WHERE u.id = ?`
+    )
+    .get(unitId);
   if (!u) return res.status(404).send('Unidade não encontrada');
   if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
 
@@ -851,6 +859,27 @@ app.post('/book', (req, res) => {
 
   try {
     const { id, confirmationToken } = trx();
+
+    const bookingRow = db
+      .prepare(
+        `SELECT b.*, u.name AS unit_name, u.property_id, p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.id = ?`
+      )
+      .get(id);
+    if (bookingRow) {
+      const branding = resolveBrandingForRequest(req, {
+        propertyId: bookingRow.property_id,
+        propertyName: bookingRow.property_name
+      });
+      const templateKey = bookingRow.status === 'CONFIRMED' ? 'booking_confirmed_guest' : 'booking_pending_guest';
+      bookingEmailer
+        .sendGuestEmail({ booking: bookingRow, templateKey, branding, request: req })
+        .catch(err => console.warn('Falha ao enviar email de reserva:', err.message));
+    }
+
     csrfProtection.rotateToken(req, res);
     res.redirect(`/booking/${id}?token=${confirmationToken}`);
   } catch (e) {

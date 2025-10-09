@@ -144,6 +144,18 @@ CREATE TABLE IF NOT EXISTS booking_notes (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS email_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_key TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  metadata_json TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS housekeeping_tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,
@@ -218,6 +230,10 @@ function runLightMigrations(db) {
     ensureColumn('sessions', 'user_agent', 'TEXT');
     ensureTimestampColumn('sessions', 'created_at');
     ensureTimestampColumn('sessions', 'last_seen_at');
+    ensureColumn('email_templates', 'description', 'TEXT');
+    ensureColumn('email_templates', 'metadata_json', 'TEXT');
+    ensureTimestampColumn('email_templates', 'updated_at');
+    ensureColumn('email_templates', 'updated_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }

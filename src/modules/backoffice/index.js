@@ -117,6 +117,8 @@ module.exports = function registerBackoffice(app, context) {
     overlaps,
     unitAvailable,
     rateQuote,
+    emailTemplates,
+    bookingEmailer,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
     ALL_PERMISSIONS,
@@ -1944,6 +1946,7 @@ module.exports = function registerBackoffice(app, context) {
     const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
     const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
     const canManageUsers = userCan(req.user, 'users.manage');
+    const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
     const canViewCalendar = userCan(req.user, 'calendar.view');
 
     let housekeepingSummary = null;
@@ -2002,6 +2005,58 @@ module.exports = function registerBackoffice(app, context) {
       ensureAutomationFresh
     });
 
+    const emailTemplateRecords = emailTemplates.listTemplates();
+    const emailTemplateCards = emailTemplateRecords.length
+      ? emailTemplateRecords
+          .map(t => {
+            const updatedLabel = t.updated_at ? dayjs(t.updated_at).format('DD/MM/YYYY HH:mm') : '';
+            const updatedMeta = updatedLabel
+              ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${t.updated_by ? ` por ${esc(t.updated_by)}` : ''}</p>`
+              : '';
+            const placeholderList = t.placeholders && t.placeholders.length
+              ? `
+                <div class="text-xs text-slate-500 space-y-1">
+                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
+                  <ul class="flex flex-wrap gap-2">
+                    ${t.placeholders
+                      .map(
+                        p => `
+                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
+                            <code>${esc(`{{${p.key}}}`)}</code>
+                            <span>${esc(p.label)}</span>
+                          </li>`
+                      )
+                      .join('')}
+                  </ul>
+                </div>
+              `
+              : '';
+            return `
+              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-3">
+                <header>
+                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
+                  ${t.description ? `<p class="text-sm text-slate-500 mt-1">${esc(t.description)}</p>` : ''}
+                  ${updatedMeta}
+                </header>
+                <form method="post" action="/admin/emails/templates/${t.key}" class="grid gap-3">
+                  <label class="form-field">
+                    <span class="form-label">Assunto</span>
+                    <input name="subject" class="input" value="${esc(t.subject)}" required maxlength="160"/>
+                  </label>
+                  <label class="form-field">
+                    <span class="form-label">Mensagem</span>
+                    <textarea name="body" class="input" rows="6" required>${esc(t.body)}</textarea>
+                  </label>
+                  ${placeholderList}
+                  <div>
+                    <button class="btn btn-primary">Guardar modelo</button>
+                  </div>
+                </form>
+              </article>`;
+          })
+          .join('')
+      : '<p class="bo-empty">Sem modelos de email configurados.</p>';
+
     const broomIconSvg = `
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M3 21h4l7-7"></path>
@@ -2017,6 +2072,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
+      { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
@@ -3035,6 +3091,18 @@ module.exports = function registerBackoffice(app, context) {
                   : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
               </section>
 
+              <section class="bo-pane" data-bo-pane="emails">
+                ${canManageEmailTemplates
+                  ? html`
+                      <div class="bo-card">
+                        <h2>Emails de reserva</h2>
+                        <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
+                        <div class="space-y-6">${emailTemplateCards}</div>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
+              </section>
+
               <section class="bo-pane" data-bo-pane="branding">
                 <div class="bo-card">
                   <h2>Identidade visual</h2>
@@ -3223,6 +3291,21 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send('\ufeff' + csv);
+});
+
+app.post('/admin/emails/templates/:key', requireLogin, requirePermission('bookings.edit'), (req, res) => {
+  const key = String(req.params.key || '').trim();
+  try {
+    const updated = emailTemplates.updateTemplate(key, { subject: req.body.subject, body: req.body.body }, req.user.id);
+    logActivity(req.user.id, 'email_template.update', 'email_template', updated && updated.id ? updated.id : null, {
+      key,
+      subject: updated ? updated.subject : req.body.subject
+    });
+    res.redirect('/admin#emails');
+  } catch (err) {
+    console.warn('Falha ao atualizar modelo de email:', err.message);
+    res.status(400).send(err.message);
+  }
 });
 
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
@@ -4129,8 +4212,10 @@ app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'),
 app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const id = req.params.id;
   const b = db.prepare(`
-    SELECT b.*, u.capacity, u.base_price_cents
-      FROM bookings b JOIN units u ON u.id = b.unit_id
+    SELECT b.*, u.capacity, u.base_price_cents, u.name AS unit_name, u.property_id, p.name AS property_name
+      FROM bookings b
+      JOIN units u ON u.id = b.unit_id
+      JOIN properties p ON p.id = u.property_id
      WHERE b.id = ?
   `).get(id);
   if (!b) return res.status(404).send('Reserva não encontrada');
@@ -4192,6 +4277,28 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
     },
     { checkin, checkout, adults, children, status, total_cents: q.total_cents }
   );
+
+  const statusChangedToConfirmed = b.status !== 'CONFIRMED' && status === 'CONFIRMED';
+  if (statusChangedToConfirmed) {
+    const updatedBooking = db
+      .prepare(
+        `SELECT b.*, u.name AS unit_name, u.property_id, p.name AS property_name
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE b.id = ?`
+      )
+      .get(id);
+    if (updatedBooking) {
+      const branding = resolveBrandingForRequest(req, {
+        propertyId: updatedBooking.property_id,
+        propertyName: updatedBooking.property_name
+      });
+      bookingEmailer
+        .sendGuestEmail({ booking: updatedBooking, templateKey: 'booking_confirmed_guest', branding, request: req })
+        .catch(err => console.warn('Falha ao enviar email de confirmação:', err.message));
+    }
+  }
 
   res.redirect(`/admin/bookings/${id}`);
 });
