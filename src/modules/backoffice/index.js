@@ -2448,20 +2448,22 @@ module.exports = function registerBackoffice(app, context) {
 
     const navItems = [
       { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
+      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
+      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
+      { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
+      { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
-      { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
-      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar }
+      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
     ];
     const defaultPane = navItems.find(item => item.allowed)?.id || 'overview';
     const navButtonsHtml = navItems
       .map(item => {
         const classes = ['bo-tab'];
+        if (item.id === 'channel-manager') classes.push('bo-tab--compact');
         if (item.id === defaultPane) classes.push('is-active');
         const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
         const iconMarkup = item.iconSvg

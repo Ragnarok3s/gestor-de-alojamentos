@@ -2300,6 +2300,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#c2410c;font-weight:600;}
         .page-backoffice .bo-nav{display:grid;gap:10px;}
         .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:#c2410c;cursor:pointer;transition:all .2s ease;}
+        .page-backoffice .bo-tab.bo-tab--compact{gap:8px;}
         .page-backoffice .bo-tab i{color:inherit;}
         .page-backoffice .bo-tab:hover{background:rgba(253,230,138,.65);color:#9a3412;transform:translateY(-1px);}
         .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
