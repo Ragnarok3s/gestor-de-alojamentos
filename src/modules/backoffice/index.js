@@ -5560,11 +5560,13 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     { key: 'rececao', label: ROLE_LABELS.rececao },
     { key: 'gestao', label: ROLE_LABELS.gestao },
     { key: 'direcao', label: ROLE_LABELS.direcao },
-    { key: 'limpeza', label: ROLE_LABELS.limpeza }
+    { key: 'limpeza', label: ROLE_LABELS.limpeza },
+    { key: 'owner', label: ROLE_LABELS.owner }
   ];
   if (isDevOperator) {
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
   }
+  const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
   const theme = resolveBrandingForRequest(req);
   res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
@@ -5577,12 +5579,30 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <input required name="username" class="input" placeholder="Utilizador" />
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
-          <select name="role" class="input">
-            <option value="rececao">Receção</option>
-            <option value="gestao">Gestão</option>
-            <option value="direcao">Direção</option>
-            <option value="limpeza">Limpeza</option>
+          <select name="role" id="create-user-role" class="input">
+            ${roleOptions
+              .filter(opt => opt.key !== MASTER_ROLE)
+              .map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`)
+              .join('')}
           </select>
+          <div id="owner-property-select" class="rounded-lg border border-slate-200 bg-slate-50 p-3 hidden" aria-hidden="true" style="display:none;">
+            <p class="text-sm text-slate-600 mb-2">Selecione as propriedades a que este owner terá acesso.</p>
+            ${propertyChoices.length
+              ? `<div class="grid max-h-48 gap-2 overflow-y-auto pr-1">
+                  ${propertyChoices
+                    .map(
+                      prop => `
+                        <label class="flex items-center gap-2 text-sm">
+                          <input type="checkbox" name="property_ids" value="${prop.id}" class="accent-slate-700" />
+                          <span>${esc(prop.name)}</span>
+                        </label>
+                      `
+                    )
+                    .join('')}
+                </div>`
+              : '<p class="text-sm text-slate-500">Ainda não existem propriedades registadas para atribuir.</p>'}
+            <p class="mt-3 text-xs text-slate-500">Este passo é obrigatório para contas Owners.</p>
+          </div>
           <button class="btn btn-primary">Criar</button>
         </form>
       </section>
@@ -5610,7 +5630,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           </select>
           <label class="text-sm" for="user-role-role">Novo perfil</label>
           <select id="user-role-role" name="role" class="input">
-            ${roleOptions.map(opt => `<option value="${opt.key}">${esc(opt.label)}</option>`).join('')}
+            ${roleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
           </select>
           <button class="btn btn-primary">Atualizar privilégios</button>
         </form>
@@ -5653,6 +5673,27 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </table>
       </div>
     </section>
+
+    <script>
+      (function(){
+        const roleSelect = document.getElementById('create-user-role');
+        const ownerSection = document.getElementById('owner-property-select');
+        if(!roleSelect || !ownerSection) return;
+        const checkboxes = ownerSection.querySelectorAll('input[type="checkbox"]');
+        function syncOwnerSection(){
+          const isOwner = roleSelect.value === 'owner';
+          ownerSection.classList.toggle('hidden', !isOwner);
+          ownerSection.style.display = isOwner ? 'block' : 'none';
+          ownerSection.setAttribute('aria-hidden', isOwner ? 'false' : 'true');
+          checkboxes.forEach(box => {
+            box.disabled = !isOwner;
+            if(!isOwner) box.checked = false;
+          });
+        }
+        roleSelect.addEventListener('change', syncOwnerSection);
+        syncOwnerSection();
+      })();
+    </script>
 
     ${isDevOperator ? html`
       <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">
@@ -5763,8 +5804,51 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   if (exists) return res.status(400).send('Utilizador já existe.');
   const hash = bcrypt.hashSync(password, 10);
   const roleKey = normalizeRole(role);
-  const result = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run(username, hash, roleKey);
-  logActivity(req.user.id, 'user:create', 'user', result.lastInsertRowid, { username, role: roleKey });
+  let ownerPropertyIds = [];
+  if (roleKey === 'owner') {
+    const rawPropertyIds = req.body.property_ids;
+    const selectable = new Set(
+      db
+        .prepare('SELECT id FROM properties ORDER BY id')
+        .all()
+        .map(row => Number(row.id))
+    );
+    const normalizedSelection = Array.isArray(rawPropertyIds)
+      ? rawPropertyIds
+      : rawPropertyIds != null
+      ? [rawPropertyIds]
+      : [];
+    ownerPropertyIds = Array.from(
+      new Set(
+        normalizedSelection
+          .map(value => Number.parseInt(value, 10))
+          .filter(value => Number.isInteger(value) && selectable.has(value))
+      )
+    );
+    if (!ownerPropertyIds.length) {
+      return res.status(400).send('Selecione pelo menos uma propriedade para o owner.');
+    }
+  }
+  const insertUser = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)');
+  const assignOwnerProperty = db.prepare('INSERT INTO property_owners(property_id, user_id) VALUES (?, ?)');
+  let newUserId = null;
+  db.transaction(() => {
+    const result = insertUser.run(username, hash, roleKey);
+    newUserId = Number(result.lastInsertRowid);
+    if (roleKey === 'owner' && ownerPropertyIds.length) {
+      ownerPropertyIds.forEach(propertyId => {
+        assignOwnerProperty.run(propertyId, newUserId);
+      });
+    }
+  })();
+  if (!newUserId) {
+    return res.status(500).send('Não foi possível criar o utilizador.');
+  }
+  logActivity(req.user.id, 'user:create', 'user', newUserId, {
+    username,
+    role: roleKey,
+    properties: ownerPropertyIds
+  });
   res.redirect('/admin/utilizadores');
 });
 
@@ -5796,6 +5880,9 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
     return res.redirect('/admin/utilizadores');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
+  if (currentRole === 'owner' && newRole !== 'owner') {
+    db.prepare('DELETE FROM property_owners WHERE user_id = ?').run(target.id);
+  }
   revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });

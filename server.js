@@ -148,7 +148,7 @@ const ROLE_LABELS = {
   gestao: 'Gestão',
   direcao: 'Direção',
   limpeza: 'Limpeza',
-  owner: 'Proprietário'
+  owner: 'Owners (Portal)'
 };
 
 const ROLE_PERMISSIONS = {
@@ -242,6 +242,7 @@ function normalizeRole(role) {
   if (key === 'gestor' || key === 'gestao' || key === 'gestão') return 'gestao';
   if (key === 'limpeza' || key === 'limpezas' || key === 'housekeeping') return 'limpeza';
   if (
+    key === 'owners' ||
     key === 'owner' ||
     key === 'proprietario' ||
     key === 'proprietária' ||
