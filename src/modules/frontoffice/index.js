@@ -232,7 +232,7 @@ module.exports = function registerFrontoffice(app, context) {
     const totalVisibleUnits = propertyGroups.reduce((sum, group) => sum + group.units.length, 0);
     const totalUnits = propertyGroups.reduce((sum, group) => sum + group.totalUnits, 0);
 
-    const dateSummary = searchActive ? `${dayjs(rawCheckin).format('DD/MM/YYYY')} &rarr; ${dayjs(rawCheckout).format('DD/MM/YYYY')}` : '';
+    const dateSummary = searchActive ? `${dayjs(rawCheckin).format('DD/MM/YYYY')} - ${dayjs(rawCheckout).format('DD/MM/YYYY')}` : '';
     const guestsSummary = `${adults} adulto${adults === 1 ? '' : 's'}${children ? ` · ${children} criança${children === 1 ? '' : 's'}` : ''}`;
     const propertySummary = propertyRow ? propertyRow.name : propertyId ? 'Propriedade desconhecida' : 'Todas as propriedades';
 
