@@ -170,8 +170,9 @@ function createEmailTemplateService({ db, dayjs }) {
     const template = getTemplateByKey(templateKey);
     if (!template) return null;
 
+    const scriptCloseRegex = new RegExp('</script>', 'gi');
     const replace = value =>
-      String(value != null ? value : '').replace(/<\\/script>/gi, '<\\/script>');
+      String(value != null ? value : '').replace(scriptCloseRegex, '<\\/script>');
 
     const applyPlaceholders = input => {
       if (!input) return '';
