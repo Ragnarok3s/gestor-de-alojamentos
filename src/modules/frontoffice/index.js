@@ -823,6 +823,8 @@ app.post('/book', (req, res) => {
     const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
     if (quote.nights < quote.minStayReq) throw new Error('minstay:'+quote.minStayReq);
     const total = quote.total_cents;
+    const canAutoConfirm = user && userCan(user, 'bookings.edit');
+    const bookingStatus = canAutoConfirm ? 'CONFIRMED' : 'PENDING';
 
     const stmt = db.prepare(
       `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref, confirmation_token)
@@ -840,11 +842,11 @@ app.post('/book', (req, res) => {
       checkin,
       checkout,
       total,
-      'CONFIRMED',
+      bookingStatus,
       null,
       confirmationToken
     );
-    return { id: r.lastInsertRowid, confirmationToken };
+    return { id: r.lastInsertRowid, confirmationToken, status: bookingStatus };
   });
 
   try {
@@ -896,28 +898,42 @@ app.get('/booking/:id', (req, res) => {
   const agencyHtml = b.agency ? `<div>Agencia: <strong>${esc(b.agency)}</strong></div>` : '';
   const safePropertyName = esc(b.property_name || '');
   const safeUnitName = esc(b.unit_name || '');
+  const isPending = b.status === 'PENDING';
+  const statusLabel = isPending ? 'Pendente' : 'Confirmada';
+  const headerPill = isPending ? 'Pedido enviado' : 'Reserva finalizada';
+  const headerTitle = isPending ? 'Reserva pendente' : 'Reserva confirmada';
+  const headerDescriptionHtml = isPending
+    ? `Vamos rever a sua reserva e enviar a confirmação para <strong>${safeGuestEmail}</strong> em breve.`
+    : `Enviámos a confirmação para ${safeGuestEmail}. Obrigado por reservar connosco!`;
+  const bookingStepLabel = isPending ? '3. Aguarde confirmação' : '3. Confirme e relaxe';
+  const inlineFeedbackHtml = isPending
+    ? `<div class="inline-feedback" data-variant="warning" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">⏳</span>
+          <div><strong>Reserva pendente</strong><br/>A equipa foi notificada e irá validar o pedido antes de confirmar.</div>
+        </div>`
+    : `<div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">✓</span>
+          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
+        </div>`;
 
   res.send(layout({
-    title: 'Reserva Confirmada',
+    title: headerTitle,
     user,
     activeNav: 'search',
     branding: theme,
     body: html`
       <div class="result-header">
-        <span class="pill-indicator">Reserva finalizada</span>
-        <h1 class="text-2xl font-semibold">Reserva confirmada</h1>
-        <p class="text-slate-600">Enviámos a confirmação para ${safeGuestEmail}. Obrigado por reservar connosco!</p>
+        <span class="pill-indicator">${headerPill}</span>
+        <h1 class="text-2xl font-semibold">${headerTitle}</h1>
+        <p class="text-slate-600">${headerDescriptionHtml}</p>
         <ul class="progress-steps" aria-label="Passos da reserva">
           <li class="progress-step">1. Defina datas</li>
           <li class="progress-step">2. Escolha o alojamento</li>
-          <li class="progress-step is-active">3. Confirme e relaxe</li>
+          <li class="progress-step is-active">${bookingStepLabel}</li>
         </ul>
       </div>
       <div class="card p-6 space-y-6">
-        <div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
-          <span class="inline-feedback-icon">✓</span>
-          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
-        </div>
+        ${inlineFeedbackHtml}
         <div class="grid md:grid-cols-2 gap-4">
           <div>
             <div class="font-semibold">${safePropertyName} – ${safeUnitName}</div>
@@ -932,7 +948,7 @@ app.get('/booking/:id', (req, res) => {
           <div class="text-right">
             <div class="text-xs text-slate-500">Total</div>
             <div class="text-3xl font-semibold">€ ${eur(b.total_cents)}</div>
-            <div class="text-xs text-slate-500">Status: ${b.status}</div>
+            <div class="text-xs text-slate-500">Status: ${statusLabel}</div>
           </div>
         </div>
         <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
