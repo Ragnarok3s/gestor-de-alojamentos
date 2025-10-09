@@ -310,6 +310,32 @@ module.exports = function registerFrontoffice(app, context) {
           width: 0.95rem;
           height: 0.95rem;
         }
+        @media (max-width: 1024px) {
+          .search-banner {
+            padding: 1rem 1.1rem;
+          }
+          .search-banner__chips {
+            justify-content: flex-start;
+            gap: 0.4rem;
+          }
+          .search-panel__actions {
+            justify-content: stretch;
+          }
+          .search-panel__actions .btn,
+          .search-panel__actions .btn-light {
+            flex: 1 1 160px;
+            justify-content: center;
+          }
+        }
+        @media (max-width: 900px) {
+          .search-property__header {
+            gap: 0.75rem;
+          }
+          .search-property__badge {
+            width: 100%;
+            justify-content: center;
+          }
+        }
         .search-guidance {
           margin: 0;
           padding-left: 1.25rem;
@@ -1217,8 +1243,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         </div>
         <div class="bo-calendar-actions">
           <div class="bo-calendar-legend">
-            <span><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
-            <span><span class="bo-dot bo-dot--pending"></span>Pendente</span>
+            <span class="bo-calendar-legend__item bo-calendar-legend__item--confirmed"><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
+            <span class="bo-calendar-legend__item bo-calendar-legend__item--pending"><span class="bo-dot bo-dot--pending"></span>Pendente</span>
           </div>
           ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
         </div>
