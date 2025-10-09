@@ -105,257 +105,582 @@ module.exports = function registerFrontoffice(app, context) {
   }
 
   // ===================== Front Office =====================
-app.get('/', (req, res) => {
-  const sess = getSession(req.cookies.adm, req);
-  const viewer = sess ? buildUserContext(sess) : undefined;
-  const user = viewer;
-  const theme = resolveBrandingForRequest(req);
-  const queryProperty = parsePropertyId(req.query ? (req.query.propertyId ?? req.query.property_id ?? req.query.property ?? null) : null);
-  if (queryProperty !== null) {
-    rememberActiveBrandingProperty(res, req.brandingPropertyId);
-  }
-  const properties = db.prepare('SELECT * FROM properties ORDER BY name').all();
-  const canManageBranding = userCan(viewer, 'users.manage');
+  function renderSearchPage(req, res) {
+    const sess = getSession(req.cookies.adm, req);
+    const viewer = sess ? buildUserContext(sess) : undefined;
+    const user = viewer;
 
-  res.send(layout({
-    title: 'Reservas',
-    user,
-    activeNav: 'search',
-    branding: theme,
-    body: html`
-      <section class="search-hero">
-        <span class="pill-indicator">Percurso de reserva</span>
-        <h1 class="search-title">${esc(theme.brandName)} coloca confiança em cada reserva</h1>
-        <p class="search-intro">Combine comunicação profissional com dados operacionais em tempo real. A equipa vê sempre preços claros, disponibilidade fiável e o contexto necessário para acolher cada hóspede.</p>
-        <ul class="progress-steps" aria-label="Passos da reserva">
-          <li class="progress-step is-active">1. Defina datas</li>
-          <li class="progress-step">2. Escolha o alojamento</li>
-          <li class="progress-step">3. Confirme a estadia</li>
-        </ul>
-        <form action="/search" method="get" class="search-form" data-search-form>
-          <div class="search-field">
-            <label for="checkin">Datas</label>
-            <div class="search-dates">
-              <input required type="date" id="checkin" name="checkin" class="search-input" onchange="syncCheckout(event)"/>
-              <input required type="date" id="checkout" name="checkout" class="search-input"/>
-            </div>
-          </div>
-          <div class="search-field">
-            <label for="adults">Adultos</label>
-            <input type="number" min="1" id="adults" name="adults" value="2" class="search-input"/>
-          </div>
-          <div class="search-field">
-            <label for="children">Crianças</label>
-            <input type="number" min="0" id="children" name="children" value="0" class="search-input"/>
-          </div>
-          <div class="search-field">
-            <label for="property_id">Propriedade</label>
-            <select id="property_id" name="property_id" class="search-input">
-              <option value="">Todas</option>
-              ${properties.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-            </select>
-          </div>
-          <div class="search-submit">
-            <button class="search-button" type="submit" data-submit>Procurar</button>
-          </div>
-          <div class="inline-feedback" data-feedback data-variant="info" aria-live="polite" role="status">
-            <span class="inline-feedback-icon">ℹ</span>
-            <div><strong>Comece por escolher as datas.</strong><br/>Escolha check-in e check-out válidos para ver disponibilidade instantânea.</div>
-          </div>
-        </form>
-      </section>
+    const rawQuery = req.query || {};
+    const rawCheckin = typeof rawQuery.checkin === 'string' ? rawQuery.checkin.trim() : '';
+    const rawCheckout = typeof rawQuery.checkout === 'string' ? rawQuery.checkout.trim() : '';
+    const checkinValid = rawCheckin && dayjs(rawCheckin, 'YYYY-MM-DD', true).isValid();
+    const checkoutValid = rawCheckout && dayjs(rawCheckout, 'YYYY-MM-DD', true).isValid();
+    const searchActive = checkinValid && checkoutValid && dayjs(rawCheckout).isAfter(dayjs(rawCheckin));
 
-      <section class="confidence-section">
-        <h2 class="section-title">Credibilidade para quem gere alojamentos exigentes</h2>
-        <p class="section-lead">Processos transparentes, linguagem coerente e dados acessíveis. Tudo pensado para equipas que querem focar-se na hospitalidade.</p>
-        <div class="reassurance-grid">
-          <article class="reassurance-card">
-            <span class="reassurance-icon">✓</span>
-            <h3 class="reassurance-title">Informação transparente</h3>
-            <p class="reassurance-copy">Resumo imediato de valores, ocupação e contactos para acelerar cada decisão de reserva.</p>
-          </article>
-          <article class="reassurance-card">
-            <span class="reassurance-icon">🛡</span>
-            <h3 class="reassurance-title">Perfis com permissão certa</h3>
-            <p class="reassurance-copy">Direção, gestão e operação trabalham com acessos distintos e auditáveis.</p>
-          </article>
-          <article class="reassurance-card">
-            <span class="reassurance-icon">💬</span>
-            <h3 class="reassurance-title">Comunicação consistente</h3>
-            <p class="reassurance-copy">Mensagens automáticas falam sempre em “reserva” e “alojamento”, reforçando profissionalismo.</p>
-          </article>
-        </div>
-      </section>
+    const adultsRaw = rawQuery.adults;
+    const childrenRaw = rawQuery.children;
+    const adults = Math.max(1, Number.parseInt(adultsRaw, 10) || 1);
+    const children = Math.max(0, Number.parseInt(childrenRaw, 10) || 0);
+    const totalGuests = adults + children;
+    const guestFilterExplicit = Object.prototype.hasOwnProperty.call(rawQuery, 'adults') || Object.prototype.hasOwnProperty.call(rawQuery, 'children');
+    const guestFilterActive = searchActive || guestFilterExplicit;
 
-      <section class="branding-section">
-        <div>
-          <h2 class="section-title section-title--left">Tema visual ajustável à sua marca</h2>
-          <p class="section-lead" style="text-align:left;">Defina cores, logotipo e mensagem de boas-vindas sem recorrer a desenvolvimento. O portal fica alinhado com a identidade do seu alojamento.</p>
-        </div>
-        <div class="branding-grid">
-          <div class="branding-highlight">
-            <h3>Escolha a paleta de cores</h3>
-            <p>Personalize o degradé, botões e chamadas de atenção para refletir a experiência que quer entregar.</p>
-          </div>
-          <div class="branding-highlight">
-            <h3>Carregue o logotipo</h3>
-            <p>Envie o ficheiro com o símbolo da marca e veja-o aplicado em segundos na navegação e rodapé.</p>
-          </div>
-          <div class="branding-highlight">
-            <h3>Mensagem de confiança</h3>
-            <p>Ajuste o slogan que acompanha o logotipo e reforce a proposta de valor junto da equipa e dos hóspedes.</p>
-          </div>
-        </div>
-        <div class="branding-actions">
-          ${canManageBranding ? `<a class="btn btn-primary" href="/admin/identidade-visual">Personalizar identidade</a>` : `<a class="btn btn-light" href="/login">Entrar para personalizar</a>`}
-        </div>
-      </section>
+    const queryPropertyValue = rawQuery ? (rawQuery.propertyId ?? rawQuery.property_id ?? rawQuery.property ?? null) : null;
+    const propertyId = parsePropertyId(queryPropertyValue);
+    const propertyRow = propertyId ? selectPropertyById.get(propertyId) : null;
 
-      <section class="onboarding-section">
-        <div class="onboarding-card">
-          <h2 class="section-title section-title--left">Guia rápido de onboarding</h2>
-          <p class="section-lead" style="text-align:left;">Três passos para colocar a operação em marcha e garantir reservas consistentes desde o primeiro dia.</p>
-          <ol class="onboarding-steps">
-            <li>
-              <strong>Configure a identidade visual.</strong>
-              <p>Aceda a <a href="/admin/identidade-visual">Identidade</a>, defina cores e carregue o logotipo para apresentar um portal coerente.</p>
-            </li>
-            <li>
-              <strong>Registe propriedades e unidades.</strong>
-              <p>Complete cada unidade com descrição, capacidade e tarifas para abrir disponibilidade imediata.</p>
-            </li>
-            <li>
-              <strong>Convide a equipa.</strong>
-              <p>Atribua perfis e permissões em <a href="/admin/utilizadores">Utilizadores</a>, garantindo que cada responsável trata reservas com segurança.</p>
-            </li>
-          </ol>
-        </div>
-      </section>
-    `
-  }));
-});
+    const theme = resolveBrandingForRequest(req, { propertyId, propertyName: propertyRow ? propertyRow.name : null });
+    if (propertyId) {
+      rememberActiveBrandingProperty(res, propertyId);
+    }
 
-app.get('/search', (req, res) => {
-  const sess = getSession(req.cookies.adm, req);
-  const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+    const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+    const hasPropertiesConfigured = properties.length > 0;
 
-  const { checkin, checkout, property_id } = req.query;
-  const adults = Math.max(1, Number(req.query.adults ?? 1));
-  const children = Math.max(0, Number(req.query.children ?? 0));
-  const totalGuests = adults + children;
-  if (!checkin || !checkout) return res.redirect('/');
+    let propertyNotFound = false;
+    let propertyList = properties;
+    if (propertyId) {
+      propertyList = properties.filter(p => p.id === propertyId);
+      if (propertyList.length === 0) {
+        propertyNotFound = true;
+      }
+    }
 
-  const propertyId = parsePropertyId(property_id);
-  const propertyRow = propertyId ? selectPropertyById.get(propertyId) : null;
-  const theme = resolveBrandingForRequest(req, { propertyId, propertyName: propertyRow ? propertyRow.name : null });
-  if (propertyId) rememberActiveBrandingProperty(res, propertyId);
+    const propertyGroups = propertyList.map(p => ({
+      id: p.id,
+      name: p.name,
+      safeName: esc(p.name),
+      totalUnits: 0,
+      units: [],
+      availableUnits: 0
+    }));
+    const propertyGroupMap = new Map(propertyGroups.map(group => [group.id, group]));
 
-  const units = db.prepare(
-    `SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id
-     WHERE (? IS NULL OR u.property_id = ?)
-       AND u.capacity >= ?
-     ORDER BY p.name, u.name`
-  ).all(propertyId || null, propertyId || null, Number(totalGuests));
+    const units = propertyGroups.length
+      ? db.prepare(
+          `SELECT u.*, p.name AS property_name
+             FROM units u
+             JOIN properties p ON p.id = u.property_id
+            WHERE (? IS NULL OR u.property_id = ?)
+            ORDER BY p.name, u.name`
+        ).all(propertyId || null, propertyId || null)
+      : [];
 
-  const imageStmt = db.prepare(
-    'SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 4'
-  );
+    const primaryImageStmt = db.prepare(
+      'SELECT file, alt FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id LIMIT 1'
+    );
 
-  const available = units
-    .filter(u => unitAvailable(u.id, checkin, checkout))
-    .map(u => {
-      const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
-      const images = imageStmt.all(u.id).map(img => {
-        const rawAlt = img.alt || `${u.property_name} - ${u.name}`;
-        return {
-          url: `/uploads/units/${u.id}/${img.file}`,
-          alt: rawAlt,
-          safeAlt: esc(rawAlt)
-        };
-      });
+    units.forEach(u => {
+      const group = propertyGroupMap.get(u.property_id);
+      if (!group) return;
+      group.totalUnits += 1;
+
+      const meetsCapacity = !guestFilterActive || u.capacity >= totalGuests;
+      const rawImage = primaryImageStmt.get(u.id);
+      const image = rawImage
+        ? {
+            url: `/uploads/units/${u.id}/${rawImage.file}`,
+            safeAlt: esc(rawImage.alt || `${u.property_name} - ${u.name}`)
+          }
+        : null;
       const features = parseFeaturesStored(u.features);
-      return { ...u, quote, images, features };
-    })
-    .filter(u => u.quote.nights >= u.quote.minStayReq)
-    .sort((a,b)=> a.quote.total_cents - b.quote.total_cents);
 
-  res.send(layout({
-    title: 'Resultados',
-    user,
-    activeNav: 'search',
-    branding: theme,
-    body: html`
-      <div class="result-header">
-        <span class="pill-indicator">Passo 2 de 3</span>
-        <h1 class="text-2xl font-semibold">Alojamentos disponíveis</h1>
-        <p class="text-slate-600">
-          ${dayjs(checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(checkout).format('DD/MM/YYYY')}
-          · ${adults} adulto(s)${children?` + ${children} criança(s)`:''}
-        </p>
-        <ul class="progress-steps" aria-label="Passos da reserva">
-          <li class="progress-step">1. Defina datas</li>
-          <li class="progress-step is-active">2. Escolha o alojamento</li>
-          <li class="progress-step">3. Confirme e relaxe</li>
-        </ul>
-        <div class="inline-feedback" data-variant="info" aria-live="polite" role="status">
-          <span class="inline-feedback-icon">💡</span>
-          <div><strong>Selecione a unidade perfeita.</strong><br/>Clique em "Reservar" para confirmar em apenas mais um passo.</div>
-        </div>
-      </div>
-      <div class="grid md:grid-cols-2 gap-4">
-        ${available.map(u => {
-          const galleryData = esc(JSON.stringify(u.images.map(img => ({ url: img.url, alt: img.alt }))));
-          const thumbCount = Math.min(Math.max(u.images.length - 1, 0), 3);
-          const gridClass = ['grid-cols-1', 'grid-cols-2', 'grid-cols-3'][thumbCount - 1] || '';
-          const thumbMarkup = thumbCount > 0
-            ? `<div class="grid ${gridClass} gap-2 mb-3">
-                ${u.images.slice(1, 1 + thumbCount).map((img, idx) => `
-                  <button type="button" class="block overflow-hidden rounded" data-gallery-trigger data-gallery-images="${galleryData}" data-gallery-index="${idx + 1}">
-                    <img src="${img.url}" alt="${img.safeAlt}" class="w-full h-20 object-cover" loading="lazy" />
-                  </button>
-                `).join('')}
-              </div>`
-            : '';
-          const mainImage = u.images.length
-            ? `<div class="relative mb-3">
-                <button type="button" class="block w-full overflow-hidden rounded-md" data-gallery-trigger data-gallery-images="${galleryData}" data-gallery-index="0">
-                  <img src="${u.images[0].url}" alt="${u.images[0].safeAlt}" class="w-full h-48 object-cover" loading="lazy" />
-                </button>
-                ${u.images.length > 1 ? `<div class="absolute bottom-2 right-2 bg-slate-900/75 text-white text-xs px-2 py-1 rounded">${u.images.length} foto${u.images.length > 1 ? 's' : ''}</div>` : ''}
-              </div>
-              ${thumbMarkup}`
-            : '<div class="h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 mb-3">Sem fotos disponíveis</div>';
-          const featuresHtml = featureChipsHtml(u.features, {
-            className: 'flex flex-wrap gap-2 text-xs text-slate-600 mb-3',
-            badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full',
-            iconWrapClass: 'inline-flex items-center justify-center text-emerald-700'
-          });
-          return html`
-            <div class="card p-4">
-              ${mainImage}
-              ${featuresHtml}
-              <div class="flex items-center justify-between mb-2">
-                <div>
-                  <div class="text-sm text-slate-500">${u.property_name}</div>
-                  <h3 class="text-lg font-semibold">${u.name}</h3>
-                </div>
-                <div class="text-right">
-                  <div class="text-xs text-slate-500">desde/noite</div>
-                  <div class="text-xl font-semibold flex items-center justify-end gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(u.base_price_cents)}</div>
-                </div>
-              </div>
-              <p class="text-sm text-slate-600 mb-1">Capacidade: ${u.capacity} - Estadia min.: ${u.quote.minStayReq} noites</p>
-              <p class="text-sm text-slate-700 mb-3">Total estadia: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(u.quote.total_cents)}</strong></p>
-              <a class="btn btn-primary" href="/book/${u.id}?checkin=${checkin}&checkout=${checkout}&adults=${adults}&children=${children}">Reservar</a>
+      if (searchActive) {
+        if (!meetsCapacity) return;
+        if (!unitAvailable(u.id, rawCheckin, rawCheckout)) return;
+        const quote = rateQuote(u.id, rawCheckin, rawCheckout, u.base_price_cents);
+        if (quote.nights < quote.minStayReq) return;
+        group.units.push({
+          id: u.id,
+          name: u.name,
+          safeName: esc(u.name),
+          capacity: u.capacity,
+          basePriceCents: u.base_price_cents,
+          quote,
+          image,
+          features
+        });
+        group.availableUnits += 1;
+      } else {
+        group.units.push({
+          id: u.id,
+          name: u.name,
+          safeName: esc(u.name),
+          capacity: u.capacity,
+          basePriceCents: u.base_price_cents,
+          image,
+          features
+        });
+      }
+    });
+
+    propertyGroups.forEach(group => {
+      if (!searchActive) {
+        group.availableUnits = group.units.length;
+      }
+      if (searchActive) {
+        group.units.sort((a, b) => {
+          if (!a.quote || !b.quote) return a.safeName.localeCompare(b.safeName);
+          return a.quote.total_cents - b.quote.total_cents || a.safeName.localeCompare(b.safeName);
+        });
+      } else {
+        group.units.sort((a, b) => a.safeName.localeCompare(b.safeName));
+      }
+    });
+
+    const totalProperties = propertyGroups.length;
+    const totalVisibleUnits = propertyGroups.reduce((sum, group) => sum + group.units.length, 0);
+    const totalUnits = propertyGroups.reduce((sum, group) => sum + group.totalUnits, 0);
+
+    const dateSummary = searchActive ? `${dayjs(rawCheckin).format('DD/MM/YYYY')} - ${dayjs(rawCheckout).format('DD/MM/YYYY')}` : '';
+    const guestsSummary = `${adults} adulto${adults === 1 ? '' : 's'}${children ? ` · ${children} criança${children === 1 ? '' : 's'}` : ''}`;
+    const propertySummary = propertyRow ? propertyRow.name : propertyId ? 'Propriedade desconhecida' : 'Todas as propriedades';
+
+    const searchStyles = html`
+      <style>
+        .search-layout {
+          display: grid;
+          gap: 1.5rem;
+        }
+        @media (min-width: 1024px) {
+          .search-layout {
+            grid-template-columns: 320px 1fr;
+            align-items: flex-start;
+          }
+        }
+        .search-panel__form {
+          display: grid;
+          gap: 1rem;
+        }
+        .search-panel__actions {
+          display: flex;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .search-panel .inline-feedback {
+          margin-top: 0.5rem;
+        }
+        .search-results {
+          display: grid;
+          gap: 1.5rem;
+        }
+        .search-banner {
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          border-radius: 0.9rem;
+          padding: 1.15rem 1.35rem;
+          background: #f8fafc;
+          display: grid;
+          gap: 0.75rem;
+        }
+        .search-banner__header {
+          display: grid;
+          gap: 0.35rem;
+        }
+        .search-banner__title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .search-banner__subtitle {
+          font-size: 0.875rem;
+          color: #475569;
+        }
+        .search-banner__chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .search-banner__chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          border-radius: 999px;
+          padding: 0.35rem 0.75rem;
+          background: #ffffff;
+          border: 1px solid rgba(148, 163, 184, 0.45);
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: #1e293b;
+        }
+        .search-banner__chip i {
+          width: 0.95rem;
+          height: 0.95rem;
+        }
+        .search-guidance {
+          margin: 0;
+          padding-left: 1.25rem;
+          display: grid;
+          gap: 0.35rem;
+          color: #475569;
+        }
+        .search-property-card {
+          display: grid;
+          gap: 1.25rem;
+        }
+        .search-property__header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 1rem;
+        }
+        .search-property__summary {
+          color: #475569;
+          font-size: 0.875rem;
+        }
+        .search-property__badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          background: #ecfdf5;
+          color: #047857;
+          border-radius: 999px;
+          padding: 0.35rem 0.75rem;
+          font-size: 0.75rem;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .search-units {
+          display: grid;
+          gap: 1rem;
+        }
+        @media (min-width: 768px) {
+          .search-units {
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          }
+        }
+        .search-unit {
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          border-radius: 0.9rem;
+          padding: 1rem;
+          background: #ffffff;
+        }
+        .search-unit__image {
+          border-radius: 0.75rem;
+          overflow: hidden;
+          height: 180px;
+          background: #f1f5f9;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #475569;
+          font-size: 0.875rem;
+        }
+        .search-unit__image img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .search-unit__header {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+          align-items: baseline;
+        }
+        .search-unit__property {
+          color: #475569;
+          font-size: 0.75rem;
+          font-weight: 600;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+        .search-unit__name {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .search-unit__capacity {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #1e293b;
+          background: #e2e8f0;
+          border-radius: 999px;
+          padding: 0.25rem 0.75rem;
+        }
+        .search-unit__features {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .search-unit__feature {
+          background: rgba(16, 185, 129, 0.15);
+          color: #047857;
+          border-radius: 999px;
+          padding: 0.35rem 0.75rem;
+          font-size: 0.75rem;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          font-weight: 500;
+        }
+        .search-unit__feature-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .search-unit__price {
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+        }
+        .search-unit__price-label {
+          font-size: 0.75rem;
+          color: #475569;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          font-weight: 600;
+        }
+        .search-unit__price-value {
+          font-size: 1.5rem;
+          font-weight: 600;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+        .search-unit__price-note {
+          font-size: 0.75rem;
+          color: #475569;
+        }
+        .search-unit__cta {
+          margin-top: auto;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          flex-wrap: wrap;
+        }
+        .search-unit__cta-hint {
+          font-size: 0.75rem;
+          color: #475569;
+        }
+        .search-property__empty {
+          padding: 1rem;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          color: #475569;
+          border: 1px dashed rgba(148, 163, 184, 0.5);
+        }
+      </style>
+    `;
+
+    const summaryBanner = searchActive
+      ? html`
+          <section class="search-banner">
+            <div class="search-banner__header">
+              <h2 class="search-banner__title">Filtros aplicados</h2>
+              <p class="search-banner__subtitle">Mostramos apenas as unidades disponíveis para estes critérios.</p>
             </div>
-          `;
-        }).join('')}
-      </div>
-      ${available.length === 0 ? `<div class="p-6 bg-amber-50 border border-amber-200 rounded-xl">Sem disponibilidade para os critérios selecionados.</div>`: ''}
-    `
-  }));
-});
+            <div class="search-banner__chips">
+              <span class="search-banner__chip"><i data-lucide="calendar"></i>${esc(dateSummary)}</span>
+              <span class="search-banner__chip"><i data-lucide="users"></i>${esc(guestsSummary)}</span>
+              <span class="search-banner__chip"><i data-lucide="map-pin"></i>${esc(propertySummary)}</span>
+            </div>
+          </section>
+        `
+      : html`
+          <section class="search-banner">
+            <div class="search-banner__header">
+              <h2 class="search-banner__title">Prepare a pesquisa de reservas</h2>
+              <p class="search-banner__subtitle">Selecione datas para ver apenas as unidades disponíveis por propriedade.</p>
+            </div>
+            <ul class="search-guidance">
+              <li>Escolha check-in e check-out válidos para ativar o cálculo automático do valor total.</li>
+              <li>Ajuste o número de hóspedes para garantir que a capacidade das unidades é respeitada.</li>
+              <li>Use o filtro de propriedade para focar apenas numa localização específica.</li>
+            </ul>
+          </section>
+        `;
 
+    const propertyCards = propertyGroups.length
+      ? propertyGroups
+          .map(group => {
+            const summaryLabel = searchActive
+              ? `${group.availableUnits} unidade${group.availableUnits === 1 ? '' : 's'} disponível${group.availableUnits === 1 ? '' : 's'} · ${group.totalUnits} no total`
+              : `${group.totalUnits} unidade${group.totalUnits === 1 ? '' : 's'} registada${group.totalUnits === 1 ? '' : 's'}`;
+            const unitsHtml = group.units.length
+              ? html`
+                  <div class="search-units">
+                    ${group.units
+                      .map(unit => {
+                        const featuresHtml = featureChipsHtml(unit.features, {
+                          className: 'search-unit__features',
+                          badgeClass: 'search-unit__feature',
+                          iconWrapClass: 'search-unit__feature-icon'
+                        });
+                        const imageHtml = unit.image
+                          ? html`<div class="search-unit__image"><img src="${esc(unit.image.url)}" alt="${unit.image.safeAlt}" loading="lazy"/></div>`
+                          : '<div class="search-unit__image">Sem fotografia disponível</div>';
+                        const priceLabel = searchActive
+                          ? `${unit.quote.nights} noite${unit.quote.nights === 1 ? '' : 's'}`
+                          : 'Tarifa base';
+                        const priceNote = searchActive
+                          ? `Estadia mínima: ${unit.quote.minStayReq} noite${unit.quote.minStayReq === 1 ? '' : 's'}`
+                          : 'Indique datas para ver o total da estadia.';
+                        const priceValue = searchActive ? eur(unit.quote.total_cents) : eur(unit.basePriceCents);
+                        let actionHtml;
+                        if (searchActive) {
+                          const bookingLink = `/book/${unit.id}?checkin=${encodeURIComponent(rawCheckin)}&checkout=${encodeURIComponent(rawCheckout)}&adults=${encodeURIComponent(adults)}&children=${encodeURIComponent(children)}`;
+                          actionHtml = html`<a class="btn btn-primary" href="${esc(bookingLink)}">Reservar</a>`;
+                        } else {
+                          actionHtml = '<span class="search-unit__cta-hint">Escolha datas para verificar disponibilidade.</span>';
+                        }
+                        return html`
+                          <article class="search-unit">
+                            ${imageHtml}
+                            <div class="search-unit__header">
+                              <div>
+                                <div class="search-unit__property">${group.safeName}</div>
+                                <div class="search-unit__name">${unit.safeName}</div>
+                              </div>
+                              <span class="search-unit__capacity">${unit.capacity} hóspede${unit.capacity === 1 ? '' : 's'}</span>
+                            </div>
+                            ${featuresHtml}
+                            <div class="search-unit__price">
+                              <span class="search-unit__price-label">${esc(priceLabel)}</span>
+                              <span class="search-unit__price-value"><i data-lucide="euro" class="w-4 h-4"></i>${priceValue}</span>
+                              <span class="search-unit__price-note">${esc(priceNote)}</span>
+                            </div>
+                            <div class="search-unit__cta">
+                              ${actionHtml}
+                            </div>
+                          </article>
+                        `;
+                      })
+                      .join('')}
+                  </div>
+                `
+              : `<div class="search-property__empty">${searchActive ? 'Sem unidades disponíveis para os critérios selecionados.' : 'Sem unidades registadas nesta propriedade.'}</div>`;
+            const badge = searchActive
+              ? `<span class="search-property__badge">${group.availableUnits ? 'Disponível' : 'Sem disponibilidade'}</span>`
+              : '';
+            return html`
+              <section class="bo-card search-property-card">
+                <header class="search-property__header">
+                  <div>
+                    <h2>${group.safeName}</h2>
+                    <p class="search-property__summary">${esc(summaryLabel)}</p>
+                  </div>
+                  ${badge}
+                </header>
+                ${unitsHtml}
+              </section>
+            `;
+          })
+          .join('')
+      : '';
+
+    const emptyState = searchActive && totalVisibleUnits === 0 && !propertyNotFound
+      ? '<div class="bo-card"><p class="bo-empty">Não encontrámos unidades disponíveis para os critérios selecionados.</p></div>'
+      : '';
+
+    const propertyNotFoundCard = propertyNotFound
+      ? '<div class="bo-card"><p class="bo-empty">Propriedade não encontrada. Ajuste o filtro e tente novamente.</p></div>'
+      : '';
+
+    const noPropertiesCard = !hasPropertiesConfigured
+      ? '<div class="bo-card"><p class="bo-empty">Ainda não existem propriedades configuradas.</p></div>'
+      : '';
+
+    const formAction = req.path === '/search' ? '/search' : '/';
+    const resetLink = formAction;
+
+    res.send(layout({
+      title: 'Pesquisar disponibilidade',
+      user,
+      activeNav: 'search',
+      branding: theme,
+      pageClass: 'page-backoffice page-search',
+      body: html`
+        <div class="bo-main search-main">
+          <header class="bo-header">
+            <h1>Pesquisar disponibilidade</h1>
+          </header>
+          ${searchStyles}
+          <div class="search-layout">
+            <section class="bo-card search-panel">
+              <h2>Filtros de reserva</h2>
+              <p class="bo-subtitle">Escolha datas, hóspedes e propriedade para consultar as unidades disponíveis.</p>
+              <form action="${esc(formAction)}" method="get" class="search-panel__form" data-search-form>
+                <div class="bo-field">
+                  <label for="checkin">Check-in</label>
+                  <input
+                    type="date"
+                    id="checkin"
+                    name="checkin"
+                    class="input"
+                    value="${esc(rawCheckin)}"
+                    onchange="syncCheckout(event)"
+                    required
+                  />
+                </div>
+                <div class="bo-field">
+                  <label for="checkout">Check-out</label>
+                  <input
+                    type="date"
+                    id="checkout"
+                    name="checkout"
+                    class="input"
+                    value="${esc(rawCheckout)}"
+                    ${checkinValid ? `min="${esc(rawCheckin)}"` : ''}
+                    required
+                  />
+                </div>
+                <div class="bo-field">
+                  <label for="adults">Adultos</label>
+                  <input type="number" min="1" id="adults" name="adults" value="${esc(String(adults))}" class="input" />
+                </div>
+                <div class="bo-field">
+                  <label for="children">Crianças</label>
+                  <input type="number" min="0" id="children" name="children" value="${esc(String(children))}" class="input" />
+                </div>
+                <div class="bo-field">
+                  <label for="property_id">Propriedade</label>
+                  <select id="property_id" name="property_id" class="input">
+                    <option value="">Todas as propriedades</option>
+                    ${properties
+                      .map(p => `<option value="${p.id}" ${propertyId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+                <div class="search-panel__actions">
+                  <button class="btn btn-primary" type="submit" data-submit>Pesquisar disponibilidade</button>
+                  ${(searchActive || propertyId || guestFilterExplicit)
+                    ? `<a class="btn btn-light" href="${esc(resetLink)}">Limpar filtros</a>`
+                    : ''}
+                </div>
+                <div class="inline-feedback" data-feedback data-variant="info" aria-live="polite" role="status">
+                  <span class="inline-feedback-icon">ℹ</span>
+                  <div><strong>Indique as datas desejadas.</strong><br/>Apenas as unidades disponíveis serão listadas após a pesquisa.</div>
+                </div>
+              </form>
+            </section>
+            <div class="search-results">
+              ${summaryBanner}
+              ${propertyNotFoundCard}
+              ${!propertyNotFound ? propertyCards : ''}
+              ${!propertyNotFound ? noPropertiesCard : ''}
+              ${emptyState}
+            </div>
+          </div>
+        </div>
+      `
+    }));
+  }
+
+  app.get('/', (req, res) => {
+    renderSearchPage(req, res);
+  });
+
+  app.get('/search', (req, res) => {
+    renderSearchPage(req, res);
+  });
 app.get('/book/:unitId', (req, res) => {
   const sess = getSession(req.cookies.adm, req);
   const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
@@ -498,6 +823,8 @@ app.post('/book', (req, res) => {
     const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
     if (quote.nights < quote.minStayReq) throw new Error('minstay:'+quote.minStayReq);
     const total = quote.total_cents;
+    const canAutoConfirm = user && userCan(user, 'bookings.edit');
+    const bookingStatus = canAutoConfirm ? 'CONFIRMED' : 'PENDING';
 
     const stmt = db.prepare(
       `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref, confirmation_token)
@@ -515,11 +842,11 @@ app.post('/book', (req, res) => {
       checkin,
       checkout,
       total,
-      'CONFIRMED',
+      bookingStatus,
       null,
       confirmationToken
     );
-    return { id: r.lastInsertRowid, confirmationToken };
+    return { id: r.lastInsertRowid, confirmationToken, status: bookingStatus };
   });
 
   try {
@@ -571,28 +898,42 @@ app.get('/booking/:id', (req, res) => {
   const agencyHtml = b.agency ? `<div>Agencia: <strong>${esc(b.agency)}</strong></div>` : '';
   const safePropertyName = esc(b.property_name || '');
   const safeUnitName = esc(b.unit_name || '');
+  const isPending = b.status === 'PENDING';
+  const statusLabel = isPending ? 'Pendente' : 'Confirmada';
+  const headerPill = isPending ? 'Pedido enviado' : 'Reserva finalizada';
+  const headerTitle = isPending ? 'Reserva pendente' : 'Reserva confirmada';
+  const headerDescriptionHtml = isPending
+    ? `Vamos rever a sua reserva e enviar a confirmação para <strong>${safeGuestEmail}</strong> em breve.`
+    : `Enviámos a confirmação para ${safeGuestEmail}. Obrigado por reservar connosco!`;
+  const bookingStepLabel = isPending ? '3. Aguarde confirmação' : '3. Confirme e relaxe';
+  const inlineFeedbackHtml = isPending
+    ? `<div class="inline-feedback" data-variant="warning" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">⏳</span>
+          <div><strong>Reserva pendente</strong><br/>A equipa foi notificada e irá validar o pedido antes de confirmar.</div>
+        </div>`
+    : `<div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
+          <span class="inline-feedback-icon">✓</span>
+          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
+        </div>`;
 
   res.send(layout({
-    title: 'Reserva Confirmada',
+    title: headerTitle,
     user,
     activeNav: 'search',
     branding: theme,
     body: html`
       <div class="result-header">
-        <span class="pill-indicator">Reserva finalizada</span>
-        <h1 class="text-2xl font-semibold">Reserva confirmada</h1>
-        <p class="text-slate-600">Enviámos a confirmação para ${safeGuestEmail}. Obrigado por reservar connosco!</p>
+        <span class="pill-indicator">${headerPill}</span>
+        <h1 class="text-2xl font-semibold">${headerTitle}</h1>
+        <p class="text-slate-600">${headerDescriptionHtml}</p>
         <ul class="progress-steps" aria-label="Passos da reserva">
           <li class="progress-step">1. Defina datas</li>
           <li class="progress-step">2. Escolha o alojamento</li>
-          <li class="progress-step is-active">3. Confirme e relaxe</li>
+          <li class="progress-step is-active">${bookingStepLabel}</li>
         </ul>
       </div>
       <div class="card p-6 space-y-6">
-        <div class="inline-feedback" data-variant="success" aria-live="polite" role="status">
-          <span class="inline-feedback-icon">✓</span>
-          <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
-        </div>
+        ${inlineFeedbackHtml}
         <div class="grid md:grid-cols-2 gap-4">
           <div>
             <div class="font-semibold">${safePropertyName} – ${safeUnitName}</div>
@@ -607,7 +948,7 @@ app.get('/booking/:id', (req, res) => {
           <div class="text-right">
             <div class="text-xs text-slate-500">Total</div>
             <div class="text-3xl font-semibold">€ ${eur(b.total_cents)}</div>
-            <div class="text-xs text-slate-500">Status: ${b.status}</div>
+            <div class="text-xs text-slate-500">Status: ${statusLabel}</div>
           </div>
         </div>
         <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
@@ -830,7 +1171,10 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 
   const calendarGridHtml = propertyId
     ? bookings.length
-      ? renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })
+      ? html`
+          ${renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule: canRescheduleCalendar })}
+          ${renderReservationCalendarGridMobile({ month, bookings, units, dayjs, esc })}
+        `
       : '<div class="bo-calendar-empty-state">Não foram encontradas reservas para os filtros selecionados.</div>'
     : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
 
@@ -990,6 +1334,17 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
 });
 
 
+function normalizeCalendarBookings(bookings, dayjs) {
+  return bookings.map(booking => ({
+    ...booking,
+    checkinISO: booking.checkinISO || booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
+    checkoutISO: booking.checkoutISO || booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
+    checkinLabel: booking.checkinLabel || booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
+    checkoutLabel: booking.checkoutLabel || booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
+    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
+  }));
+}
+
 function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canReschedule }) {
   if (!month) return '';
   const monthStart = month.startOf('month');
@@ -999,14 +1354,7 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
   const totalCells = Math.ceil((offset + totalDays) / 7) * 7;
   const todayIso = dayjs().format('YYYY-MM-DD');
 
-  const normalized = bookings.map(booking => ({
-    ...booking,
-    checkinISO: booking.checkin_iso || dayjs(booking.checkin).format('YYYY-MM-DD'),
-    checkoutISO: booking.checkout_iso || dayjs(booking.checkout).format('YYYY-MM-DD'),
-    checkinLabel: booking.checkin_label || dayjs(booking.checkin).format('DD/MM'),
-    checkoutLabel: booking.checkout_label || dayjs(booking.checkout).format('DD/MM'),
-    nights: booking.nights || Math.max(1, dayjs(booking.checkout).diff(dayjs(booking.checkin), 'day'))
-  }));
+  const normalized = normalizeCalendarBookings(bookings, dayjs);
 
   const headerHtml = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
     .map(label => `<div class="bo-calendar-grid__day">${label}</div>`)
@@ -1045,9 +1393,11 @@ function renderReservationCalendarGrid({ month, bookings, dayjs, esc, canResched
   }).join('');
 
   return `
-    <div class="bo-calendar-grid">
-      ${headerHtml}
-      ${cellsHtml}
+    <div class="bo-calendar-grid-wrapper">
+      <div class="bo-calendar-grid">
+        ${headerHtml}
+        ${cellsHtml}
+      </div>
     </div>
   `;
 }
@@ -1101,6 +1451,166 @@ function renderReservationCalendarEntry(booking, dayjs, esc, canReschedule) {
         ${agency}
       </div>
     </a>
+  `;
+}
+
+function renderReservationCalendarGridMobile({ month, bookings, units, dayjs, esc }) {
+  if (!month) return '';
+
+  const normalized = normalizeCalendarBookings(bookings, dayjs)
+    .sort((a, b) => dayjs(a.checkinISO).diff(dayjs(b.checkinISO)) || (a.id || 0) - (b.id || 0));
+
+  const unitsMap = new Map((units || []).map(unit => [unit.id, { ...unit }]));
+  const grouped = new Map();
+
+  normalized.forEach(booking => {
+    const unitId = booking.unit_id;
+    if (unitId == null) return;
+
+    if (!grouped.has(unitId)) {
+      grouped.set(unitId, []);
+    }
+    grouped.get(unitId).push(booking);
+
+    if (!unitsMap.has(unitId)) {
+      unitsMap.set(unitId, {
+        id: unitId,
+        name: booking.unit_name || `Unidade #${unitId || booking.id}`,
+        property_name: booking.property_name || ''
+      });
+    } else if (!unitsMap.get(unitId).property_name && booking.property_name) {
+      unitsMap.get(unitId).property_name = booking.property_name;
+    }
+  });
+
+  if (!unitsMap.size) return '';
+
+  const legend = `
+    <div class="bo-calendar-mobile__legend">
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--confirmed"></span>Confirmada</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--pending"></span>Pendente</span>
+      <span class="bo-calendar-mobile__legend-item"><span class="bo-calendar-mobile__legend-dot bo-calendar-mobile__legend-dot--blocked"></span>Bloqueio/Outro</span>
+    </div>
+  `;
+
+  const overviewRows = normalized.length
+    ? normalized.map(booking => {
+        const status = (booking.status || '').toUpperCase();
+        let statusLabel = 'Reserva';
+        let statusClass = 'is-blocked';
+        if (status === 'CONFIRMED') {
+          statusLabel = 'Confirmada';
+          statusClass = 'is-confirmed';
+        } else if (status === 'PENDING') {
+          statusLabel = 'Pendente';
+          statusClass = 'is-pending';
+        } else if (status === 'BLOCKED') {
+          statusLabel = 'Bloqueio';
+        }
+
+        const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+        const unitName = esc(booking.unit_name || `Unidade #${booking.unit_id}`);
+        const property = booking.property_name ? esc(booking.property_name) : '';
+        const location = property ? `${unitName} · ${property}` : unitName;
+        const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
+        const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
+        const meta = `${booking.checkinLabel} → ${booking.checkoutLabel} · ${nights} noite${nights === 1 ? '' : 's'}`;
+
+        return `
+          <a href="${esc(href)}" class="bo-calendar-mobile__overview-row ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+            <span class="bo-calendar-mobile__overview-unit">${location}</span>
+            <span class="bo-calendar-mobile__overview-guest">${guest}</span>
+            <span class="bo-calendar-mobile__overview-dates">${esc(meta)}</span>
+            <span class="bo-calendar-mobile__overview-status ${statusClass}">${esc(statusLabel)}</span>
+          </a>
+        `;
+      }).join('')
+    : '<div class="bo-calendar-mobile__overview-empty">Sem reservas neste período.</div>';
+
+  const baseUnits = (units || []).map(unit => {
+    const enriched = unitsMap.get(unit.id) || {};
+    return { ...enriched, ...unit };
+  });
+  const fallbackUnits = Array.from(unitsMap.values()).filter(unit => !baseUnits.some(existing => existing.id === unit.id));
+  const unitsToRender = [...baseUnits, ...fallbackUnits];
+
+  const unitSections = unitsToRender.map(unit => {
+    const unitBookings = grouped.get(unit.id) || [];
+    const propertyName = unit.property_name || (unitBookings[0] && unitBookings[0].property_name) || '';
+
+    const bookingsHtml = unitBookings.length
+      ? unitBookings.map(booking => {
+          const status = (booking.status || '').toUpperCase();
+          let statusLabel = 'Reserva';
+          let statusClass = 'is-blocked';
+          if (status === 'CONFIRMED') {
+            statusLabel = 'Confirmada';
+            statusClass = 'is-confirmed';
+          } else if (status === 'PENDING') {
+            statusLabel = 'Pendente';
+            statusClass = 'is-pending';
+          } else if (status === 'BLOCKED') {
+            statusLabel = 'Bloqueio';
+          }
+
+          const nights = booking.nights || Math.max(1, dayjs(booking.checkoutISO).diff(dayjs(booking.checkinISO), 'day'));
+          const metaParts = [
+            `${booking.checkinLabel} → ${booking.checkoutLabel}`,
+            `${nights} noite${nights === 1 ? '' : 's'}`
+          ];
+          if (booking.agency) metaParts.push(booking.agency);
+          const meta = metaParts.map(part => esc(part)).join(' · ');
+
+          const guest = esc(booking.guest_name || `Reserva #${booking.id}`);
+          const href = booking.id ? `/admin/bookings/${booking.id}` : '#';
+
+          return `
+            <a href="${esc(href)}" class="bo-calendar-mobile__booking ${statusClass}" aria-label="${guest} · ${esc(statusLabel)}">
+              <div class="bo-calendar-mobile__booking-header">
+                <span class="bo-calendar-mobile__guest">${guest}</span>
+                <span class="bo-calendar-mobile__badge ${statusClass}">${esc(statusLabel)}</span>
+              </div>
+              <div class="bo-calendar-mobile__booking-meta">${meta}</div>
+            </a>
+          `;
+        }).join('')
+      : '<div class="bo-calendar-mobile__empty">Sem reservas neste período.</div>';
+
+    return `
+      <section class="bo-calendar-mobile__unit" aria-label="Reservas da unidade ${esc(unit.name)}">
+        <header class="bo-calendar-mobile__unit-header">
+          <h3 class="bo-calendar-mobile__unit-name">${esc(unit.name || `Unidade #${unit.id}`)}</h3>
+          ${propertyName ? `<span class="bo-calendar-mobile__unit-property">${esc(propertyName)}</span>` : ''}
+        </header>
+        <div class="bo-calendar-mobile__list">
+          ${bookingsHtml}
+        </div>
+      </section>
+    `;
+  }).join('');
+
+  return `
+    <div class="bo-calendar-mobile" data-calendar-mobile>
+      ${legend}
+      <section class="bo-calendar-mobile__overview" aria-label="Pré-visualização de todas as reservas">
+        <header class="bo-calendar-mobile__overview-header">
+          <h3 class="bo-calendar-mobile__overview-title">Resumo de reservas</h3>
+          <p class="bo-calendar-mobile__overview-hint">Visão rápida em formato tabela semelhante ao Excel.</p>
+        </header>
+        <div class="bo-calendar-mobile__overview-grid">
+          <div class="bo-calendar-mobile__overview-row bo-calendar-mobile__overview-row--head">
+            <span class="bo-calendar-mobile__overview-head">Unidade</span>
+            <span class="bo-calendar-mobile__overview-head">Hóspede</span>
+            <span class="bo-calendar-mobile__overview-head">Datas</span>
+            <span class="bo-calendar-mobile__overview-head">Estado</span>
+          </div>
+          ${overviewRows}
+        </div>
+      </section>
+      <div class="bo-calendar-mobile__preview">
+        ${unitSections}
+      </div>
+    </div>
   `;
 }
 
