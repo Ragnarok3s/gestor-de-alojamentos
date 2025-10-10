@@ -376,6 +376,71 @@ function runLightMigrations(db) {
         UNIQUE(unit_like, date)
       )`
     );
+
+    ensureTable(
+      'automations',
+      `CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        trigger TEXT NOT NULL,
+        conditions TEXT NOT NULL CHECK (json_valid(conditions)),
+        actions TEXT NOT NULL CHECK (json_valid(actions)),
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT
+      )`
+    );
+
+    ensureTable(
+      'automation_runs',
+      `CREATE TABLE IF NOT EXISTS automation_runs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        trigger_payload TEXT NOT NULL CHECK (json_valid(trigger_payload)),
+        status TEXT NOT NULL,
+        result TEXT CHECK (result IS NULL OR json_valid(result)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'decision_suggestions',
+      `CREATE TABLE IF NOT EXISTS decision_suggestions (
+        id TEXT PRIMARY KEY,
+        property_id TEXT NOT NULL,
+        unit_id TEXT,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT NOT NULL CHECK (json_valid(details)),
+        suggested_action TEXT NOT NULL CHECK (json_valid(suggested_action)),
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        acted_by TEXT
+      )`
+    );
+
+    ensureTable(
+      'chatbot_sessions',
+      `CREATE TABLE IF NOT EXISTS chatbot_sessions (
+        id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
+        state TEXT NOT NULL CHECK (json_valid(state)),
+        property_id TEXT
+      )`
+    );
+
+    ensureTable(
+      'chatbot_messages',
+      `CREATE TABLE IF NOT EXISTS chatbot_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }
