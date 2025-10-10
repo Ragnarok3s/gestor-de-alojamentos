@@ -11,7 +11,8 @@ module.exports = function registerOwnersPortal(app, context) {
     eur,
     requireLogin,
     userCan,
-    userHasBackofficeAccess
+    userHasBackofficeAccess,
+    resolveBrandingForRequest
   } = context;
 
   function ensureOwnerPortalAccess(req, res, next) {
