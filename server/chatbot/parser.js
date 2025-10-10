@@ -31,24 +31,34 @@ function extractGuests(text) {
 
 function parseDatePart(dayjs, raw) {
   if (!raw) return null;
+  const trimmed = String(raw).trim();
   const normalized = normalizeText(raw);
-  const direct = dayjs(raw, ['YYYY-MM-DD', 'DD/MM/YYYY', 'DD-MM-YYYY'], true);
-  if (direct.isValid()) return direct;
-  const short = dayjs(raw, ['DD/MM', 'DD-MM'], true);
-  if (short.isValid()) {
-    const candidate = short.year(dayjs().year());
-    if (candidate.isBefore(dayjs(), 'day')) {
-      return candidate.add(1, 'year');
-    }
-    return candidate;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const directIso = dayjs(trimmed, 'YYYY-MM-DD', true);
+    if (directIso.isValid()) return directIso;
   }
-  const match = normalized.match(/(\d{1,2})\s*(de\s*)?([a-z]+)/);
+  if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(trimmed)) {
+    const directEuropean = dayjs(trimmed, ['DD/MM/YYYY', 'DD-MM-YYYY'], true);
+    if (directEuropean.isValid()) return directEuropean;
+  }
+  if (/^\d{1,2}[/-]\d{1,2}$/.test(trimmed)) {
+    const short = dayjs(trimmed, ['DD/MM', 'DD-MM'], true);
+    if (short.isValid()) {
+      const candidate = short.year(dayjs().year());
+      if (candidate.isBefore(dayjs(), 'day')) {
+        return candidate.add(1, 'year');
+      }
+      return candidate;
+    }
+  }
+  const match = normalized.match(/(\d{1,2})\s*(?:de\s+)?([a-z]+)/);
   if (match) {
     const day = parseInt(match[1], 10);
-    const monthName = match[3];
+    const monthName = match[2];
     const month = MONTHS[monthName];
     if (month != null) {
-      let candidate = dayjs().month(month).date(day);
+      const base = dayjs().startOf('day');
+      let candidate = base.set('month', month).set('date', day);
       if (candidate.isBefore(dayjs(), 'day')) {
         candidate = candidate.add(1, 'year');
       }
@@ -70,7 +80,7 @@ function extractDates(dayjs, text) {
     }
   }
 
-  const naturalPattern = /(\d{1,2}\s*(?:de\s*)?[A-Za-z]+)(?:\s*a\s*|\s*ate\s*|\s*até\s*)(\d{1,2}\s*(?:de\s*)?[A-Za-z]+)/i;
+  const naturalPattern = /(\d{1,2}\s*(?:de\s+)?[A-Za-z]+)(?:\s*a\s*|\s*ate\s*|\s*até\s*)(\d{1,2}\s*(?:de\s+)?[A-Za-z]+)/i;
   const naturalMatch = text.match(naturalPattern);
   if (naturalMatch) {
     const checkin = parseDatePart(dayjs, naturalMatch[1]);
@@ -80,13 +90,13 @@ function extractDates(dayjs, text) {
     }
   }
 
-  const rangeMatch = text.match(/(\d{1,2})\s*(?:a|ao|ate|até)\s*(\d{1,2})\s*(de\s*[A-Za-z]+)/i);
+  const rangeMatch = text.match(/(\d{1,2})\s*(?:a|à|ao|as|às|ate|até)\s*(\d{1,2})\s*(?:de\s+)?([A-Za-z]+)/i);
   if (rangeMatch) {
     const startDay = parseInt(rangeMatch[1], 10);
     const endDay = parseInt(rangeMatch[2], 10);
-    const monthPart = rangeMatch[3];
-    const monthDate = parseDatePart(dayjs, `${startDay} ${monthPart}`);
-    const checkoutDate = parseDatePart(dayjs, `${endDay} ${monthPart}`);
+    const monthName = rangeMatch[3];
+    const monthDate = parseDatePart(dayjs, `${startDay} ${monthName}`);
+    const checkoutDate = parseDatePart(dayjs, `${endDay} ${monthName}`);
     if (monthDate && checkoutDate && checkoutDate.isAfter(monthDate)) {
       return { checkin: monthDate, checkout: checkoutDate };
     }
@@ -137,8 +147,13 @@ function parseMessage(dayjs, text) {
   const intent = detectIntent(text);
   const guests = extractGuests(text);
   const dates = extractDates(dayjs, text);
+  const hasDateInfo = !!(dates.checkin || dates.checkout);
+  const finalIntent =
+    intent === 'smalltalk' && (hasDateInfo || guests != null)
+      ? 'availability'
+      : intent;
   return {
-    intent,
+    intent: finalIntent,
     guests,
     checkin: dates.checkin,
     checkout: dates.checkout,
