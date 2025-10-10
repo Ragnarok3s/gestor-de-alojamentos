@@ -593,7 +593,7 @@ module.exports = function registerOwnersPortal(app, context) {
     };
   }
 
-  app.get('/owners', requireLogin, ensureOwnerPortalAccess, csrfProtection, (req, res) => {
+  app.get('/owners', requireLogin, ensureOwnerPortalAccess, csrfProtection.middleware, (req, res) => {
     const viewer = req.user;
     const redirectPath = req.originalUrl && req.originalUrl.startsWith('/owners') ? req.originalUrl : '/owners';
     const dashboard = computeOwnerDashboardData(viewer, req.query);
@@ -1337,7 +1337,7 @@ module.exports = function registerOwnersPortal(app, context) {
     );
   });
 
-  app.post('/owners/financial-entries', requireLogin, ensureOwnerPortalAccess, csrfProtection, (req, res) => {
+  app.post('/owners/financial-entries', requireLogin, ensureOwnerPortalAccess, csrfProtection.middleware, (req, res) => {
     const viewer = req.user;
     const redirect = safeRedirect(req.body.redirect);
     const errors = [];
@@ -1434,79 +1434,91 @@ module.exports = function registerOwnersPortal(app, context) {
     }
   });
 
-  app.post('/owners/financial-entries/:id/update', requireLogin, ensureOwnerPortalAccess, csrfProtection, (req, res) => {
-    const viewer = req.user;
-    const redirect = safeRedirect(req.body.redirect);
-    const entryId = Number.parseInt(req.params.id, 10);
-    if (!Number.isInteger(entryId)) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Registo inválido.');
-    }
-    const entry = findFinancialEntryStmt.get(entryId);
-    if (!entry) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Registo financeiro não encontrado.');
-    }
-    if (entry.user_id !== viewer.id && !userHasBackofficeAccess(viewer)) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Sem permissão para alterar este registo.');
-    }
-
-    const statusRaw = typeof req.body.status === 'string' ? req.body.status.toLowerCase().trim() : '';
-    const allowedStatuses = ['draft', 'pending', 'paid', 'cancelled'];
-    const status = allowedStatuses.includes(statusRaw) ? statusRaw : entry.status || 'pending';
-    const dueDate = normalizeDate(req.body.due_date);
-
-    try {
-      updateFinancialEntryStmt.run(status, dueDate, entryId);
-      if (typeof logActivity === 'function') {
-        logActivity(req, {
-          action: 'owners.financial.update',
-          target: 'owner_financial_entries',
-          details: {
-            entryId,
-            status,
-            dueDate
-          }
-        });
+  app.post(
+    '/owners/financial-entries/:id/update',
+    requireLogin,
+    ensureOwnerPortalAccess,
+    csrfProtection.middleware,
+    (req, res) => {
+      const viewer = req.user;
+      const redirect = safeRedirect(req.body.redirect);
+      const entryId = Number.parseInt(req.params.id, 10);
+      if (!Number.isInteger(entryId)) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Registo inválido.');
       }
-      return redirectWithMessage(res, redirect, 'finance_notice', 'Registo financeiro atualizado.');
-    } catch (err) {
-      console.error('Falha ao atualizar registo financeiro:', err);
-      return redirectWithMessage(res, redirect, 'finance_error', 'Não foi possível atualizar o registo financeiro.');
-    }
-  });
-
-  app.post('/owners/financial-entries/:id/delete', requireLogin, ensureOwnerPortalAccess, csrfProtection, (req, res) => {
-    const viewer = req.user;
-    const redirect = safeRedirect(req.body.redirect);
-    const entryId = Number.parseInt(req.params.id, 10);
-    if (!Number.isInteger(entryId)) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Registo inválido.');
-    }
-    const entry = findFinancialEntryStmt.get(entryId);
-    if (!entry) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Registo financeiro não encontrado.');
-    }
-    if (entry.user_id !== viewer.id && !userHasBackofficeAccess(viewer)) {
-      return redirectWithMessage(res, redirect, 'finance_error', 'Sem permissão para remover este registo.');
-    }
-
-    try {
-      deleteFinancialEntryStmt.run(entryId);
-      if (typeof logActivity === 'function') {
-        logActivity(req, {
-          action: 'owners.financial.delete',
-          target: 'owner_financial_entries',
-          details: {
-            entryId,
-            entryType: entry.entry_type
-          }
-        });
+      const entry = findFinancialEntryStmt.get(entryId);
+      if (!entry) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Registo financeiro não encontrado.');
       }
-      return redirectWithMessage(res, redirect, 'finance_notice', 'Registo financeiro removido.');
-    } catch (err) {
-      console.error('Falha ao remover registo financeiro:', err);
-      return redirectWithMessage(res, redirect, 'finance_error', 'Não foi possível remover o registo financeiro.');
+      if (entry.user_id !== viewer.id && !userHasBackofficeAccess(viewer)) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Sem permissão para alterar este registo.');
+      }
+
+      const statusRaw = typeof req.body.status === 'string' ? req.body.status.toLowerCase().trim() : '';
+      const allowedStatuses = ['draft', 'pending', 'paid', 'cancelled'];
+      const status = allowedStatuses.includes(statusRaw) ? statusRaw : entry.status || 'pending';
+      const dueDate = normalizeDate(req.body.due_date);
+
+      try {
+        updateFinancialEntryStmt.run(status, dueDate, entryId);
+        if (typeof logActivity === 'function') {
+          logActivity(req, {
+            action: 'owners.financial.update',
+            target: 'owner_financial_entries',
+            details: {
+              entryId,
+              status,
+              dueDate
+            }
+          });
+        }
+        return redirectWithMessage(res, redirect, 'finance_notice', 'Registo financeiro atualizado.');
+      } catch (err) {
+        console.error('Falha ao atualizar registo financeiro:', err);
+        return redirectWithMessage(res, redirect, 'finance_error', 'Não foi possível atualizar o registo financeiro.');
+      }
     }
-  });
+  );
+
+  app.post(
+    '/owners/financial-entries/:id/delete',
+    requireLogin,
+    ensureOwnerPortalAccess,
+    csrfProtection.middleware,
+    (req, res) => {
+      const viewer = req.user;
+      const redirect = safeRedirect(req.body.redirect);
+      const entryId = Number.parseInt(req.params.id, 10);
+      if (!Number.isInteger(entryId)) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Registo inválido.');
+      }
+      const entry = findFinancialEntryStmt.get(entryId);
+      if (!entry) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Registo financeiro não encontrado.');
+      }
+      if (entry.user_id !== viewer.id && !userHasBackofficeAccess(viewer)) {
+        return redirectWithMessage(res, redirect, 'finance_error', 'Sem permissão para remover este registo.');
+      }
+
+      try {
+        deleteFinancialEntryStmt.run(entryId);
+        if (typeof logActivity === 'function') {
+          logActivity(req, {
+            action: 'owners.financial.delete',
+            target: 'owner_financial_entries',
+            details: {
+              entryId,
+              entryType: entry.entry_type
+            }
+          });
+        }
+        return redirectWithMessage(res, redirect, 'finance_notice', 'Registo financeiro removido.');
+      } catch (err) {
+        console.error('Falha ao remover registo financeiro:', err);
+        return redirectWithMessage(res, redirect, 'finance_error', 'Não foi possível remover o registo financeiro.');
+      }
+    }
+  );
 
   app.get('/api/owners/dashboard', requireLogin, ensureOwnerPortalAccess, (req, res) => {
     try {
