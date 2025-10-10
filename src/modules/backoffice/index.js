@@ -159,6 +159,37 @@ module.exports = function registerBackoffice(app, context) {
 
   app.use('/admin', requireLogin, requireBackofficeAccess);
 
+  function renderDashboardModule({
+    id,
+    title,
+    description = '',
+    body,
+    size = 'full',
+    hydrate = false,
+    refreshLabel,
+    showRefresh = false,
+    extraActions = ''
+  }) {
+    const sizeClass = size === 'wide' ? ' dashboard-module--wide' : size === 'split' ? ' dashboard-module--split' : size === 'thirds' ? ' dashboard-module--thirds' : '';
+    const hydrateAttr = hydrate ? ' data-hydrate-on-load="true"' : '';
+    const refreshButton = showRefresh
+      ? `<button type="button" class="dashboard-module__refresh" data-module-refresh><i data-lucide="rotate-cw"></i><span>${esc(refreshLabel || 'Atualizar')}</span></button>`
+      : '';
+    const actionsHtml = [extraActions, refreshButton].filter(Boolean).join('');
+    return html`<section class="dashboard-module${sizeClass}" data-module="${esc(id)}" data-module-endpoint="/admin/modules/${esc(id)}"${hydrateAttr}>
+      <header class="dashboard-module__header">
+        <div>
+          <h2 class="dashboard-module__title">${title}</h2>
+          ${description ? `<p class="dashboard-module__description">${description}</p>` : ''}
+        </div>
+        <div class="dashboard-module__actions">${actionsHtml}</div>
+      </header>
+      <div class="dashboard-module__body" data-module-body>
+        ${body}
+      </div>
+    </section>`;
+  }
+
   const HOUSEKEEPING_TASK_TYPES = new Set(['checkout', 'checkin', 'midstay', 'custom']);
   const HOUSEKEEPING_TYPE_LABELS = {
     checkout: 'Limpeza de saída',
@@ -1025,6 +1056,9 @@ module.exports = function registerBackoffice(app, context) {
         activeNav: 'housekeeping',
         user: req.user,
         branding: resolveBrandingForRequest(req),
+        locale: req.locale,
+        t: req.t,
+        csrfToken: res.locals.csrfToken,
         pageClass: 'page-backoffice page-housekeeping',
         body
       })
@@ -1033,6 +1067,7 @@ module.exports = function registerBackoffice(app, context) {
 
   app.get('/admin/limpeza', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
     const board = computeHousekeepingBoard({ horizonDays: 6, futureWindowDays: 30 });
+    const t = typeof req.t === 'function' ? req.t : (key, fallback) => fallback;
     const canCompleteTasks = userCan(req.user, 'housekeeping.complete');
     const totalTasks = board.tasks || [];
     const pendingCount = totalTasks.filter(task => task.status === 'pending').length;
@@ -1081,6 +1116,23 @@ module.exports = function registerBackoffice(app, context) {
     const recentCompleted = completedLast7.slice(0, 12);
     const typeOptions = ['checkout', 'checkin', 'midstay', 'custom'];
     const priorityOptions = ['alta', 'normal', 'baixa'];
+    const getTypeLabel = type =>
+      t(`housekeeping.types.${type}`, HOUSEKEEPING_TYPE_LABELS[type] || HOUSEKEEPING_TYPE_LABELS.custom);
+    const priorityBadgeLabel = priority => {
+      if (priority === 'alta') return t('dashboard.housekeeping.priorityBadge.high', 'Prioridade alta');
+      if (priority === 'baixa') return t('dashboard.housekeeping.priorityBadge.low', 'Prioridade baixa');
+      return t('dashboard.housekeeping.priorityBadge.normal', 'Prioridade normal');
+    };
+    const priorityOptionLabel = priority => {
+      if (priority === 'alta') return t('housekeeping.priorities.high', 'Alta');
+      if (priority === 'baixa') return t('housekeeping.priorities.low', 'Baixa');
+      return t('housekeeping.priorities.normal', 'Normal');
+    };
+    const statusBadgeLabel = status => {
+      if (status === 'in_progress') return t('dashboard.housekeeping.statusBadge.inProgress', 'Em curso');
+      if (status === 'completed') return t('dashboard.housekeeping.statusBadge.completed', 'Concluída');
+      return t('dashboard.housekeeping.statusBadge.pending', 'Pendente');
+    };
     const today = board.today || dayjs().startOf('day');
     const todayBucket = Array.isArray(board.buckets)
       ? board.buckets.find(bucket => bucket && bucket.isToday) || {}
@@ -1088,8 +1140,13 @@ module.exports = function registerBackoffice(app, context) {
     const todaysTasks = Array.isArray(todayBucket.tasks) ? todayBucket.tasks : [];
     const todaysCheckins = Array.isArray(todayBucket.checkins) ? todayBucket.checkins : [];
     const todaysCheckouts = Array.isArray(todayBucket.checkouts) ? todayBucket.checkouts : [];
-    const priorityText = priority => (priority === 'alta' ? 'Prioridade alta' : priority === 'baixa' ? 'Prioridade baixa' : 'Prioridade normal');
-    const statusText = status => (status === 'in_progress' ? 'Em curso' : status === 'completed' ? 'Concluída' : 'Pendente');
+    const todayEmptyLabel = esc(t('dashboard.housekeeping.todayEmpty', 'Sem tarefas programadas para hoje.'));
+    const checkoutBadgeLabel = count =>
+      esc(t('dashboard.housekeeping.todayCheckouts', '{{count}} saída{{suffix}}', { count, suffix: count === 1 ? '' : 's' }));
+    const checkinBadgeLabel = count =>
+      esc(t('dashboard.housekeeping.todayCheckins', '{{count}} entrada{{suffix}}', { count, suffix: count === 1 ? '' : 's' }));
+    const priorityText = priority => priorityBadgeLabel(priority);
+    const statusText = status => statusBadgeLabel(status);
     const renderTodayTask = task => html`<article class="rounded-2xl border border-amber-200/80 bg-white/80 p-3 shadow-sm space-y-1">
         <p class="font-semibold text-slate-900">${esc(task.title)}</p>
         <p class="text-xs text-slate-600">${esc(`${task.property_name ? `${task.property_name} · ` : ''}${task.unit_name || 'Sem unidade associada'}`)}</p>
@@ -1103,41 +1160,60 @@ module.exports = function registerBackoffice(app, context) {
       </article>`;
     const todayTasksHtml = todaysTasks.length
       ? `<div class="grid gap-3 sm:grid-cols-2">${todaysTasks.slice(0, 6).map(renderTodayTask).join('')}</div>`
-      : '<p class="text-sm text-amber-700">Sem tarefas programadas para hoje.</p>';
+      : `<p class="text-sm text-amber-700">${todayEmptyLabel}</p>`;
     const todayMetaBadges = [];
     if (todaysCheckouts.length) {
       todayMetaBadges.push(
-        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-rose-400"></span>${todaysCheckouts.length} saída${todaysCheckouts.length === 1 ? '' : 's'}</span>`
+        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-rose-400"></span>${checkoutBadgeLabel(
+          todaysCheckouts.length
+        )}</span>`
       );
     }
     if (todaysCheckins.length) {
       todayMetaBadges.push(
-        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>${todaysCheckins.length} entrada${todaysCheckins.length === 1 ? '' : 's'}</span>`
+        html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>${checkinBadgeLabel(
+          todaysCheckins.length
+        )}</span>`
       );
     }
     const todayMetaHtml = todayMetaBadges.length ? `<div class="flex flex-wrap gap-2">${todayMetaBadges.join('')}</div>` : '';
     const todayWeekdayLabel = todayBucket.weekdayLabel || capitalizeMonth(today.format('dddd'));
     const importantMessages = [];
     if (board.overdueTasks && board.overdueTasks.length) {
+      const count = board.overdueTasks.length;
       importantMessages.push({
         tone: 'alert',
-        text: `${board.overdueTasks.length} tarefa${board.overdueTasks.length === 1 ? '' : 's'} em atraso aguardam ação.`
+        text: t('dashboard.housekeeping.alerts.overdue', '{{count}} tarefa{{suffix}} em atraso aguardam ação.', {
+          count,
+          suffix: count === 1 ? '' : 's'
+        })
       });
     }
     if (board.backlogCheckouts && board.backlogCheckouts.length) {
+      const count = board.backlogCheckouts.length;
       importantMessages.push({
         tone: 'warning',
-        text: `${board.backlogCheckouts.length} unidade${board.backlogCheckouts.length === 1 ? '' : 's'} aguardam limpeza após check-out.`
+        text: t('dashboard.housekeeping.alerts.backlog', '{{count}} unidade{{suffix}} aguardam limpeza após check-out.', {
+          count,
+          suffix: count === 1 ? '' : 's'
+        })
       });
     }
     if (highPriorityCount) {
+      const count = highPriorityCount;
       importantMessages.push({
         tone: 'info',
-        text: `${highPriorityCount} tarefa${highPriorityCount === 1 ? '' : 's'} com prioridade alta estão abertas.`
+        text: t('dashboard.housekeeping.alerts.highPriority', '{{count}} tarefa{{suffix}} com prioridade alta estão abertas.', {
+          count,
+          suffix: count === 1 ? '' : 's'
+        })
       });
     }
     if (!importantMessages.length) {
-      importantMessages.push({ tone: 'info', text: 'Sem alertas no momento. Continue o excelente trabalho!' });
+      importantMessages.push({
+        tone: 'info',
+        text: t('dashboard.housekeeping.alerts.none', 'Sem alertas no momento. Continue o excelente trabalho!')
+      });
     }
     const messageToneClass = tone => {
       if (tone === 'alert') return 'bg-rose-50 border-rose-200 text-rose-700';
@@ -1153,17 +1229,17 @@ module.exports = function registerBackoffice(app, context) {
       .join('')}</ul>`;
     const quickStats = [
       {
-        label: 'Pendentes',
+        label: t('dashboard.housekeeping.stats.pending', 'Pendentes'),
         value: pendingCount,
         className: 'border-amber-200 bg-amber-50 text-amber-700'
       },
       {
-        label: 'Em curso',
+        label: t('dashboard.housekeeping.stats.inProgress', 'Em curso'),
         value: inProgressCount,
         className: 'border-orange-200 bg-orange-50 text-orange-700'
       },
       {
-        label: 'Prioridade alta',
+        label: t('dashboard.housekeeping.stats.highPriority', 'Prioridade alta'),
         value: highPriorityCount,
         className: 'border-rose-200 bg-rose-50 text-rose-700'
       }
@@ -1226,6 +1302,11 @@ module.exports = function registerBackoffice(app, context) {
       )
       .join('');
     const weeklyBuckets = Array.isArray(board.buckets) ? board.buckets.slice(0, 6) : [];
+    const weeklyTaskCountLabel = count =>
+      t('dashboard.housekeeping.taskCount', '{{count}} tarefa{{suffix}}', { count, suffix: count === 1 ? '' : 's' });
+    const weeklyExtraLabel = extra => t('dashboard.housekeeping.moreTasks', '+{{count}} tarefa(s)', { count: extra });
+    const weeklyEmptyLabel = t('dashboard.housekeeping.noTasks', 'Sem tarefas');
+    const todayBadgeText = esc(t('general.today', 'Hoje'));
     const weeklyHtml = weeklyBuckets.length
       ? `<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">${weeklyBuckets
           .map(bucket => {
@@ -1239,28 +1320,30 @@ module.exports = function registerBackoffice(app, context) {
                   <h3 class="text-base font-semibold text-slate-900">${esc(bucket.displayLabel || '')}</h3>
                 </div>
                 ${bucket.isToday
-                  ? '<span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">Hoje</span>'
+                  ? `<span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">${todayBadgeText}</span>`
                   : ''}
               </header>
-              <p class="text-sm text-slate-500">${taskList.length ? `${taskList.length} tarefa${taskList.length === 1 ? '' : 's'}` : 'Sem tarefas'}</p>
+              <p class="text-sm text-slate-500">${taskList.length ? esc(weeklyTaskCountLabel(taskList.length)) : esc(weeklyEmptyLabel)}</p>
               ${taskList.length
                 ? `<ul class="space-y-1 text-xs text-slate-600">${taskList
                     .slice(0, 3)
                     .map(task => `<li>• ${esc(task.title)}</li>`)
-                    .join('')}</ul>${taskList.length > 3 ? '<p class="text-xs text-slate-400">+' + (taskList.length - 3) + ' tarefa(s)</p>' : ''}`
+                    .join('')}</ul>${taskList.length > 3 ? `<p class="text-xs text-slate-400">${esc(weeklyExtraLabel(taskList.length - 3))}</p>` : ''}`
                 : ''}
               ${(checkinCount || checkoutCount)
                 ? `<div class="flex flex-wrap gap-2 text-[11px] text-slate-600">
-                    ${checkoutCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-600">${checkoutCount} saída${checkoutCount === 1 ? '' : 's'}</span>` : ''}
-                    ${checkinCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-600">${checkinCount} entrada${checkinCount === 1 ? '' : 's'}</span>` : ''}
+                    ${checkoutCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-600">${checkoutBadgeLabel(checkoutCount)}</span>` : ''}
+                    ${checkinCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-600">${checkinBadgeLabel(checkinCount)}</span>` : ''}
                   </div>`
                 : ''}
             </article>`;
           })
           .join('')}</div>`
-      : '<p class="text-sm text-amber-700">Sem tarefas planeadas para os próximos dias.</p>';
+      : `<p class="text-sm text-amber-700">${esc(t('dashboard.housekeeping.upcomingEmpty', 'Sem tarefas planeadas para os próximos dias.'))}</p>`;
+    const inventoryEmptyStateLabel = t('dashboard.housekeeping.inventoryNoneActive', 'Sem tarefas ativas');
+    const taskTypeMetaLabel = type => t(`dashboard.housekeeping.taskTypeKey.${type}`, type);
     const taskTypeInventory = typeOptions.map(type => {
-      const label = HOUSEKEEPING_TYPE_LABELS[type] || type;
+      const label = getTypeLabel(type);
       const tasksForType = totalTasks.filter(task => task.task_type === type);
       const pending = tasksForType.filter(task => task.status === 'pending').length;
       const inProgress = tasksForType.filter(task => task.status === 'in_progress').length;
@@ -1271,26 +1354,35 @@ module.exports = function registerBackoffice(app, context) {
           .map(item => {
             const totalActive = item.pending + item.inProgress;
             const statusLabel = totalActive
-              ? `${item.pending} pendente${item.pending === 1 ? '' : 's'} · ${item.inProgress} em curso`
-              : 'Sem tarefas ativas';
+              ? t(
+                  'dashboard.housekeeping.inventoryActiveStatus',
+                  '{{pending}} pendente{{pendingSuffix}} · {{inProgress}} em curso',
+                  {
+                    pending: item.pending,
+                    pendingSuffix: item.pending === 1 ? '' : 's',
+                    inProgress: item.inProgress
+                  }
+                )
+              : inventoryEmptyStateLabel;
             return html`<tr>
               <td data-label="Item">
                 <div class="font-medium text-slate-800">${esc(item.label)}</div>
-                <div class="text-xs text-slate-500">${esc(item.type === 'custom' ? 'Manual' : item.type)}</div>
+                <div class="text-xs text-slate-500">${esc(taskTypeMetaLabel(item.type))}</div>
               </td>
               <td data-label="Quantidade" class="text-sm text-slate-600">${esc(statusLabel)}</td>
             </tr>`;
           })
           .join('')
-      : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem tarefas registadas.</td></tr>';
+      : `<tr><td colspan="2" class="text-sm text-center text-amber-700">${esc(t('general.noData', 'Sem dados disponíveis'))}</td></tr>`;
     const propertyTaskStats = new Map();
-    const propertyKey = (id, name) => (id !== null && id !== undefined ? `prop:${id}` : `none:${name || 'Sem propriedade'}`);
+    const noPropertyLabel = t('dashboard.housekeeping.noProperty', 'Sem propriedade');
+    const propertyKey = (id, name) => (id !== null && id !== undefined ? `prop:${id}` : `none:${name || noPropertyLabel}`);
     totalTasks.forEach(task => {
       const key = propertyKey(task.property_id, task.property_name);
       if (!propertyTaskStats.has(key)) {
         propertyTaskStats.set(key, {
           id: task.property_id ?? null,
-          name: task.property_name || 'Sem propriedade',
+          name: task.property_name || noPropertyLabel,
           pending: 0,
           inProgress: 0,
           highPriority: 0
@@ -1334,6 +1426,21 @@ module.exports = function registerBackoffice(app, context) {
       if (status === 'Check-out hoje') return 'bg-orange-100 text-orange-700';
       return 'bg-emerald-100 text-emerald-700';
     };
+    const occupancyStatusLabel = status => {
+      if (status === 'Ocupado') return t('dashboard.housekeeping.status.busy', 'Ocupado');
+      if (status === 'Check-in hoje') return t('dashboard.housekeeping.status.checkinToday', 'Check-in hoje');
+      if (status === 'Check-out hoje') return t('dashboard.housekeeping.status.checkoutToday', 'Check-out hoje');
+      if (status === 'Livre') return t('dashboard.housekeeping.status.free', 'Livre');
+      return t('dashboard.housekeeping.status.none', 'Sem reservas');
+    };
+    const propertyStatsLabel = (pending, inProgress) =>
+      t('dashboard.housekeeping.propertyStats', '{{pending}} pendente{{pendingSuffix}} · {{inProgress}} em curso', {
+        pending,
+        pendingSuffix: pending === 1 ? '' : 's',
+        inProgress
+      });
+    const propertyHighPriorityLabel = count =>
+      t('dashboard.housekeeping.propertiesHighPriority', 'Prioridade alta: {{count}}', { count });
     const propertyRows = [];
     properties.forEach(property => {
       const key = propertyKey(property.id, property.name);
@@ -1348,16 +1455,16 @@ module.exports = function registerBackoffice(app, context) {
       const status = occupancy ? occupancy.status : 'Livre';
       propertyRows.push(
         html`<tr>
-          <td data-label="Propriedade">
+          <td data-label="${propertyHeaderLabel}">
             <div class="font-medium text-slate-800">${esc(property.name)}</div>
-            <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
+            <div class="text-xs text-slate-500">${esc(propertyStatsLabel(stats.pending, stats.inProgress))}</div>
             ${stats.highPriority
-              ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
+              ? `<div class="text-xs text-rose-600">${esc(propertyHighPriorityLabel(stats.highPriority))}</div>`
               : ''}
           </td>
-          <td data-label="Ocupação" class="text-right md:text-left">
+          <td data-label="${occupancyHeaderLabel}" class="text-right md:text-left">
             <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${occupancyBadgeClass(status)}">${esc(
-              status
+              occupancyStatusLabel(status)
             )}</span>
           </td>
         </tr>`
@@ -1367,219 +1474,331 @@ module.exports = function registerBackoffice(app, context) {
       if (stats.id !== null && stats.id !== undefined) return;
       propertyRows.push(
         html`<tr>
-          <td data-label="Propriedade">
+          <td data-label="${propertyHeaderLabel}">
             <div class="font-medium text-slate-800">${esc(stats.name)}</div>
-            <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
+            <div class="text-xs text-slate-500">${esc(propertyStatsLabel(stats.pending, stats.inProgress))}</div>
             ${stats.highPriority
-              ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
+              ? `<div class="text-xs text-rose-600">${esc(propertyHighPriorityLabel(stats.highPriority))}</div>`
               : ''}
           </td>
-          <td data-label="Ocupação" class="text-right md:text-left">
-            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-slate-100 text-slate-600">Sem reservas</span>
+          <td data-label="${occupancyHeaderLabel}" class="text-right md:text-left">
+            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-slate-100 text-slate-600">${esc(
+              occupancyStatusLabel('Sem reservas')
+            )}</span>
           </td>
         </tr>`
       );
     });
     const propertyTableRowsHtml = propertyRows.length
       ? propertyRows.join('')
-      : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
-    const body = html`
-      <div class="hk-dashboard space-y-8">
-        <header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
+      : `<tr><td colspan="2" class="text-sm text-center text-amber-700">${esc(t('dashboard.housekeeping.noProperties', 'Sem propriedades registadas.'))}</td></tr>`;
+    const propertyHeaderLabel = esc(t('dashboard.housekeeping.propertyColumn', 'Propriedade'));
+    const occupancyHeaderLabel = esc(t('dashboard.housekeeping.occupancyColumn', 'Ocupação'));
+    const taskColumnLabel = esc(t('dashboard.housekeeping.taskColumn', 'Tarefa'));
+    const unitColumnLabel = esc(t('dashboard.housekeeping.unitColumn', 'Unidade'));
+    const completedColumnLabel = esc(t('dashboard.housekeeping.completedColumn', 'Concluída'));
+    const completedByColumnLabel = esc(t('dashboard.housekeeping.completedByColumn', 'Por'));
+    const reopenLabel = esc(t('dashboard.housekeeping.reopen', 'Reabrir'));
+    const completedTitleLabel = esc(t('dashboard.housekeeping.completed7d', 'Concluídas nos últimos 7 dias'));
+    const completedCountLabel = count =>
+      esc(
+        t('dashboard.housekeeping.completedCount', '{{count}} registo{{suffix}}', {
+          count,
+          suffix: count === 1 ? '' : 's'
+        })
+      );
+    const inventoryItemLabel = esc(t('dashboard.housekeeping.inventoryItem', 'Item'));
+    const inventoryQuantityLabel = esc(t('dashboard.housekeeping.inventoryQuantity', 'Quantidade'));
+    const boardModuleTitle = esc(t('dashboard.housekeeping.boardTitle', 'Mapa de limpezas'));
+
+    const dashboardTitle = esc(t('dashboard.housekeeping.title', 'Gestão de limpezas'));
+    const dashboardSubtitle = esc(t('dashboard.housekeeping.subtitle', 'Visualize prioridades, acompanhe tarefas em tempo real e mantenha a equipa alinhada.'));
+    const moduleRefreshLabel = esc(t('dashboard.moduleRefresh', 'Atualizar'));
+    const pendingLabel = esc(t('dashboard.housekeeping.stats.pending', 'Pendentes'));
+    const inProgressLabel = esc(t('dashboard.housekeeping.stats.inProgress', 'Em curso'));
+    const highPriorityLabel = esc(t('dashboard.housekeeping.stats.highPriority', 'Alta prioridade'));
+    const todayTitle = esc(t('dashboard.housekeeping.today', 'Tarefas de hoje'));
+    const messagesTitle = esc(t('dashboard.housekeeping.messages', 'Mensagens'));
+    const messagesSummaryLabel = esc(t('dashboard.housekeeping.dailySummary', 'Resumo diário'));
+    const tasksTitle = esc(t('dashboard.housekeeping.tasks', 'Tarefas'));
+    const avgTimeTitle = esc(t('dashboard.housekeeping.avgTime', 'Tempo médio por limpeza'));
+    const weeklyTitle = esc(t('dashboard.housekeeping.weekly', 'Tarefas semanais'));
+    const inventoryTitle = esc(t('dashboard.housekeeping.inventory', 'Inventário de material'));
+    const propertiesTitle = esc(t('dashboard.housekeeping.properties', 'Listagem de propriedades'));
+    const newTaskTitle = esc(t('dashboard.housekeeping.newTask', 'Nova tarefa de limpeza'));
+    const newTaskHint = esc(t('dashboard.housekeeping.newTaskHint', 'Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.'));
+    const noDataLabel = esc(t('general.noData', 'Sem dados disponíveis'));
+    const taskTypeLabel = esc(t('dashboard.housekeeping.type', 'Tipo de tarefa'));
+    const priorityLabel = esc(t('dashboard.housekeeping.priority', 'Prioridade'));
+    const bookingOptionalLabel = esc(t('dashboard.housekeeping.bookingOptional', 'Reserva (opcional)'));
+    const selectBookingLabel = esc(t('dashboard.housekeeping.selectBooking', 'Selecionar reserva...'));
+    const unitOptionalLabel = esc(t('dashboard.housekeeping.unitOptional', 'Unidade (opcional)'));
+    const selectUnitLabel = esc(t('dashboard.housekeeping.selectUnit', 'Selecionar unidade...'));
+    const propertyOptionalLabel = esc(t('dashboard.housekeeping.propertyOptional', 'Propriedade (opcional)'));
+    const selectPropertyLabel = esc(t('dashboard.housekeeping.selectProperty', 'Selecionar propriedade...'));
+    const dueDateLabel = esc(t('dashboard.housekeeping.dueDate', 'Data prevista'));
+    const dueTimeLabel = esc(t('dashboard.housekeeping.dueTimeOptional', 'Hora limite (opcional)'));
+    const titleLabel = esc(t('dashboard.housekeeping.titleLabel', 'Título'));
+    const detailsOptionalLabel = esc(t('dashboard.housekeeping.detailsOptional', 'Notas para a equipa (opcional)'));
+    const detailsPlaceholder = esc(
+      t(
+        'dashboard.housekeeping.detailsPlaceholder',
+        'Indique instruções específicas ou pedidos dos hóspedes'
+      )
+    );
+    const noGuestText = t('dashboard.housekeeping.noGuest', 'Sem hóspede');
+    const noGuestLabel = esc(noGuestText);
+    const totalUpcomingTasks = weeklyBuckets.reduce(
+      (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
+      0
+    );
+    const weeklySummary = weeklyBuckets.length
+      ? esc(
+          t(
+            'dashboard.housekeeping.totalUpcoming',
+            '{{count}} tarefas nos próximos dias',
+            { count: totalUpcomingTasks }
+          )
+        )
+      : esc(t('dashboard.housekeeping.noUpcoming', 'Sem tarefas agendadas'));
+    const overviewModule = renderDashboardModule({
+      id: 'housekeeping-overview',
+      title: dashboardTitle,
+      description: dashboardSubtitle,
+      body: html`<header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
           <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 class="text-3xl font-semibold text-amber-900">Gestão de limpezas</h1>
-              <p class="mt-1 text-sm text-amber-800">Visualize prioridades, acompanhe tarefas em tempo real e mantenha a equipa alinhada.</p>
+              <h1 class="text-3xl font-semibold text-amber-900">${dashboardTitle}</h1>
+              <p class="mt-1 text-sm text-amber-800">${dashboardSubtitle}</p>
             </div>
             <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
               <div class="rounded-2xl border border-amber-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-amber-600">Pendentes</p>
+                <p class="text-xs uppercase tracking-wide text-amber-600">${pendingLabel}</p>
                 <p class="text-2xl font-semibold text-amber-900">${pendingCount}</p>
               </div>
               <div class="rounded-2xl border border-orange-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-orange-500">Em curso</p>
+                <p class="text-xs uppercase tracking-wide text-orange-500">${inProgressLabel}</p>
                 <p class="text-2xl font-semibold text-orange-700">${inProgressCount}</p>
               </div>
               <div class="rounded-2xl border border-rose-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                <p class="text-xs uppercase tracking-wide text-rose-500">Alta prioridade</p>
+                <p class="text-xs uppercase tracking-wide text-rose-500">${highPriorityLabel}</p>
                 <p class="text-2xl font-semibold text-rose-600">${highPriorityCount}</p>
               </div>
             </div>
           </div>
-        </header>
-        <section class="grid gap-5 lg:grid-cols-[1.8fr_1.2fr_1fr]">
-          <div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm space-y-4">
-            <div class="flex items-center justify-between">
-              <h2 class="text-lg font-semibold text-amber-900">Tarefas de hoje</h2>
-              <span class="text-xs uppercase tracking-wide text-amber-600">${esc(todayWeekdayLabel)}</span>
-            </div>
-            ${todayTasksHtml}
-            ${todayMetaHtml}
-          </div>
-          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-            <div class="flex items-center justify-between">
-              <h2 class="text-lg font-semibold text-amber-900">Mensagens</h2>
-              <span class="text-xs text-amber-500">Resumo diário</span>
-            </div>
+        </header>`,
+      size: 'wide',
+      hydrate: false,
+      showRefresh: false
+    });
+    const modules = [
+      overviewModule,
+      renderDashboardModule({
+        id: 'housekeeping-today',
+        title: todayTitle,
+        description: `<span class="dashboard-module__meta">${esc(todayWeekdayLabel)}</span>`,
+        body: html`<div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm space-y-4">
+            ${todayTasksHtml}${todayMetaHtml}
+          </div>`,
+        size: 'split',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-messages',
+        title: messagesTitle,
+        description: `<span class="dashboard-module__meta">${messagesSummaryLabel}</span>`,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
             ${messagesHtml}
-          </div>
-          <div class="space-y-4">
-            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
-              <h2 class="text-lg font-semibold text-amber-900">Tarefas</h2>
-              <div class="grid gap-3">${quickStatsHtml}</div>
-            </div>
-            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
-              <h2 class="text-lg font-semibold text-amber-900">Tempo médio por limpeza</h2>
-              <div class="grid gap-3">${tempoMetricsHtml}</div>
-            </div>
-          </div>
-        </section>
-        <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-lg font-semibold text-amber-900">Tarefas semanais</h2>
-            <span class="text-sm text-amber-600">${weeklyBuckets.length
-              ? `${weeklyBuckets.reduce(
-                  (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
-                  0
-                )} tarefa${weeklyBuckets.reduce(
-                  (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
-                  0
-                ) === 1 ? '' : 's'} nos próximos dias`
-              : 'Sem tarefas agendadas'}</span>
-          </div>
-          ${weeklyHtml}
-        </section>
-        <section class="grid gap-5 lg:grid-cols-2">
-          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-            <h2 class="text-lg font-semibold text-amber-900">Inventário de material</h2>
+          </div>`,
+        size: 'split',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-quick-stats',
+        title: tasksTitle,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
+            <div class="grid gap-3">${quickStatsHtml}</div>
+          </div>`,
+        size: 'thirds',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-tempo',
+        title: avgTimeTitle,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
+            <div class="grid gap-3">${tempoMetricsHtml}</div>
+          </div>`,
+        size: 'thirds',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-weekly',
+        title: weeklyTitle,
+        description: weeklySummary,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+            ${weeklyHtml}
+          </div>`,
+        size: 'wide',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-inventory',
+        title: inventoryTitle,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
             <div class="bo-table responsive-table">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="text-left text-amber-600">
-                    <th>Item</th>
-                    <th>Quantidade</th>
+                    <th>${inventoryItemLabel}</th>
+                    <th>${inventoryQuantityLabel}</th>
                   </tr>
                 </thead>
                 <tbody>${inventoryRowsHtml}</tbody>
               </table>
             </div>
-          </div>
-          <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-            <h2 class="text-lg font-semibold text-amber-900">Listagem de propriedades</h2>
+          </div>`,
+        size: 'split',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-properties',
+        title: propertiesTitle,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
             <div class="bo-table responsive-table">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="text-left text-amber-600">
-                    <th>Propriedade</th>
-                    <th class="md:text-right">Ocupação</th>
+                    <th>${propertyHeaderLabel}</th>
+                    <th class="md:text-right">${occupancyHeaderLabel}</th>
                   </tr>
                 </thead>
                 <tbody>${propertyTableRowsHtml}</tbody>
               </table>
             </div>
-          </div>
-        </section>
-        <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-          <div>
-            <h2 class="text-lg font-semibold text-amber-900">Nova tarefa de limpeza</h2>
-            <p class="text-sm text-amber-700">Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.</p>
-          </div>
-          <form method="post" action="/admin/limpeza/tarefas" class="grid gap-4">
-            <input type="hidden" name="redirect" value="/admin/limpeza" />
-            <div class="grid gap-3 md:grid-cols-2">
+          </div>`,
+        size: 'split',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-new-task',
+        title: newTaskTitle,
+        description: newTaskHint,
+        body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
+            <form method="post" action="/admin/limpeza/tarefas" class="grid gap-4" data-housekeeping-form>
+              <input type="hidden" name="redirect" value="/admin/limpeza" />
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${taskTypeLabel}</span>
+                  <select name="task_type" class="input">
+                    ${typeOptions
+                      .map(
+                        value =>
+                          `<option value="${esc(value)}">${esc(getTypeLabel(value))}</option>`
+                      )
+                      .join('')}
+                  </select>
+                </label>
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${priorityLabel}</span>
+                  <select name="priority" class="input">
+                    ${priorityOptions
+                      .map(value => `<option value="${esc(value)}">${esc(priorityOptionLabel(value))}</option>`)
+                      .join('')}
+                  </select>
+                </label>
+              </div>
               <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Tipo de tarefa</span>
-                <select name="task_type" class="input">
-                  ${typeOptions
+                <span class="font-medium text-slate-700">${bookingOptionalLabel}</span>
+                <select name="booking_id" class="input">
+                  <option value="">${selectBookingLabel}</option>
+                  ${upcomingBookings
                     .map(
-                      value =>
-                        `<option value="${esc(value)}">${esc(HOUSEKEEPING_TYPE_LABELS[value] || value)}</option>`
+                      booking =>
+                        `<option value="${booking.id}">${esc(
+                          `${booking.property_name} · ${booking.unit_name} — ${booking.guest_name || noGuestText} (${formatDateRangeShort(
+                            booking.checkin,
+                            booking.checkout
+                          )})`
+                        )}</option>`
                     )
                     .join('')}
                 </select>
               </label>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Prioridade</span>
-                <select name="priority" class="input">
-                  ${priorityOptions
-                    .map(value => `<option value="${esc(value)}">${esc(value === 'alta' ? 'Alta' : value === 'baixa' ? 'Baixa' : 'Normal')}</option>`)
-                    .join('')}
-                </select>
-              </label>
-            </div>
-            <label class="grid gap-2 text-sm">
-              <span class="font-medium text-slate-700">Reserva (opcional)</span>
-              <select name="booking_id" class="input">
-                <option value="">Selecionar reserva...</option>
-                ${upcomingBookings
-                  .map(
-                    booking =>
-                      `<option value="${booking.id}">${esc(
-                        `${booking.property_name} · ${booking.unit_name} — ${booking.guest_name || 'Sem hóspede'} (${formatDateRangeShort(
-                          booking.checkin,
-                          booking.checkout
-                        )})`
-                      )}</option>`
-                  )
-                  .join('')}
-              </select>
-            </label>
-            <div class="grid gap-3 md:grid-cols-2">
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Unidade (opcional)</span>
-                <select name="unit_id" class="input">
-                  <option value="">Selecionar unidade...</option>
-                  ${units
-                    .map(unit => `<option value="${unit.id}">${esc(`${unit.property_name} · ${unit.name}`)}</option>`)
-                    .join('')}
-                </select>
-              </label>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Propriedade (opcional)</span>
-                <select name="property_id" class="input">
-                  <option value="">Selecionar propriedade...</option>
-                  ${properties.map(property => `<option value="${property.id}">${esc(property.name)}</option>`).join('')}
-                </select>
-              </label>
-            </div>
-            <div class="grid gap-3 md:grid-cols-2">
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Data prevista</span>
-                <input type="date" name="due_date" class="input" />
-              </label>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Hora limite (opcional)</span>
-                <input type="time" name="due_time" class="input" />
-              </label>
-            </div>
-            <label class="grid gap-2 text-sm">
-              <span class="font-medium text-slate-700">Título</span>
-              <input name="title" class="input" placeholder="Ex.: Preparar para nova entrada" />
-            </label>
-            <label class="grid gap-2 text-sm">
-              <span class="font-medium text-slate-700">Notas para a equipa (opcional)</span>
-              <textarea name="details" class="input min-h-[96px]" placeholder="Indique instruções específicas ou pedidos dos hóspedes"></textarea>
-            </label>
-            <div class="flex justify-end">
-              <button class="btn btn-primary">Criar tarefa</button>
-            </div>
-          </form>
-        </section>
-        <section class="space-y-6">${boardHtml}</section>
-        ${recentCompleted.length
-          ? html`<section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-amber-900">Concluídas nos últimos 7 dias</h2>
-                <span class="text-sm text-amber-600">${completedLast7.length} no total</span>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${unitOptionalLabel}</span>
+                  <select name="unit_id" class="input">
+                    <option value="">${selectUnitLabel}</option>
+                    ${units.map(unit => `<option value="${unit.id}">${esc(`${unit.property_name} · ${unit.name}`)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${propertyOptionalLabel}</span>
+                  <select name="property_id" class="input">
+                    <option value="">${selectPropertyLabel}</option>
+                    ${properties.map(property => `<option value="${property.id}">${esc(property.name)}</option>`).join('')}
+                  </select>
+                </label>
               </div>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${dueDateLabel}</span>
+                  <input type="date" name="due_date" class="input" />
+                </label>
+                <label class="grid gap-2 text-sm">
+                  <span class="font-medium text-slate-700">${dueTimeLabel}</span>
+                  <input type="time" name="due_time" class="input" />
+                </label>
+              </div>
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">${titleLabel}</span>
+                <input name="title" class="input" placeholder="${esc(t('dashboard.housekeeping.titlePlaceholder', 'Ex.: Preparar para nova entrada'))}" />
+              </label>
+              <label class="grid gap-2 text-sm">
+                <span class="font-medium text-slate-700">${detailsOptionalLabel}</span>
+                <textarea name="details" class="input min-h-[96px]" placeholder="${detailsPlaceholder}"></textarea>
+              </label>
+              <div class="flex justify-end">
+                <button class="btn btn-primary" data-housekeeping-submit>${esc(t('dashboard.housekeeping.create', 'Criar tarefa'))}</button>
+              </div>
+            </form>
+          </div>`,
+        size: 'wide',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel,
+        showRefresh: false
+      }),
+      renderDashboardModule({
+        id: 'housekeeping-board',
+        title: boardModuleTitle,
+        body: html`<section class="space-y-6">${boardHtml}</section>`,
+        size: 'wide',
+        hydrate: false,
+        refreshLabel: moduleRefreshLabel
+      })
+    ];
+    if (recentCompleted.length) {
+      modules.push(
+        renderDashboardModule({
+          id: 'housekeeping-recent',
+          title: completedTitleLabel,
+          description: `<span class="dashboard-module__meta">${completedCountLabel(completedLast7.length)}</span>`,
+          body: html`<div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
               <div class="responsive-table">
                 <table>
                   <thead>
                     <tr>
-                      <th>Tarefa</th>
-                      <th>Unidade</th>
-                      <th>Concluída</th>
-                      <th>Por</th>
+                      <th>${taskColumnLabel}</th>
+                      <th>${unitColumnLabel}</th>
+                      <th>${completedColumnLabel}</th>
+                      <th>${completedByColumnLabel}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -1587,22 +1806,20 @@ module.exports = function registerBackoffice(app, context) {
                     ${recentCompleted
                       .map(
                         task => html`<tr>
-                          <td data-label="Tarefa">
+                          <td data-label="${taskColumnLabel}">
                             <div class="font-medium text-slate-800">${esc(task.title)}</div>
-                            <div class="text-xs text-slate-500">${esc(HOUSEKEEPING_TYPE_LABELS[task.task_type] || task.task_type)}</div>
+                            <div class="text-xs text-slate-500">${esc(getTypeLabel(task.task_type))}</div>
                           </td>
-                          <td data-label="Unidade">
+                          <td data-label="${unitColumnLabel}">
                             ${task.property_name ? `<div>${esc(task.property_name)}</div>` : ''}
                             ${task.unit_name ? `<div class="text-xs text-slate-500">${esc(task.unit_name)}</div>` : ''}
                           </td>
-                          <td data-label="Concluída">
-                            ${task.completed_at ? esc(dayjs(task.completed_at).format('DD/MM HH:mm')) : '—'}
-                          </td>
-                          <td data-label="Por">${task.completed_by_username ? esc(task.completed_by_username) : '—'}</td>
+                          <td data-label="${completedColumnLabel}">${task.completed_at ? esc(dayjs(task.completed_at).format('DD/MM HH:mm')) : '—'}</td>
+                          <td data-label="${completedByColumnLabel}">${task.completed_by_username ? esc(task.completed_by_username) : '—'}</td>
                           <td class="text-right">
                             <form method="post" action="/admin/limpeza/tarefas/${task.id}/reabrir">
                               <input type="hidden" name="redirect" value="/admin/limpeza" />
-                              <button class="btn btn-light btn-xs" type="submit">Reabrir</button>
+                              <button class="btn btn-light btn-xs" type="submit">${reopenLabel}</button>
                             </form>
                           </td>
                         </tr>`
@@ -1611,16 +1828,27 @@ module.exports = function registerBackoffice(app, context) {
                   </tbody>
                 </table>
               </div>
-            </section>`
-          : ''}
+            </div>`,
+          size: 'wide',
+          hydrate: false,
+          refreshLabel: moduleRefreshLabel
+        })
+      );
+    }
+    const body = html`
+      <div class="dashboard-grid">
+        ${modules.join('')}
       </div>
     `;
     res.send(
       layout({
-        title: 'Gestão de limpezas',
+        title: dashboardTitle,
         activeNav: 'housekeeping',
         user: req.user,
         branding: resolveBrandingForRequest(req),
+        locale: req.locale,
+        t,
+        csrfToken: res.locals.csrfToken,
         body
       })
     );
@@ -3223,6 +3451,9 @@ module.exports = function registerBackoffice(app, context) {
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
+        locale: req.locale,
+        t: req.t,
+        csrfToken: res.locals.csrfToken,
         notifications,
         pageClass: 'page-backoffice',
         body: html`
@@ -3929,6 +4160,9 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
     user: req.user,
     activeNav: 'backoffice',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <div class="flex flex-col gap-6">
@@ -4112,6 +4346,9 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     user: req.user,
     activeNav: 'backoffice',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
@@ -4549,6 +4786,9 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
     user: req.user,
     activeNav: 'bookings',
     branding: resolveBrandingForRequest(req),
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
@@ -4639,6 +4879,9 @@ app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'),
     user: req.user,
     activeNav: 'bookings',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
       <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
@@ -4922,6 +5165,9 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
     user: req.user,
     activeNav: 'branding',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mt-2">Identidade visual</h1>
@@ -5446,6 +5692,9 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
     user: req.user,
     activeNav: 'audit',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
       ${canViewAudit ? `
@@ -5642,7 +5891,15 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
   }
   const theme = resolveBrandingForRequest(req);
-  res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
+  res.send(layout({
+    title: 'Utilizadores',
+    user: req.user,
+    activeNav: 'users',
+    branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
+    body: html`
     <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
     <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
     ${errorMessage

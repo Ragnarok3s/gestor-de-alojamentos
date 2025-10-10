@@ -517,6 +517,10 @@ module.exports = function registerOwnersPortal(app, context) {
         title: 'Área de Proprietários',
         user: viewer,
         activeNav: 'owners',
+        branding: resolveBrandingForRequest(req),
+        locale: req.locale,
+        t: req.t,
+        csrfToken: res.locals.csrfToken,
         pageClass: 'page-backoffice page-owners',
         body
       })

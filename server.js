@@ -20,6 +20,16 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 
+const {
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  getLocaleFromRequest,
+  translate,
+  normalizeLocale,
+  resolveLocale,
+  getLocaleLabel
+} = require('./src/services/i18n');
+
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
@@ -51,6 +61,41 @@ const secureCookies =
   !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
 const csrfProtection = createCsrfProtection({ secureCookies });
 app.use(csrfProtection.middleware);
+
+const languageCookieOptions = {
+  httpOnly: false,
+  sameSite: 'lax',
+  secure: secureCookies,
+  maxAge: 1000 * 60 * 60 * 24 * 365
+};
+
+app.use((req, res, next) => {
+  const queryLocale = resolveLocale(req.query && req.query.lang);
+  if (queryLocale) {
+    res.cookie('lang', queryLocale, languageCookieOptions);
+  }
+  const locale = getLocaleFromRequest(req);
+  const translator = (key, fallback, replacements) => translate(locale, key, fallback, replacements);
+  req.locale = locale || DEFAULT_LOCALE;
+  req.t = translator;
+  res.locals.locale = req.locale;
+  res.locals.t = translator;
+  res.locals.supportedLocales = SUPPORTED_LOCALES;
+  next();
+});
+
+app.post('/lang', (req, res) => {
+  if (!csrfProtection.validateRequest(req)) {
+    return res.status(403).send('CSRF token inválido');
+  }
+  const requested = resolveLocale(req.body && req.body.lang) || DEFAULT_LOCALE;
+  res.cookie('lang', requested, languageCookieOptions);
+  const redirectTarget =
+    typeof req.body.redirect === 'string' && req.body.redirect.trim()
+      ? req.body.redirect.trim()
+      : req.get('Referer') || '/';
+  res.redirect(redirectTarget);
+});
 
 // ===================== DB =====================
 const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
@@ -2049,7 +2094,26 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 }
 
 // ===================== Layout =====================
-function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
+function layout({
+  title,
+  body,
+  user,
+  activeNav = '',
+  branding,
+  notifications = null,
+  pageClass = '',
+  locale = DEFAULT_LOCALE,
+  t: translateFn = null,
+  supportedLocales = SUPPORTED_LOCALES,
+  csrfToken = null
+}) {
+  const translator =
+    typeof translateFn === 'function'
+      ? translateFn
+      : (key, fallback, replacements) => translate(locale, key, fallback, replacements);
+  const t = (key, fallback, replacements) => translator(key, fallback, replacements);
+  const safeLocale = typeof locale === 'string' && locale.trim() ? locale.trim() : DEFAULT_LOCALE;
+  const availableLocales = Array.isArray(supportedLocales) && supportedLocales.length ? supportedLocales : SUPPORTED_LOCALES;
   const theme = branding || getBranding();
   const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
   const hasUser = !!user;
@@ -2087,13 +2151,23 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
     : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
   const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
   const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+  const notificationFallbackTitle = t('notifications.update', 'Atualização');
+  const notificationsEmptyLabel = t('notifications.empty', 'Sem notificações no momento.');
+  const notificationsLabel = t('nav.notifications', 'Notificações');
+  const notificationsViewBookingsLabel = t('nav.viewBookings', 'Ver reservas');
+  const loginLabel = t('nav.login', 'Login');
+  const logoutLabel = t('nav.logout', 'Log-out');
+  const languageLabel = t('general.language', 'Idioma');
+  const themeLabel = t('general.theme', 'Tema');
+  const themeLightLabel = t('general.themeLight', 'Modo claro');
+  const themeDarkLabel = t('general.themeDark', 'Modo escuro');
 
   const renderNotificationItem = (item) => {
     if (!item) return '';
     const severity = typeof item.severity === 'string' && item.severity.trim()
       ? ` nav-notifications__item--${esc(item.severity.trim())}`
       : '';
-    const title = `<span class="nav-notifications__title">${esc(item.title || 'Atualização')}</span>`;
+    const title = `<span class="nav-notifications__title">${esc(item.title || notificationFallbackTitle)}</span>`;
     const message = item.message ? `<div class="nav-notifications__message">${esc(item.message)}</div>` : '';
     const meta = item.meta ? `<div class="nav-notifications__meta">${esc(item.meta)}</div>` : '';
     if (item.href) {
@@ -2104,58 +2178,85 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
 
   const notificationsPanelHtml = notificationsCount
     ? `<ul class="nav-notifications__list">${notificationsList.map(renderNotificationItem).join('')}</ul>`
-    : '<p class="nav-notifications__empty">Sem notificações no momento.</p>';
+    : `<p class="nav-notifications__empty">${esc(notificationsEmptyLabel)}</p>`;
 
   const notificationsMarkup = hasUser && canAccessBackoffice
     ? `
         <div class="nav-notifications">
           <button type="button" class="nav-notifications__button" data-notifications-toggle aria-haspopup="true" aria-expanded="false" aria-controls="nav-notifications-panel">
             <i data-lucide="bell" class="w-5 h-5"></i>
-            <span class="sr-only">Notificações</span>
+            <span class="sr-only">${esc(notificationsLabel)}</span>
             ${notificationsCount ? `<span class="nav-notifications__badge">${notificationsCount}</span>` : ''}
           </button>
           <div class="nav-notifications__panel" id="nav-notifications-panel" data-notifications-panel hidden>
             <div class="nav-notifications__header">
-              <span>Notificações</span>
+              <span>${esc(notificationsLabel)}</span>
               <span class="nav-notifications__counter">${notificationsCount}</span>
             </div>
             ${notificationsPanelHtml}
-            <div class="nav-notifications__footer"><a class="nav-notifications__footer-link" href="/admin/bookings">Ver reservas</a></div>
+            <div class="nav-notifications__footer"><a class="nav-notifications__footer-link" href="/admin/bookings">${esc(notificationsViewBookingsLabel)}</a></div>
           </div>
         </div>`
     : '';
 
-  const navActionsHtml = hasUser
-    ? `${notificationsMarkup}<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
+  const logoutCsrfField = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}" />` : '';
+  const sessionActionsHtml = hasUser
+    ? `<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
         <form method="post" action="/logout" class="logout-form">
-          <button type="submit">Log-out</button>
+          ${logoutCsrfField}
+          <button type="submit">${esc(logoutLabel)}</button>
         </form>`
-    : '<a class="login-link" href="/login">Login</a>';
+    : `<a class="login-link" href="/login">${esc(loginLabel)}</a>`;
+  const navActionsHtml = `${languageSwitcherHtml}${themeToggleHtml}${hasUser ? notificationsMarkup : ''}${sessionActionsHtml}`;
 
   const navLinks = [];
   const pushNavLink = (key, href, label) => {
     navLinks.push(`<a class="${navClass(key)}" href="${href}">${label}</a>`);
   };
 
+  const languageOptionsHtml = availableLocales
+    .filter(code => SUPPORTED_LOCALES.includes(code))
+    .map(code => {
+      const selected = code === safeLocale ? ' selected' : '';
+      const label = getLocaleLabel(code);
+      return `<option value="${esc(code)}"${selected}>${esc(label)}</option>`;
+    })
+    .join('');
+  const csrfField = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}" />` : '';
+  const languageSwitcherHtml = `<form method="post" action="/lang" class="language-switcher" data-language-switcher>
+      ${csrfField}
+      <input type="hidden" name="redirect" value="" data-language-redirect />
+      <label class="language-switcher__label">
+        <span class="language-switcher__text">${esc(languageLabel)}</span>
+        <select name="lang" class="language-switcher__select" data-language-select aria-label="${esc(languageLabel)}">
+          ${languageOptionsHtml}
+        </select>
+      </label>
+    </form>`;
+  const themeToggleHtml = `<button type="button" class="theme-toggle" data-theme-toggle aria-label="${esc(themeLabel)}" data-theme="light">
+      <i data-lucide="moon-star"></i>
+      <span class="theme-toggle__label" data-theme-toggle-label>${esc(themeLightLabel)}</span>
+    </button>`;
+
   if (!isHousekeepingOnly) {
-    pushNavLink('search', '/search', 'Pesquisar');
+    pushNavLink('search', '/search', esc(t('nav.search', 'Pesquisar')));
   }
   if (can('owners.portal.view')) {
-    pushNavLink('owners', '/owners', 'Área de proprietários');
+    pushNavLink('owners', '/owners', esc(t('nav.owners', 'Área de proprietários')));
   }
   if (can('calendar.view')) {
-    pushNavLink('calendar', '/calendar', 'Mapa de reservas');
+    pushNavLink('calendar', '/calendar', esc(t('nav.calendar', 'Mapa de reservas')));
   }
   if (can('housekeeping.view')) {
-    pushNavLink('housekeeping', '/limpeza/tarefas', 'Limpezas');
+    pushNavLink('housekeeping', '/limpeza/tarefas', esc(t('nav.housekeeping', 'Limpezas')));
   }
   if (canAccessBackoffice && can('dashboard.view')) {
-    pushNavLink('backoffice', '/admin', 'Backoffice');
+    pushNavLink('backoffice', '/admin', esc(t('nav.backoffice', 'Backoffice')));
   }
   // intentionally restrict the top navigation to the primary shortcuts only
 
   return html`<!doctype html>
-  <html lang="pt">
+  <html lang="${esc(safeLocale)}" data-theme="light">
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -2254,7 +2355,73 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .nav-link:hover{color:#424556;}
         .nav-link.active{color:#2f3140;}
         .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,var(--brand-secondary),var(--brand-primary));}
-        .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
+        .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end;}
+        .language-switcher{position:relative;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.85);backdrop-filter:blur(10px);box-shadow:0 10px 20px rgba(15,23,42,.08);}
+        .language-switcher__label{display:flex;align-items:center;gap:8px;font-size:.75rem;font-weight:600;color:#475569;}
+        .language-switcher__text{display:inline-flex;align-items:center;}
+        .language-switcher__select{appearance:none;border:none;background:transparent;font-weight:600;color:inherit;padding-right:18px;cursor:pointer;}
+        .language-switcher__select:focus{outline:none;}
+        .language-switcher::after{content:'\25BE';position:absolute;right:12px;pointer-events:none;color:inherit;font-size:.65rem;}
+        .theme-toggle{display:inline-flex;align-items:center;gap:8px;border-radius:14px;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.85);color:#475569;padding:6px 12px;cursor:pointer;font-weight:600;transition:transform .15s ease,box-shadow .15s ease;box-shadow:0 10px 20px rgba(15,23,42,.08);}
+        .theme-toggle:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(15,23,42,.12);}
+        .theme-toggle i{width:16px;height:16px;}
+        .theme-toggle__label{font-size:.75rem;}
+        .dashboard-grid{display:grid;gap:28px;}
+        .dashboard-module{background:rgba(255,255,255,.95);border:1px solid rgba(148,163,184,.25);border-radius:28px;box-shadow:0 18px 36px rgba(15,23,42,.08);overflow:hidden;display:flex;flex-direction:column;backdrop-filter:blur(6px);}
+        .dashboard-module--wide{grid-column:1 / -1;}
+        .dashboard-module--split{display:flex;flex-direction:column;}
+        .dashboard-module--thirds{display:flex;flex-direction:column;}
+        .dashboard-module__header{display:flex;align-items:flex-start;justify-content:space-between;padding:24px 28px;gap:16px;background:rgba(255,255,255,.82);}
+        .dashboard-module__title{margin:0;font-size:1.15rem;font-weight:600;color:#1f2937;}
+        .dashboard-module__description{margin:4px 0 0;font-size:.85rem;color:#475569;}
+        .dashboard-module__actions{display:flex;align-items:center;gap:10px;}
+        .dashboard-module__refresh{display:inline-flex;align-items:center;gap:6px;border-radius:999px;border:1px solid rgba(148,163,184,.35);padding:6px 12px;background:transparent;color:#475569;font-size:.75rem;font-weight:600;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,background .15s ease;}
+        .dashboard-module__refresh i{width:16px;height:16px;}
+        .dashboard-module__refresh:hover{background:rgba(248,250,252,.85);box-shadow:0 12px 18px rgba(15,23,42,.08);transform:translateY(-1px);}
+        .dashboard-module__body{padding:0 28px 28px;display:grid;gap:18px;}
+        .dashboard-module__meta{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;font-weight:600;}
+        .dashboard-module__stack{display:grid;gap:16px;}
+        .module-skeleton{display:grid;gap:12px;}
+        .module-skeleton__line{height:12px;border-radius:999px;background:linear-gradient(90deg,rgba(226,232,240,.6),rgba(226,232,240,.2),rgba(226,232,240,.6));animation:module-shimmer 1.4s infinite ease-in-out;background-size:200% 100%;}
+        .module-skeleton__line--wide{height:18px;}
+        .module-skeleton__line--short{width:60%;}
+        @keyframes module-shimmer{0%{background-position:0 0;}100%{background-position:-200% 0;}}
+        .module-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px;border-radius:18px;background:rgba(254,226,226,.6);border:1px solid rgba(248,113,113,.35);color:#b91c1c;font-size:.85rem;}
+        .module-error__retry{border:none;background:#b91c1c;color:#fff;padding:6px 12px;border-radius:999px;font-size:.75rem;font-weight:600;cursor:pointer;}
+        .module-error__retry:hover{background:#9f1239;}
+        .dashboard-module[data-module="housekeeping-overview"] .dashboard-module__header{display:none;}
+        .form-error{margin-top:12px;font-size:.8rem;color:#b91c1c;}
+        .optimistic-placeholder{margin-top:8px;}
+        html[data-theme='dark'] body.app-body{background:#0f172a;color:#e2e8f0;}
+        html[data-theme='dark'] .topbar{background:rgba(15,23,42,.9);border-bottom-color:rgba(51,65,85,.6);}
+        html[data-theme='dark'] .brand{color:#e2e8f0;}
+        html[data-theme='dark'] .brand-tagline{color:#94a3b8;}
+        html[data-theme='dark'] .nav-link{color:#94a3b8;}
+        html[data-theme='dark'] .nav-link:hover{color:#f8fafc;}
+        html[data-theme='dark'] .nav-link.active{color:#f8fafc;}
+        html[data-theme='dark'] .language-switcher,
+        html[data-theme='dark'] .theme-toggle{background:rgba(30,41,59,.85);color:#e2e8f0;border-color:rgba(148,163,184,.45);box-shadow:0 12px 24px rgba(2,6,23,.55);}
+        html[data-theme='dark'] .nav-notifications__button{background:rgba(30,41,59,.85);border-color:rgba(148,163,184,.4);color:#e2e8f0;}
+        html[data-theme='dark'] .nav-notifications__button:hover,html[data-theme='dark'] .nav-notifications__button.is-active{background:rgba(30,41,59,.95);border-color:rgba(148,163,184,.7);}
+        html[data-theme='dark'] .nav-notifications__panel{background:#111827;border-color:rgba(148,163,184,.25);box-shadow:0 24px 50px rgba(2,6,23,.65);}
+        html[data-theme='dark'] .nav-notifications__title{color:#f8fafc;}
+        html[data-theme='dark'] .nav-notifications__message{color:#cbd5f5;}
+        html[data-theme='dark'] .nav-notifications__meta{color:#94a3b8;}
+        html[data-theme='dark'] .nav-notifications__item{border-color:rgba(148,163,184,.35);color:#cbd5f5;}
+        html[data-theme='dark'] .nav-notifications__footer-link{color:#94a3b8;}
+        html[data-theme='dark'] .logout-form button,html[data-theme='dark'] .login-link{color:#94a3b8;}
+        html[data-theme='dark'] .logout-form button:hover,html[data-theme='dark'] .login-link:hover{color:#f8fafc;}
+        html[data-theme='dark'] .nav-accent-bar{opacity:.3;}
+        html[data-theme='dark'] .footer{background:rgba(15,23,42,.9);border-top-color:rgba(51,65,85,.6);color:#94a3b8;}
+        html[data-theme='dark'] .footer-inner{color:inherit;}
+        html[data-theme='dark'] .dashboard-module{background:rgba(15,23,42,.72);border-color:rgba(148,163,184,.35);box-shadow:0 20px 42px rgba(2,6,23,.65);}
+        html[data-theme='dark'] .dashboard-module__header{background:rgba(15,23,42,.78);}
+        html[data-theme='dark'] .dashboard-module__title{color:#f8fafc;}
+        html[data-theme='dark'] .dashboard-module__description{color:#cbd5f5;}
+        html[data-theme='dark'] .dashboard-module__refresh{color:#e2e8f0;border-color:rgba(148,163,184,.45);}
+        html[data-theme='dark'] .dashboard-module__refresh:hover{background:rgba(30,41,59,.85);}
+        html[data-theme='dark'] .module-skeleton__line{background:linear-gradient(90deg,rgba(71,85,105,.6),rgba(30,41,59,.35),rgba(71,85,105,.6));}
+        html[data-theme='dark'] .module-error{background:rgba(127,29,29,.35);border-color:rgba(239,68,68,.45);color:#fecaca;}
         .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
         .nav-notifications{position:relative;display:flex;align-items:center;}
         .nav-notifications__button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#475569;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 18px rgba(15,23,42,.08);}
@@ -2582,7 +2749,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         @media (max-width:1080px){.page-backoffice .bo-shell{grid-template-columns:1fr;}.page-backoffice .bo-sidebar{position:static;top:auto;}}
         @media (max-width:720px){.page-backoffice .bo-pane{grid-template-columns:1fr;}.page-backoffice .bo-card{padding:20px;}}
         @media (max-width:900px){.topbar-inner{padding:20px 24px 10px;gap:18px;}.nav-link.active::after{bottom:-10px;}.main-content{padding:48px 24px 56px;}.search-form{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}}
-        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}.branding-section{padding:28px;}.confidence-section{gap:12px;}}
+        @media (max-width:900px){.language-switcher__text{display:none;}}
+        @media (max-width:780px){.theme-toggle__label{display:none;}}
+        @media (max-width:680px){.topbar-inner{padding:18px 20px 10px;}.nav-links{gap:18px;}.nav-actions{width:100%;justify-content:flex-end;gap:12px;}.language-switcher,.theme-toggle{width:auto;}.language-switcher__label{font-size:.72rem;}.main-content{padding:40px 20px 56px;}.search-form{grid-template-columns:1fr;padding:28px;}.search-dates{flex-direction:column;}.search-submit{justify-content:stretch;}.search-button{width:100%;}.progress-step{width:100%;justify-content:center;}.branding-section{padding:28px;}.confidence-section{gap:12px;}}
         .gallery-flash{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;font-size:.85rem;font-weight:500;background:#f1f5f9;color:#1e293b;box-shadow:0 6px 18px rgba(15,23,42,.08);}
         .gallery-flash[data-variant="success"]{background:#ecfdf5;color:#047857;}
         .gallery-flash[data-variant="info"]{background:#eff6ff;color:#1d4ed8;}
@@ -2659,19 +2828,207 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
         const USER_PERMISSIONS = new Set(${JSON.stringify(userPermissions)});
+        const THEME_LABELS = { light: ${JSON.stringify(themeLightLabel)}, dark: ${JSON.stringify(themeDarkLabel)} };
+        const MODULE_MESSAGES = {
+          loading: ${JSON.stringify(t('dashboard.moduleLoading', 'A carregar...'))},
+          error: ${JSON.stringify(t('dashboard.moduleError', 'Não foi possível atualizar o módulo.'))},
+          retry: ${JSON.stringify(t('dashboard.moduleRetry', 'Tentar novamente'))}
+        };
         function userCanClient(perm){ return USER_PERMISSIONS.has(perm); }
         function refreshIcons(){
           if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
           }
         }
+        function initThemeToggle(){
+          const toggle = document.querySelector('[data-theme-toggle]');
+          if (!toggle || toggle.dataset.enhanced === 'true') return;
+          toggle.dataset.enhanced = 'true';
+          const label = toggle.querySelector('[data-theme-toggle-label]');
+          const icon = toggle.querySelector('i');
+          const storageKey = 'app:theme-preference';
+          const root = document.documentElement;
+          const media = window.matchMedia('(prefers-color-scheme: dark)');
+          function apply(mode){
+            const next = mode === 'dark' ? 'dark' : 'light';
+            root.setAttribute('data-theme', next);
+            toggle.dataset.theme = next;
+            if (label) label.textContent = next === 'dark' ? THEME_LABELS.light : THEME_LABELS.dark;
+            if (icon) {
+              icon.setAttribute('data-lucide', next === 'dark' ? 'sun' : 'moon-star');
+              refreshIcons();
+            }
+          }
+          function current(){
+            return localStorage.getItem(storageKey) || (media.matches ? 'dark' : 'light');
+          }
+          apply(current());
+          toggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            const next = toggle.dataset.theme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem(storageKey, next);
+            apply(next);
+          });
+          media.addEventListener('change', (event) => {
+            if (localStorage.getItem(storageKey)) return;
+            apply(event.matches ? 'dark' : 'light');
+          });
+        }
+        function initLanguageSwitcher(){
+          const form = document.querySelector('[data-language-switcher]');
+          if (!form || form.dataset.enhanced === 'true') return;
+          form.dataset.enhanced = 'true';
+          const redirectField = form.querySelector('[data-language-redirect]');
+          const select = form.querySelector('[data-language-select]');
+          const updateRedirect = () => {
+            if (!redirectField) return;
+            redirectField.value = window.location.pathname + window.location.search + window.location.hash;
+          };
+          updateRedirect();
+          if (select) {
+            select.addEventListener('change', () => {
+              updateRedirect();
+              form.submit();
+            });
+          }
+        }
+        function moduleSkeletonMarkup(){
+          return '<div class="module-skeleton">'
+            + '<span class="sr-only">' + MODULE_MESSAGES.loading + '</span>'
+            + '<div class="module-skeleton__line module-skeleton__line--wide"></div>'
+            + '<div class="module-skeleton__line"></div>'
+            + '<div class="module-skeleton__line module-skeleton__line--short"></div>'
+            + '</div>';
+        }
+        function hydrateModule(module){
+          if (!module || module.dataset.loading === 'true') return;
+          const endpoint = module.getAttribute('data-module-endpoint');
+          if (!endpoint) return;
+          const body = module.querySelector('[data-module-body]');
+          module.dataset.loading = 'true';
+          if (body) {
+            body.setAttribute('data-module-loading', 'true');
+            body.innerHTML = moduleSkeletonMarkup();
+          }
+          fetch(endpoint, { headers: { 'Accept': 'text/html', 'X-Requested-With': 'fetch' } })
+            .then((res) => {
+              if (!res.ok) throw new Error('MODULE_LOAD_FAILED');
+              return res.text();
+            })
+            .then((html) => {
+              if (body) {
+                body.innerHTML = html;
+                body.removeAttribute('data-module-loading');
+              }
+              refreshIcons();
+            })
+            .catch(() => {
+              if (body) {
+                body.innerHTML = '<div class="module-error">'
+                  + '<span>' + MODULE_MESSAGES.error + '</span>'
+                  + '<button type="button" class="module-error__retry" data-module-retry>' + MODULE_MESSAGES.retry + '</button>'
+                  + '</div>';
+                const retry = body.querySelector('[data-module-retry]');
+                if (retry) {
+                  retry.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    hydrateModule(module);
+                  });
+                }
+              }
+            })
+            .finally(() => {
+              module.dataset.loading = 'false';
+            });
+        }
+        function initDashboardModules(){
+          document.querySelectorAll('[data-module]').forEach((module) => {
+            if (module.dataset.controllerAttached === 'true') return;
+            module.dataset.controllerAttached = 'true';
+            const refreshBtn = module.querySelector('[data-module-refresh]');
+            if (refreshBtn) {
+              refreshBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                hydrateModule(module);
+              });
+            }
+            if (module.hasAttribute('data-hydrate-on-load')) {
+              requestAnimationFrame(() => hydrateModule(module));
+            }
+          });
+        }
+        function initHousekeepingForm(){
+          document.querySelectorAll('[data-housekeeping-form]').forEach((form) => {
+            if (form.dataset.enhanced === 'true') return;
+            form.dataset.enhanced = 'true';
+            const submitBtn = form.querySelector('[data-housekeeping-submit]');
+            const optimisticHost = document.querySelector('[data-module="housekeeping-today"] [data-module-body]');
+            form.addEventListener('submit', (event) => {
+              event.preventDefault();
+              if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.setAttribute('data-loading', 'true');
+              }
+              let optimisticCard;
+              if (optimisticHost) {
+                optimisticCard = document.createElement('div');
+                optimisticCard.className = 'module-skeleton optimistic-placeholder';
+                optimisticCard.innerHTML = moduleSkeletonMarkup();
+                optimisticHost.prepend(optimisticCard);
+              }
+              const formData = new FormData(form);
+              fetch(form.action || window.location.pathname, {
+                method: form.method || 'post',
+                headers: { 'Accept': 'application/json' },
+                body: formData
+              })
+                .then((res) => {
+                  if (!res.ok) throw new Error('REQUEST_FAILED');
+                  return res.json();
+                })
+                .then(() => {
+                  form.reset();
+                  setTimeout(() => window.location.reload(), 400);
+                })
+                .catch(() => {
+                  const error = document.createElement('p');
+                  error.className = 'form-error';
+                  error.textContent = MODULE_MESSAGES.error;
+                  form.appendChild(error);
+                  setTimeout(() => error.remove(), 3000);
+                })
+                .finally(() => {
+                  if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.removeAttribute('data-loading');
+                  }
+                  if (optimisticCard) {
+                    optimisticCard.remove();
+                  }
+                });
+            });
+          });
+        }
+        function initShell(){
+          initThemeToggle();
+          initLanguageSwitcher();
+          initDashboardModules();
+          initHousekeepingForm();
+        }
         if (document.readyState !== 'loading') {
           refreshIcons();
+          initShell();
         } else {
-          document.addEventListener('DOMContentLoaded', refreshIcons);
+          document.addEventListener('DOMContentLoaded', () => {
+            refreshIcons();
+            initShell();
+          });
         }
         window.addEventListener('load', refreshIcons);
-        document.addEventListener('htmx:afterSwap', refreshIcons);
+        document.addEventListener('htmx:afterSwap', () => {
+          refreshIcons();
+          initShell();
+        });
         let notificationsInitialized = false;
         function initNotificationsPopover(){
           if (notificationsInitialized) return;
@@ -3007,7 +3364,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
           ${body}
         </main>
         <footer class="footer">
-          <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(theme.brandName)} · Plataforma demo</div>
+          <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(theme.brandName)} · ${esc(t('general.brandDemo', 'Plataforma demo'))}</div>
         </footer>
       </div>
     </body>
@@ -3133,7 +3490,10 @@ const context = {
   UNIT_TYPE_ICON_HINTS,
   slugify,
   decisionAssistant,
-  chatbotService
+  chatbotService,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  getLocaleLabel
 };
 
 registerAuthRoutes(app, context);
