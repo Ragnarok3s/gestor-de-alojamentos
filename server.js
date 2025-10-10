@@ -32,6 +32,16 @@ const { createEmailTemplateService } = require('./src/services/email-templates')
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createAutomationEngine } = require('./server/automations/engine');
+const emailAction = require('./server/automations/actions/email');
+const notifyAction = require('./server/automations/actions/notify');
+const xlsxAppendAction = require('./server/automations/actions/xlsx.append');
+const createHousekeepingTaskAction = require('./server/automations/actions/create.housekeeping_task');
+const priceOverrideAction = require('./server/automations/actions/price.override');
+const logActivityAction = require('./server/automations/actions/log.activity');
+const { createDecisionAssistant } = require('./server/decisions/assistant');
+const { createChatbotService } = require('./server/chatbot/service');
+const { createChatbotRouter } = require('./server/chatbot/router');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1028,20 +1038,6 @@ function computeOperationalDashboard(rawFilters = {}) {
   return response;
 }
 
-try {
-  runAutomationSweep('startup');
-} catch (err) {
-  console.error('Automação: falha inicial', err);
-}
-
-setInterval(() => {
-  try {
-    runAutomationSweep('interval');
-  } catch (err) {
-    console.error('Automação: falha periódica', err);
-  }
-}, 30 * 60 * 1000);
-
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
@@ -1084,12 +1080,14 @@ const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
 const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
 const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
-const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS };
+const EXPORTS_DIR = path.join(UPLOAD_ROOT, 'exports');
+const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS, exports: EXPORTS_DIR };
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
 ensureDir(UPLOAD_BRANDING);
 ensureDir(UPLOAD_CHANNEL_IMPORTS);
+ensureDir(EXPORTS_DIR);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1606,6 +1604,30 @@ const channelIntegrations = createChannelIntegrationService({
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
 
+const automationActionDrivers = {
+  email: emailAction,
+  notify: notifyAction,
+  'xlsx.append': xlsxAppendAction,
+  'create.housekeeping_task': createHousekeepingTaskAction,
+  'price.override': priceOverrideAction,
+  'log.activity': logActivityAction,
+};
+
+const automationEngine = createAutomationEngine({
+  db,
+  dayjs,
+  logActivity,
+  emailTemplates,
+  mailer,
+  ExcelJS,
+  ensureDir,
+  paths,
+  actionDrivers: automationActionDrivers,
+});
+
+const decisionAssistant = createDecisionAssistant({ db, dayjs });
+const chatbotService = createChatbotService({ db });
+
 channelIntegrations
   .autoSyncAll({ reason: 'startup' })
   .catch(err => console.warn('Integração de canais (startup):', err.message));
@@ -1614,6 +1636,61 @@ setInterval(() => {
   channelIntegrations
     .autoSyncAll({ reason: 'interval' })
     .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
+
+function scheduleDailyTask(task, hour, minute) {
+  const run = () => {
+    try {
+      task();
+    } catch (err) {
+      console.error('Tarefa diária falhou:', err.message);
+    }
+    schedule();
+  };
+
+  function schedule() {
+    const now = dayjs();
+    let next = now.hour(hour).minute(minute).second(0).millisecond(0);
+    if (!next.isAfter(now)) {
+      next = next.add(1, 'day');
+    }
+    const delay = Math.max(60 * 1000, next.diff(now));
+    setTimeout(run, delay);
+  }
+
+  schedule();
+}
+
+scheduleDailyTask(() => {
+  decisionAssistant.run({ reason: 'daily' });
+}, 3, 10);
+
+scheduleDailyTask(() => {
+  automationEngine.handleEvent('daily.cron', { ts: Date.now() });
+}, 3, 30);
+
+try {
+  runAutomationSweep('startup');
+} catch (err) {
+  console.error('Automação: falha inicial', err);
+}
+
+try {
+  decisionAssistant.run({ reason: 'startup' });
+} catch (err) {
+  console.error('Assistente de decisões: falha inicial', err);
+}
+
+automationEngine
+  .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
+  .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
+
+setInterval(() => {
+  try {
+    runAutomationSweep('interval');
+  } catch (err) {
+    console.error('Automação: falha periódica', err);
+  }
 }, 30 * 60 * 1000);
 
 function wantsJson(req) {
@@ -3044,6 +3121,7 @@ const context = {
   rescheduleBookingUpdateStmt,
   rescheduleBlockUpdateStmt,
   automationCache,
+  automationEngine,
   AUTO_CHAIN_THRESHOLD,
   AUTO_CHAIN_CLEANUP_NIGHTS,
   HOT_DEMAND_THRESHOLD,
@@ -3053,10 +3131,13 @@ const context = {
   MASTER_ROLE,
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
-  slugify
+  slugify,
+  decisionAssistant,
+  chatbotService
 };
 
 registerAuthRoutes(app, context);
+app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerBackoffice(app, context);

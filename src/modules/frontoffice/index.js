@@ -617,6 +617,70 @@ module.exports = function registerFrontoffice(app, context) {
 
     const formAction = req.path === '/search' ? '/search' : '/';
     const resetLink = formAction;
+    const chatbotToken = csrfProtection.ensureToken(req, res);
+    const chatbotWidgetHtml = html`
+      <style>
+        .chatbot-widget{position:fixed;bottom:1.5rem;right:1.5rem;z-index:50;display:flex;flex-direction:column;align-items:flex-end;gap:.75rem;font-family:'Inter',sans-serif;}
+        .chatbot-widget__toggle{background:#2563eb;color:#fff;border:none;border-radius:999px;padding:.65rem 1rem;display:inline-flex;align-items:center;gap:.5rem;font-weight:600;box-shadow:0 12px 30px rgba(37,99,235,.35);cursor:pointer;transition:transform .2s ease,box-shadow .2s ease;}
+        .chatbot-widget__toggle:hover{transform:translateY(-2px);box-shadow:0 16px 32px rgba(37,99,235,.3);}
+        .chatbot-widget__icon{font-size:1.1rem;}
+        .chatbot-widget__panel{width:320px;max-width:calc(100vw - 2rem);background:#fff;border-radius:20px;box-shadow:0 20px 40px rgba(15,23,42,.25);border:1px solid rgba(148,163,184,.2);overflow:hidden;display:grid;grid-template-rows:auto 1fr auto;}
+        .chatbot-widget__header{padding:1rem 1.25rem;border-bottom:1px solid rgba(148,163,184,.15);} .chatbot-widget__header h2{margin:0;font-size:1rem;font-weight:600;color:#0f172a;} .chatbot-widget__header p{margin:.35rem 0 0;font-size:.78rem;color:#475569;}
+        .chatbot-widget__conversation{padding:1rem;max-height:260px;overflow-y:auto;display:grid;gap:.75rem;background:linear-gradient(180deg,#f8fafc 0%,#fff 60%);}
+        .chatbot-message{max-width:90%;display:flex;}
+        .chatbot-bubble{padding:.65rem .85rem;border-radius:16px;font-size:.85rem;line-height:1.4;box-shadow:0 6px 18px rgba(15,23,42,.12);background:#fff;color:#1f2937;}
+        .chatbot-bubble.is-user{margin-left:auto;background:#2563eb;color:#fff;}
+        .chatbot-bubble.is-bot{margin-right:auto;background:#fff;color:#1f2937;}
+        .chatbot-message__body{display:block;}
+        .chatbot-widget__form{display:flex;gap:.5rem;padding:1rem;border-top:1px solid rgba(148,163,184,.15);background:#f8fafc;} .chatbot-widget__form input[type="text"]{flex:1;border:1px solid rgba(148,163,184,.45);border-radius:12px;padding:.55rem .75rem;font-size:.85rem;} .chatbot-widget__form button{background:#0f172a;color:#fff;border:none;border-radius:12px;padding:.55rem .9rem;font-weight:600;cursor:pointer;}
+        @media (max-width:640px){.chatbot-widget{right:.75rem;bottom:1rem;}.chatbot-widget__toggle{padding:.55rem .9rem;}.chatbot-widget__panel{width:100%;max-width:calc(100vw - 1.5rem);} }
+      </style>
+      <div class="chatbot-widget" data-chatbot>
+        <button type="button" class="chatbot-widget__toggle" data-chatbot-toggle>
+          <span class="chatbot-widget__icon">💬</span>
+          <span class="chatbot-widget__label">Precisa de ajuda?</span>
+        </button>
+        <section class="chatbot-widget__panel" data-chatbot-panel hidden>
+          <header class="chatbot-widget__header">
+            <h2>Assistente de reservas</h2>
+            <p>Fale comigo para descobrir tarifas e unidades disponíveis.</p>
+          </header>
+          <div class="chatbot-widget__conversation" id="chatbot-conversation">
+            <div class="chatbot-message chatbot-bubble is-bot">
+              <div class="chatbot-message__body">Olá! Indique datas e nº de hóspedes para sugerir opções.</div>
+            </div>
+          </div>
+          <form class="chatbot-widget__form"
+                hx-post="/chatbot/message"
+                hx-target="#chatbot-conversation"
+                hx-swap="beforeend"
+                hx-on::afterRequest="this.querySelector('[name=text]').value = ''">
+            <input type="hidden" name="_csrf" value="${chatbotToken}" />
+            <input type="text" name="text" required autocomplete="off" placeholder="Ex: 2 adultos 10 a 13 novembro" />
+            <button type="submit">Enviar</button>
+          </form>
+        </section>
+      </div>
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          const widget = document.querySelector('[data-chatbot]');
+          if (!widget) return;
+          const toggle = widget.querySelector('[data-chatbot-toggle]');
+          const panel = widget.querySelector('[data-chatbot-panel]');
+          if (!toggle || !panel) return;
+          toggle.addEventListener('click', () => {
+            const isHidden = panel.hasAttribute('hidden');
+            if (isHidden) {
+              panel.removeAttribute('hidden');
+              const input = panel.querySelector('input[name=text]');
+              if (input) input.focus();
+            } else {
+              panel.setAttribute('hidden', 'hidden');
+            }
+          });
+        });
+      </script>
+    `;
 
     res.send(layout({
       title: 'Pesquisar disponibilidade',
@@ -697,6 +761,7 @@ module.exports = function registerFrontoffice(app, context) {
             </div>
           </div>
         </div>
+        ${chatbotWidgetHtml}
       `
     }));
   }

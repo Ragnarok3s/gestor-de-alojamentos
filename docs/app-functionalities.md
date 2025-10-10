@@ -44,6 +44,15 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
   *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
 
-- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】  
+- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】
   *Exemplo real*: Ao abrir um novo alojamento, a equipa altera rapidamente as cores do portal e cria acessos distintos para receção e direção.
+
+- **Gestão de propriedades e unidades com métricas agregadas** – O painel principal do backoffice permite listar alojamentos atribuídos, adicionar novas propriedades e criar unidades com capacidade, preço base e características configuráveis, além de apresentar a receita total por ativo.【F:src/modules/backoffice/index.js†L3242-L3322】
+  *Exemplo real*: Ao integrar um novo edifício, a equipa cria a propriedade “Residência Aurora”, adiciona as três unidades disponíveis e verifica de imediato o volume de receita associado a cada uma.
+
+- **Ficha completa da unidade com reservas, bloqueios e rates** – Cada unidade possui uma página com histórico de reservas, formulário para bloquear datas, criação de rates sazonais e edição rápida de capacidade ou preço base sem sair do contexto operacional.【F:src/modules/backoffice/index.js†L4110-L4245】
+  *Exemplo real*: Antes de aceitar um pedido de grupo, o gestor consulta a ficha da “Suite Vista Rio”, bloqueia duas noites entre estadias e ajusta o mínimo de noites da rate de verão.
+
+- **Gestão de galeria e assets das unidades** – As imagens são carregadas diretamente no backoffice, comprimidas automaticamente e podem ser reordenadas por arrastar-e-largar, definindo o destaque visual da unidade em segundos.【F:src/modules/backoffice/index.js†L4254-L4284】
+  *Exemplo real*: Após uma sessão fotográfica, o marketing sobe as novas imagens da “Casa das Laranjeiras”, marca a melhor fotografia como principal e remove capturas antigas para manter o catálogo coerente.
 
