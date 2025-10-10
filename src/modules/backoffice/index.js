@@ -2520,7 +2520,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>`
               : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
             return `
-              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
+              <article class="bo-channel-card rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
                 <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
@@ -3688,23 +3688,14 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                 </div>
 
-                <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr]">
-                  <div class="bo-channel-stack space-y-6">
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Conexões de canais</h3>
-                      <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
-                      <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
-                    </div>
-
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Upload manual de reservas</h3>
-                      <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
-                      ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
-                      <div class="mt-4">${manualUploadSection}</div>
-                    </div>
+                <div class="bo-channel-layout grid gap-6 xl:grid-cols-12">
+                  <div class="bo-card xl:col-span-8 2xl:col-span-7">
+                    <h3 class="bo-section-title">Conexões de canais</h3>
+                    <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
+                    <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
                   </div>
 
-                  <div class="bo-channel-stack space-y-6">
+                  <div class="bo-channel-side grid gap-6 xl:col-span-4 2xl:col-span-5">
                     <div class="bo-card">
                       <h3 class="bo-section-title">Alertas do Channel Manager</h3>
                       <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
@@ -3724,6 +3715,13 @@ module.exports = function registerBackoffice(app, context) {
                         </table>
                       </div>
                     </div>
+                  </div>
+
+                  <div class="bo-card xl:col-span-8 2xl:col-span-7">
+                    <h3 class="bo-section-title">Upload manual de reservas</h3>
+                    <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
+                    ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
+                    <div class="mt-4">${manualUploadSection}</div>
                   </div>
                 </div>
               </section>
