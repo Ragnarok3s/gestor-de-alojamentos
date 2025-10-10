@@ -1,4 +1,5 @@
 const Database = require('better-sqlite3');
+const { randomUUID } = require('node:crypto');
 
 function createDatabase(databasePath = 'booking_engine.db') {
   const db = new Database(databasePath);
@@ -274,6 +275,25 @@ function runLightMigrations(db) {
     }
   };
 
+  const triggerExists = (name) => {
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name);
+      return !!row;
+    } catch (err) {
+      console.warn(`Não foi possível validar o trigger ${name}:`, err.message);
+      return false;
+    }
+  };
+
+  const ensureTrigger = (name, ddl) => {
+    if (triggerExists(name)) return;
+    try {
+      db.exec(ddl);
+    } catch (err) {
+      console.warn(`Falha ao criar trigger ${name}:`, err.message);
+    }
+  };
+
   const ensureTimestampColumn = (table, name) => {
     const cols = listColumns(table);
     if (cols.includes(name)) return;
@@ -376,6 +396,247 @@ function runLightMigrations(db) {
         UNIQUE(unit_like, date)
       )`
     );
+
+    ensureTable(
+      'property_policies',
+      `CREATE TABLE IF NOT EXISTS property_policies (
+        property_id TEXT PRIMARY KEY,
+        checkin_from TEXT,
+        checkout_until TEXT,
+        pets_allowed INTEGER,
+        pets_fee REAL,
+        cancellation_policy TEXT,
+        parking_info TEXT,
+        children_policy TEXT,
+        payment_methods TEXT,
+        quiet_hours TEXT,
+        extras TEXT CHECK (extras IS NULL OR json_valid(extras))
+      )`
+    );
+
+    ensureTable(
+      'kb_articles',
+      `CREATE TABLE IF NOT EXISTS kb_articles (
+        id TEXT PRIMARY KEY,
+        property_id TEXT,
+        locale TEXT NOT NULL DEFAULT 'pt',
+        slug TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+        is_published INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(property_id, locale, slug)
+      )`
+    );
+
+    ensureTable(
+      'kb_qas',
+      `CREATE TABLE IF NOT EXISTS kb_qas (
+        id TEXT PRIMARY KEY,
+        property_id TEXT,
+        locale TEXT NOT NULL DEFAULT 'pt',
+        question TEXT NOT NULL,
+        answer_template TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+        confidence_base REAL NOT NULL DEFAULT 0.7,
+        is_published INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'kb_synonyms',
+      `CREATE TABLE IF NOT EXISTS kb_synonyms (
+        id TEXT PRIMARY KEY,
+        locale TEXT NOT NULL DEFAULT 'pt',
+        canonical TEXT NOT NULL,
+        variants TEXT NOT NULL CHECK (json_valid(variants))
+      )`
+    );
+
+    ensureTable(
+      'kb_redirects',
+      `CREATE TABLE IF NOT EXISTS kb_redirects (
+        id TEXT PRIMARY KEY,
+        locale TEXT NOT NULL DEFAULT 'pt',
+        pattern TEXT NOT NULL,
+        target_slug TEXT NOT NULL
+      )`
+    );
+
+    ensureTable(
+      'kb_feedback',
+      `CREATE TABLE IF NOT EXISTS kb_feedback (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        question TEXT NOT NULL,
+        answer_given TEXT NOT NULL,
+        chosen_kb_id TEXT,
+        intent TEXT,
+        confidence REAL,
+        helpful INTEGER,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'kb_training_samples',
+      `CREATE TABLE IF NOT EXISTS kb_training_samples (
+        id TEXT PRIMARY KEY,
+        locale TEXT NOT NULL DEFAULT 'pt',
+        question TEXT NOT NULL,
+        expected_kind TEXT,
+        expected_ref TEXT,
+        last_accuracy INTEGER,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'kb_index',
+      `CREATE VIRTUAL TABLE IF NOT EXISTS kb_index USING fts5(
+        ref,
+        locale,
+        property_id,
+        title,
+        content,
+        tags,
+        tokenize='unicode61'
+      )`
+    );
+
+    ensureTrigger(
+      'kb_articles_ai',
+      `CREATE TRIGGER IF NOT EXISTS kb_articles_ai AFTER INSERT ON kb_articles BEGIN
+        INSERT INTO kb_index(ref, locale, property_id, title, content, tags)
+        VALUES('ART:' || NEW.id, COALESCE(NEW.locale, 'pt'), COALESCE(NEW.property_id, ''), NEW.title, NEW.body, NEW.tags);
+      END;`
+    );
+    ensureTrigger(
+      'kb_articles_au',
+      `CREATE TRIGGER IF NOT EXISTS kb_articles_au AFTER UPDATE ON kb_articles BEGIN
+        DELETE FROM kb_index WHERE ref = 'ART:' || OLD.id;
+        INSERT INTO kb_index(ref, locale, property_id, title, content, tags)
+        VALUES('ART:' || NEW.id, COALESCE(NEW.locale, 'pt'), COALESCE(NEW.property_id, ''), NEW.title, NEW.body, NEW.tags);
+      END;`
+    );
+    ensureTrigger(
+      'kb_articles_ad',
+      `CREATE TRIGGER IF NOT EXISTS kb_articles_ad AFTER DELETE ON kb_articles BEGIN
+        DELETE FROM kb_index WHERE ref = 'ART:' || OLD.id;
+      END;`
+    );
+
+    ensureTrigger(
+      'kb_qas_ai',
+      `CREATE TRIGGER IF NOT EXISTS kb_qas_ai AFTER INSERT ON kb_qas BEGIN
+        INSERT INTO kb_index(ref, locale, property_id, title, content, tags)
+        VALUES('QA:' || NEW.id, COALESCE(NEW.locale, 'pt'), COALESCE(NEW.property_id, ''), NEW.question, NEW.answer_template, NEW.tags);
+      END;`
+    );
+    ensureTrigger(
+      'kb_qas_au',
+      `CREATE TRIGGER IF NOT EXISTS kb_qas_au AFTER UPDATE ON kb_qas BEGIN
+        DELETE FROM kb_index WHERE ref = 'QA:' || OLD.id;
+        INSERT INTO kb_index(ref, locale, property_id, title, content, tags)
+        VALUES('QA:' || NEW.id, COALESCE(NEW.locale, 'pt'), COALESCE(NEW.property_id, ''), NEW.question, NEW.answer_template, NEW.tags);
+      END;`
+    );
+    ensureTrigger(
+      'kb_qas_ad',
+      `CREATE TRIGGER IF NOT EXISTS kb_qas_ad AFTER DELETE ON kb_qas BEGIN
+        DELETE FROM kb_index WHERE ref = 'QA:' || OLD.id;
+      END;`
+    );
+
+    const qaCountRow = db.prepare('SELECT COUNT(1) AS total FROM kb_qas').get();
+    if (!qaCountRow.total) {
+      const insertQA = db.prepare(
+        `INSERT INTO kb_qas (id, property_id, locale, question, answer_template, tags, confidence_base)
+         VALUES (@id, @property_id, @locale, @question, @answer_template, @tags, @confidence_base)`
+      );
+      const seedQAs = [
+        {
+          question: 'Qual é o horário de check-in e check-out?',
+          answer: '<p>O check-in começa às {{checkin_from|15:00}} e o check-out deve acontecer até às {{checkout_until|11:00}}. Se precisar de horários especiais, avise-nos e verificamos a disponibilidade.</p>',
+          tags: ['check-in', 'check-out'],
+        },
+        {
+          question: 'Qual é a política de cancelamento?',
+          answer: '<p>Cancelamentos gratuitos até 7 dias antes da chegada. Após esse prazo aplicamos a retenção do sinal conforme {{cancellation_policy|a política da propriedade}}.</p>',
+          tags: ['cancelamento'],
+        },
+        {
+          question: 'Aceitam animais de estimação?',
+          answer: '<p>{{#if pets_allowed}}Aceitamos animais de estimação mediante pedido. Pode haver uma taxa adicional de {{pets_fee|0}}€.{{/if}}{{#unless pets_allowed}}No momento não aceitamos animais dentro das unidades.{{/unless}}</p>',
+          tags: ['animais', 'pets'],
+        },
+        {
+          question: 'Existe estacionamento disponível?',
+          answer: '<p>{{parking_info|Dispomos de estacionamento privativo gratuito na propriedade.}}</p>',
+          tags: ['estacionamento', 'parking'],
+        },
+        {
+          question: 'Aceitam crianças e têm berço?',
+          answer: '<p>{{children_policy|Recebemos famílias com crianças. Podemos disponibilizar berço e cadeira elevada mediante pedido antecipado.}}</p>',
+          tags: ['criancas', 'berco'],
+        },
+        {
+          question: 'Quais os métodos de pagamento aceites?',
+          answer: '<p>Aceitamos {{payment_methods|cartão, MB Way e transferência}}. Para reservas diretas solicitamos um sinal para garantir a estadia.</p>',
+          tags: ['pagamento'],
+        },
+        {
+          question: 'Como posso falar convosco?',
+          answer: '<p>Estamos disponíveis pelo telefone {{phone|+351 910 000 000}} ou email {{email|reservas@example.com}}. Também pode deixar o contacto aqui e respondemos rapidamente.</p>',
+          tags: ['contacto'],
+        },
+      ];
+      const insertSynonym = db.prepare(
+        `INSERT INTO kb_synonyms (id, locale, canonical, variants) VALUES (@id, @locale, @canonical, @variants)`
+      );
+      const selectSynonym = db.prepare(
+        `SELECT id FROM kb_synonyms WHERE locale = ? AND canonical = ?`
+      );
+      const synonymSeeds = [
+        ['check-in', ['entrada', 'chegada']],
+        ['check-out', ['saida', 'saída', 'partida']],
+        ['animais', ['caes', 'cães', 'cao', 'cão', 'pet', 'pets', 'gato', 'animais de estimacao']],
+        ['estacionamento', ['parque', 'parking', 'garagem']],
+        ['berco', ['cama bebe', 'berço', 'crib']],
+        ['ar condicionado', ['ac', 'ar-condicionado']],
+        ['preco', ['valor', 'custa', 'tarifa']],
+        ['disponivel', ['vaga', 'livre']],
+      ];
+
+      db.transaction(() => {
+        seedQAs.forEach(item => {
+          insertQA.run({
+            id: randomUUID(),
+            property_id: null,
+            locale: 'pt',
+            question: item.question,
+            answer_template: item.answer,
+            tags: JSON.stringify(item.tags || []),
+            confidence_base: 0.75,
+          });
+        });
+
+        synonymSeeds.forEach(([canonical, variants]) => {
+          const existing = selectSynonym.get('pt', canonical);
+          if (!existing) {
+            insertSynonym.run({
+              id: randomUUID(),
+              locale: 'pt',
+              canonical,
+              variants: JSON.stringify(variants),
+            });
+          }
+        });
+      })();
+    }
 
     ensureTable(
       'automations',
