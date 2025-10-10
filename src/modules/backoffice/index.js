@@ -5663,25 +5663,88 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
     `).all(...params);
   }
 
+  const logUserIdRaw = typeof req.query.log_user === 'string' ? req.query.log_user.trim() : '';
+  const logUserId = logUserIdRaw ? Number.parseInt(logUserIdRaw, 10) : null;
+  const logAction = typeof req.query.log_action === 'string' ? req.query.log_action.trim() : '';
+  const logIp = typeof req.query.log_ip === 'string' ? req.query.log_ip.trim() : '';
+  const logStartRaw = typeof req.query.log_start === 'string' ? req.query.log_start.trim() : '';
+  const logEndRaw = typeof req.query.log_end === 'string' ? req.query.log_end.trim() : '';
+
+  function parseLogDate(input, endOfDay = false) {
+    if (!input) return null;
+    const parsed = dayjs(input, 'YYYY-MM-DD', true);
+    if (!parsed.isValid()) return null;
+    return endOfDay ? parsed.endOf('day') : parsed.startOf('day');
+  }
+
+  const logStartDate = parseLogDate(logStartRaw, false);
+  const logEndDate = parseLogDate(logEndRaw, true);
+  const logStartIso = logStartDate ? logStartDate.toISOString() : null;
+  const logEndIso = logEndDate ? logEndDate.toISOString() : null;
+
   const sessionLogs = canViewLogs
-    ? db.prepare(`
-        SELECT sl.*, u.username
-          FROM session_logs sl
-          LEFT JOIN users u ON u.id = sl.user_id
-         ORDER BY sl.created_at DESC
-         LIMIT 120
-      `).all()
+    ? (() => {
+        const filters = [];
+        const params = [];
+        if (Number.isInteger(logUserId) && logUserId > 0) { filters.push('sl.user_id = ?'); params.push(logUserId); }
+        if (logAction) { filters.push('sl.action LIKE ?'); params.push(`${logAction}%`); }
+        if (logIp) { filters.push('sl.ip LIKE ?'); params.push(`${logIp}%`); }
+        if (logStartIso) { filters.push('sl.created_at >= ?'); params.push(logStartIso); }
+        if (logEndIso) { filters.push('sl.created_at <= ?'); params.push(logEndIso); }
+        const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+        return db.prepare(
+          `SELECT sl.*, u.username
+             FROM session_logs sl
+             LEFT JOIN users u ON u.id = sl.user_id
+            ${where}
+            ORDER BY sl.created_at DESC
+            LIMIT 200`
+        ).all(...params);
+      })()
     : [];
 
   const activityLogs = canViewLogs
-    ? db.prepare(`
-        SELECT al.*, u.username
-          FROM activity_logs al
-          LEFT JOIN users u ON u.id = al.user_id
-         ORDER BY al.created_at DESC
-         LIMIT 200
-      `).all()
+    ? (() => {
+        const filters = [];
+        const params = [];
+        if (Number.isInteger(logUserId) && logUserId > 0) { filters.push('al.user_id = ?'); params.push(logUserId); }
+        if (logAction) { filters.push('al.action LIKE ?'); params.push(`${logAction}%`); }
+        if (logStartIso) { filters.push('al.created_at >= ?'); params.push(logStartIso); }
+        if (logEndIso) { filters.push('al.created_at <= ?'); params.push(logEndIso); }
+        const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+        return db.prepare(
+          `SELECT al.*, u.username
+             FROM activity_logs al
+             LEFT JOIN users u ON u.id = al.user_id
+            ${where}
+            ORDER BY al.created_at DESC
+            LIMIT 200`
+        ).all(...params);
+      })()
     : [];
+
+  const logUserOptions = canViewLogs
+    ? db.prepare('SELECT id, username FROM users ORDER BY username').all()
+    : [];
+  const selectedLogUserId = Number.isInteger(logUserId) && logUserId > 0 ? logUserId : null;
+  const logUserOptionsHtml = logUserOptions
+    .map(user => `<option value="${user.id}"${selectedLogUserId === user.id ? ' selected' : ''}>${esc(user.username)}</option>`)
+    .join('');
+
+  const exportBaseParams = new URLSearchParams();
+  if (entityRaw) exportBaseParams.set('entity', entityRaw);
+  if (idRaw) exportBaseParams.set('id', idRaw);
+  if (selectedLogUserId) exportBaseParams.set('log_user', String(selectedLogUserId));
+  if (logAction) exportBaseParams.set('log_action', logAction);
+  if (logIp) exportBaseParams.set('log_ip', logIp);
+  if (logStartRaw) exportBaseParams.set('log_start', logStartRaw);
+  if (logEndRaw) exportBaseParams.set('log_end', logEndRaw);
+  const sessionExportParams = new URLSearchParams(exportBaseParams);
+  sessionExportParams.set('type', 'session');
+  const activityExportParams = new URLSearchParams(exportBaseParams);
+  activityExportParams.set('type', 'activity');
+  const sessionExportQuery = sessionExportParams.toString();
+  const activityExportQuery = activityExportParams.toString();
 
   const theme = resolveBrandingForRequest(req);
 
@@ -5732,11 +5795,47 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
       ` : `<div class="card p-4 text-sm text-slate-500">Sem permissões para consultar o histórico de alterações.</div>`}
 
       ${canViewLogs ? `
-        <section class="mt-8 space-y-4">
+        <section id="logs" class="mt-8 space-y-4">
           <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold">Logs de sessão</h2>
-            <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
+            <div>
+              <h2 class="text-xl font-semibold">Logs de sessão</h2>
+              <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <a class="btn btn-light" href="/admin/auditoria/export?${sessionExportQuery}">Exportar CSV</a>
+            </div>
           </div>
+          <form class="card p-4 grid gap-3 md:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_auto]" method="get" action="/admin/auditoria#logs">
+            ${entityRaw ? `<input type="hidden" name="entity" value="${esc(entityRaw)}" />` : ''}
+            ${idRaw ? `<input type="hidden" name="id" value="${esc(idRaw)}" />` : ''}
+            <label class="grid gap-1 text-sm">
+              <span>Utilizador</span>
+              <select class="input" name="log_user">
+                <option value="">Todos</option>
+                ${logUserOptionsHtml}
+              </select>
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>Ação</span>
+              <input class="input" name="log_action" value="${esc(logAction)}" placeholder="ex: auth:login" />
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>IP</span>
+              <input class="input" name="log_ip" value="${esc(logIp)}" placeholder="Filtro por IP" />
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>De</span>
+              <input class="input" type="date" name="log_start" value="${esc(logStartRaw)}" />
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>Até</span>
+              <input class="input" type="date" name="log_end" value="${esc(logEndRaw)}" />
+            </label>
+            <div class="flex items-end gap-2">
+              <button class="btn btn-primary" type="submit">Filtrar</button>
+              <a class="btn btn-light" href="/admin/auditoria#logs">Limpar</a>
+            </div>
+          </form>
           <div class="card p-0">
             <div class="responsive-table">
               <table class="w-full text-sm">
@@ -5747,6 +5846,7 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
                     <th class="text-left px-4 py-2">Ação</th>
                     <th class="text-left px-4 py-2">IP</th>
                     <th class="text-left px-4 py-2">User-Agent</th>
+                    <th class="text-left px-4 py-2">Detalhes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5757,8 +5857,9 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
                       <td class="px-4 py-2" data-label="Ação"><span class="table-cell-value">${esc(row.action)}</span></td>
                       <td class="px-4 py-2" data-label="IP"><span class="table-cell-value">${esc(row.ip || '') || '—'}</span></td>
                       <td class="px-4 py-2 text-slate-500" data-label="User-Agent"><span class="table-cell-value">${esc((row.user_agent || '').slice(0, 120))}</span></td>
+                      <td class="px-4 py-2 text-xs text-slate-500" data-label="Detalhes"><span class="table-cell-value">${formatJsonSnippet(row.metadata_json)}</span></td>
                     </tr>
-                  `).join('') : '<tr><td class="px-4 py-3 text-slate-500" data-label="Info">Sem atividade de sessão registada.</td></tr>'}
+                  `).join('') : '<tr><td class="px-4 py-3 text-slate-500" data-label="Info" colspan="6">Sem atividade de sessão registada.</td></tr>'}
                 </tbody>
               </table>
             </div>
@@ -5800,6 +5901,109 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
       ` : ''}
     `
   }));
+});
+
+app.get('/admin/auditoria/export', requireLogin, requireAnyPermission(['audit.view', 'logs.view']), (req, res) => {
+  const typeRaw = typeof req.query.type === 'string' ? req.query.type.toLowerCase() : 'session';
+  const type = ['activity', 'change'].includes(typeRaw) ? typeRaw : 'session';
+
+  const logUserIdRaw = typeof req.query.log_user === 'string' ? req.query.log_user.trim() : '';
+  const logUserId = logUserIdRaw ? Number.parseInt(logUserIdRaw, 10) : null;
+  const logAction = typeof req.query.log_action === 'string' ? req.query.log_action.trim() : '';
+  const logIp = typeof req.query.log_ip === 'string' ? req.query.log_ip.trim() : '';
+  const logStartRaw = typeof req.query.log_start === 'string' ? req.query.log_start.trim() : '';
+  const logEndRaw = typeof req.query.log_end === 'string' ? req.query.log_end.trim() : '';
+  const entityRaw = typeof req.query.entity === 'string' ? req.query.entity.trim().toLowerCase() : '';
+  const idRaw = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+
+  function parseLogDate(input, endOfDay = false) {
+    if (!input) return null;
+    const parsed = dayjs(input, 'YYYY-MM-DD', true);
+    if (!parsed.isValid()) return null;
+    return endOfDay ? parsed.endOf('day') : parsed.startOf('day');
+  }
+
+  const logStartDate = parseLogDate(logStartRaw, false);
+  const logEndDate = parseLogDate(logEndRaw, true);
+  const logStartIso = logStartDate ? logStartDate.toISOString() : null;
+  const logEndIso = logEndDate ? logEndDate.toISOString() : null;
+
+  if (type === 'change') {
+    const filters = [];
+    const params = [];
+    if (entityRaw) { filters.push('cl.entity_type = ?'); params.push(entityRaw); }
+    const idNumber = Number(idRaw);
+    if (idRaw && !Number.isNaN(idNumber)) { filters.push('cl.entity_id = ?'); params.push(idNumber); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const rows = db.prepare(
+      `SELECT cl.created_at, cl.entity_type, cl.entity_id, cl.action, u.username
+         FROM change_logs cl
+         JOIN users u ON u.id = cl.actor_id
+        ${where}
+        ORDER BY cl.created_at DESC`
+    ).all(...params);
+    const header = ['"quando"', '"utilizador"', '"entidade"', '"id"', '"acao"'];
+    const csvLines = rows.map(row => {
+      return [row.created_at, row.username || '', row.entity_type || '', row.entity_id || '', row.action || '']
+        .map(value => '"' + String(value || '').replace(/"/g, '""') + '"')
+        .join(',');
+    });
+    res.type('text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="auditoria_change_logs.csv"');
+    return res.send([header.join(','), ...csvLines].join('\n'));
+  }
+
+  if (type === 'activity') {
+    const filters = [];
+    const params = [];
+    if (Number.isInteger(logUserId) && logUserId > 0) { filters.push('al.user_id = ?'); params.push(logUserId); }
+    if (logAction) { filters.push('al.action LIKE ?'); params.push(`${logAction}%`); }
+    if (logStartIso) { filters.push('al.created_at >= ?'); params.push(logStartIso); }
+    if (logEndIso) { filters.push('al.created_at <= ?'); params.push(logEndIso); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const rows = db.prepare(
+      `SELECT al.created_at, al.action, al.entity_type, al.entity_id, al.meta_json, u.username
+         FROM activity_logs al
+         LEFT JOIN users u ON u.id = al.user_id
+        ${where}
+        ORDER BY al.created_at DESC`
+    ).all(...params);
+    const header = ['"quando"', '"utilizador"', '"acao"', '"entidade"', '"detalhes"'];
+    const csvLines = rows.map(row => {
+      const entity = row.entity_type ? `${row.entity_type}${row.entity_id ? ':' + row.entity_id : ''}` : '';
+      return [row.created_at, row.username || '', row.action || '', entity, row.meta_json || '']
+        .map(value => '"' + String(value || '').replace(/"/g, '""') + '"')
+        .join(',');
+    });
+    res.type('text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="auditoria_activity_logs.csv"');
+    return res.send([header.join(','), ...csvLines].join('\n'));
+  }
+
+  const filters = [];
+  const params = [];
+  if (Number.isInteger(logUserId) && logUserId > 0) { filters.push('sl.user_id = ?'); params.push(logUserId); }
+  if (logAction) { filters.push('sl.action LIKE ?'); params.push(`${logAction}%`); }
+  if (logIp) { filters.push('sl.ip LIKE ?'); params.push(`${logIp}%`); }
+  if (logStartIso) { filters.push('sl.created_at >= ?'); params.push(logStartIso); }
+  if (logEndIso) { filters.push('sl.created_at <= ?'); params.push(logEndIso); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const rows = db.prepare(
+    `SELECT sl.created_at, sl.action, sl.ip, sl.user_agent, sl.metadata_json, u.username
+       FROM session_logs sl
+       LEFT JOIN users u ON u.id = sl.user_id
+      ${where}
+      ORDER BY sl.created_at DESC`
+  ).all(...params);
+  const header = ['"quando"', '"utilizador"', '"acao"', '"ip"', '"user_agent"', '"detalhes"'];
+  const csvLines = rows.map(row => {
+    return [row.created_at, row.username || '', row.action || '', row.ip || '', row.user_agent || '', row.metadata_json || '']
+      .map(value => '"' + String(value || '').replace(/"/g, '""') + '"')
+      .join(',');
+  });
+  res.type('text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="auditoria_session_logs.csv"');
+  res.send([header.join(','), ...csvLines].join('\n'));
 });
 
 // ===================== Utilizadores (admin) =====================
