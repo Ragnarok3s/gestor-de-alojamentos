@@ -24,9 +24,12 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const registerAccountModule = require('./src/modules/account');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
+const { createTwoFactorService } = require('./src/services/twoFactorService');
+const { createOwnerPushService } = require('./src/services/ownerPush');
 const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
 const { createMailer } = require('./src/services/mailer');
@@ -57,6 +60,8 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const twoFactorService = createTwoFactorService({ db, dayjs });
+const ownerPushService = createOwnerPushService({ db, dayjs });
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -349,11 +354,18 @@ const insertPermissionOverrideStmt = db.prepare(
   'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
 );
 
-function logSessionEvent(userId, action, req) {
+function logSessionEvent(userId, action, req, meta = null) {
   try {
+    const metadata = meta ? JSON.stringify(meta) : null;
     db.prepare(
-      'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
-    ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
+      'INSERT INTO session_logs(user_id, action, ip, user_agent, metadata_json) VALUES (?,?,?,?,?)'
+    ).run(
+      userId || null,
+      action,
+      req ? req.ip : null,
+      req ? (req.get('user-agent') || null) : null,
+      metadata
+    );
   } catch (err) {
     console.error('Erro ao registar sessão', err.message);
   }
@@ -2086,7 +2098,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
     ? `<img src="${esc(theme.logoPath)}" alt="${esc(theme.logoAlt)}" class="brand-logo-img" />`
     : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
   const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
-  const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+  const bodyClass = ['app-body', 'theme-night', pageClass].filter(Boolean).join(' ');
 
   const renderNotificationItem = (item) => {
     if (!item) return '';
@@ -2655,6 +2667,214 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
           .gallery-overlay .gallery-next{right:1rem;}
           .gallery-overlay .gallery-caption{flex-direction:column;align-items:flex-start;}
         }
+        body.app-body.theme-night{
+          color-scheme:dark;
+          --night-bg:radial-gradient(125% 125% at 50% 0%,#243b61 0%,#0c1c38 45%,#020617 100%);
+          --night-surface:#112647;
+          --night-surface-alt:#0d1e36;
+          --night-surface-soft:rgba(17,38,71,.82);
+          --night-border:rgba(66,103,148,.55);
+          --night-border-strong:rgba(108,152,206,.55);
+          --night-border-muted:rgba(46,77,118,.4);
+          --night-text:#f8fafc;
+          --night-text-muted:rgba(202,220,255,.78);
+          --night-subtle:rgba(148,178,222,.6);
+          --night-accent:#ff8a3c;
+          --night-accent-strong:#ffb347;
+          --night-accent-soft:rgba(255,138,60,.16);
+          --night-positive:#34d399;
+          --night-negative:#fb7185;
+          --night-warning:#facc15;
+          background:var(--night-bg);
+          color:var(--night-text);
+        }
+        body.app-body.theme-night .app-shell{color:inherit;}
+        body.app-body.theme-night .topbar{background:rgba(8,20,42,.92);backdrop-filter:blur(18px);border-bottom:1px solid var(--night-border);box-shadow:0 24px 48px rgba(2,8,26,.5);}
+        body.app-body.theme-night .nav-accent-bar{background:linear-gradient(90deg,var(--night-accent),#ff9f43,#ffd166);}
+        body.app-body.theme-night .brand{color:var(--night-text);}
+        body.app-body.theme-night .brand-logo{background:linear-gradient(135deg,#1f3358,#0d1f37);color:var(--night-text);box-shadow:0 16px 32px rgba(1,8,21,.5);}
+        body.app-body.theme-night .brand-logo-img{mix-blend-mode:screen;}
+        body.app-body.theme-night .brand-info{color:var(--night-text-muted);}
+        body.app-body.theme-night .brand-name{color:var(--night-text);}
+        body.app-body.theme-night .brand-tagline{color:var(--night-text-muted);}
+        body.app-body.theme-night .nav-links{gap:28px;}
+        body.app-body.theme-night .nav-link{color:var(--night-text-muted);}
+        body.app-body.theme-night .nav-link:hover{color:var(--night-text);}
+        body.app-body.theme-night .nav-link.active{color:var(--night-text);}
+        body.app-body.theme-night .nav-link.active::after{background:var(--night-accent);box-shadow:0 12px 22px rgba(255,138,60,.45);}
+        body.app-body.theme-night .nav-actions{color:var(--night-text);}
+        body.app-body.theme-night .login-link{color:var(--night-accent);background:var(--night-surface-soft);border:1px solid var(--night-border);box-shadow:0 16px 32px rgba(1,8,26,.45);}
+        body.app-body.theme-night .pill-indicator{background:rgba(17,38,71,.65);color:var(--night-text-muted);border:1px solid var(--night-border-muted);}
+        body.app-body.theme-night .pill-indicator--success{background:rgba(52,211,153,.16);color:var(--night-text);border-color:rgba(52,211,153,.35);}
+        body.app-body.theme-night .pill-indicator--warning{background:rgba(250,204,21,.16);color:#facc15;border-color:rgba(250,204,21,.35);}
+        body.app-body.theme-night .main-content{color:inherit;}
+        body.app-body.theme-night .footer{background:transparent;color:var(--night-text-muted);border-top:1px solid var(--night-border-muted);}
+        body.app-body.theme-night .btn{border:none;background:rgba(15,32,56,.68);color:var(--night-text);box-shadow:0 12px 24px rgba(2,10,28,.35);}
+        body.app-body.theme-night .btn-primary{background:var(--night-accent);color:#1b2238;box-shadow:0 16px 32px rgba(255,138,60,.42);}
+        body.app-body.theme-night .btn-primary:hover{background:var(--night-accent-strong);}
+        body.app-body.theme-night .btn-light{background:var(--night-accent-soft);color:var(--night-accent-strong);}
+        body.app-body.theme-night .btn-muted{background:rgba(17,36,66,.65);color:var(--night-text-muted);}
+        body.app-body.theme-night .btn-danger{background:rgba(251,113,133,.2);color:#fda4af;box-shadow:0 14px 30px rgba(248,113,113,.3);}
+        body.app-body.theme-night .btn[disabled]{opacity:.55;background:rgba(15,32,56,.42);color:var(--night-text-muted);box-shadow:none;}
+        body.app-body.theme-night .logout-form button{background:rgba(15,32,56,.68);color:var(--night-text);border:1px solid var(--night-border);}
+        body.app-body.theme-night .input{background:rgba(9,22,43,.85);border:1px solid var(--night-border);color:var(--night-text);box-shadow:0 12px 24px rgba(2,8,26,.35);}
+        body.app-body.theme-night .input::placeholder{color:var(--night-text-muted);}
+        body.app-body.theme-night .input:focus{border-color:var(--night-accent);box-shadow:0 0 0 3px rgba(255,138,60,.25);}
+        body.app-body.theme-night select.input,
+        body.app-body.theme-night textarea.input{background:rgba(9,22,43,.85);color:var(--night-text);}
+        body.app-body.theme-night .form-field__label{color:var(--night-text-muted);}
+        body.app-body.theme-night .radio-card{background:rgba(15,32,56,.65);border:1px solid var(--night-border);color:var(--night-text);box-shadow:0 12px 28px rgba(2,8,26,.4);}
+        body.app-body.theme-night .radio-card input:checked + span{background:linear-gradient(135deg,var(--night-accent),#ffb347);-webkit-background-clip:text;background-clip:text;color:transparent;}
+        body.app-body.theme-night .nav-notifications__button{color:var(--night-text);background:rgba(15,32,56,.6);border:1px solid var(--night-border);}
+        body.app-body.theme-night .nav-notifications__panel{background:rgba(12,27,49,.95);border:1px solid var(--night-border);box-shadow:0 22px 44px rgba(1,6,20,.55);}
+        body.app-body.theme-night .nav-notifications__title{color:var(--night-text);}
+        body.app-body.theme-night .nav-notifications__message{color:var(--night-text-muted);}
+        body.app-body.theme-night .nav-notifications__meta{color:var(--night-subtle);}
+        body.app-body.theme-night .nav-notifications__footer-link{color:var(--night-accent);}
+        body.app-body.theme-night .page-backoffice{background:transparent;}
+        body.app-body.theme-night .page-backoffice .bo-sidebar,
+        body.app-body.theme-night .page-backoffice .bo-header,
+        body.app-body.theme-night .page-backoffice .bo-card,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview,
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__cell,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__day,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview-row,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__unit,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview,
+        body.app-body.theme-night .page-backoffice .owners-alert,
+        body.app-body.theme-night .page-backoffice .owners-property__stat,
+        body.app-body.theme-night .page-backoffice .owners-list-item,
+        body.app-body.theme-night .page-backoffice .owners-simulation__results,
+        body.app-body.theme-night .page-backoffice .owners-finance__content .bo-card,
+        body.app-body.theme-night .page-backoffice .owners-finance-inline-form,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview-grid,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid-viewport,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid-wrapper,
+        body.app-body.theme-night .page-backoffice .bo-calendar-board,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile,
+        body.app-body.theme-night .page-backoffice .owners-finance-flash,
+        body.app-body.theme-night .page-backoffice .owners-simulation__grid,
+        body.app-body.theme-night .page-backoffice .owners-filter,
+        body.app-body.theme-night .page-backoffice .owners-summary__grid,
+        body.app-body.theme-night .page-backoffice .bo-stack,
+        body.app-body.theme-night .page-backoffice .bo-main{background:rgba(13,27,49,.55);color:var(--night-text);border-color:var(--night-border);box-shadow:0 24px 46px rgba(1,6,20,.5);}
+        body.app-body.theme-night .page-backoffice .bo-header h1,
+        body.app-body.theme-night .page-backoffice .bo-card h2,
+        body.app-body.theme-night .page-backoffice .bo-card h3,
+        body.app-body.theme-night .page-backoffice .bo-card h4,
+        body.app-body.theme-night .page-backoffice .owners-property__stat strong,
+        body.app-body.theme-night .page-backoffice .owners-simulation__stats strong,
+        body.app-body.theme-night .page-backoffice .owners-finance__totals strong{color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-subtitle,
+        body.app-body.theme-night .page-backoffice .owners-property__stat span,
+        body.app-body.theme-night .page-backoffice .owners-simulation__stats span,
+        body.app-body.theme-night .page-backoffice .owners-finance__totals span,
+        body.app-body.theme-night .page-backoffice .owners-property__meta,
+        body.app-body.theme-night .page-backoffice .owners-list-item__meta,
+        body.app-body.theme-night .page-backoffice .owners-metric-hint,
+        body.app-body.theme-night .page-backoffice .bo-card p,
+        body.app-body.theme-night .page-backoffice .bo-card span,
+        body.app-body.theme-night .page-backoffice .bo-card li,
+        body.app-body.theme-night .page-backoffice .bo-card label{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-tab{background:rgba(15,32,56,.65);color:var(--night-text-muted);border:1px solid var(--night-border);}
+        body.app-body.theme-night .page-backoffice .bo-tab:hover{background:rgba(17,42,78,.82);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-tab.is-active{background:var(--night-accent);color:#1b2238;box-shadow:0 18px 38px rgba(255,138,60,.48);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__day{background:rgba(17,38,71,.75);border-color:var(--night-border);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__cell{background:rgba(9,22,43,.82);border-color:rgba(46,77,118,.45);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry{background:rgba(15,32,56,.82);border-color:rgba(66,103,148,.55);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__guest{color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__meta{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--confirmed{background:rgba(52,211,153,.2);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--pending{background:rgba(250,204,21,.2);color:#facc15;}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--default{background:rgba(148,163,184,.22);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-empty{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-empty-state{background:rgba(17,38,71,.55);color:var(--night-text-muted);border-color:var(--night-border);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item{background:rgba(15,32,56,.75);border-color:var(--night-border);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--confirmed{background:rgba(52,211,153,.18);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--pending{background:rgba(250,204,21,.18);color:#facc15;}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--blocked{background:rgba(59,130,246,.18);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__badge{background:rgba(15,32,56,.85);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking{box-shadow:0 16px 36px rgba(2,10,28,.45);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-confirmed{background:rgba(52,211,153,.18);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-pending{background:rgba(250,204,21,.18);color:#facc15;}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-blocked{background:rgba(148,163,184,.22);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-delta--up{background:rgba(52,211,153,.18);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .owners-delta--down{background:rgba(251,113,133,.25);color:#fda4af;}
+        body.app-body.theme-night .page-backoffice .owners-delta--neutral{background:rgba(148,163,184,.22);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-alert{background:rgba(20,37,66,.85);border-color:rgba(255,138,60,.35);}
+        body.app-body.theme-night .page-backoffice .owners-alert h2{color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .owners-alert p,
+        body.app-body.theme-night .page-backoffice .owners-alert__list{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-list-item{background:rgba(12,27,49,.85);border-color:var(--night-border);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .owners-list-empty{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-channels li{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-channels li strong{color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .owners-status{background:rgba(15,32,56,.65);color:var(--night-text);border:1px solid var(--night-border);}
+        body.app-body.theme-night .page-backoffice .owners-status--confirmed{background:rgba(52,211,153,.22);}
+        body.app-body.theme-night .page-backoffice .owners-status--pending{background:rgba(250,204,21,.24);color:#facc15;}
+        body.app-body.theme-night .page-backoffice .owners-status--cancelled{background:rgba(251,113,133,.24);color:#fda4af;}
+        body.app-body.theme-night .page-backoffice .owners-status--default{background:rgba(148,163,184,.22);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-table th{background:rgba(15,32,56,.65);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-table td{color:var(--night-text);border-bottom:1px solid rgba(46,77,118,.55);}
+        body.app-body.theme-night .page-backoffice .owners-table tbody tr:nth-child(even){background:rgba(17,38,71,.38);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type{background:rgba(15,32,56,.7);color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--invoice{background:rgba(52,211,153,.24);color:var(--night-text);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--expense{background:rgba(251,113,133,.24);color:#fda4af;}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--adjustment{background:rgba(59,130,246,.22);color:#93c5fd;}
+        body.app-body.theme-night .page-backoffice .owners-finance-meta{color:var(--night-text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-finance-notes{color:var(--night-subtle);}
+        body.app-body.theme-night .page-backoffice .owners-finance-flash--error{background:rgba(251,113,133,.16);color:#fda4af;border-color:rgba(251,113,133,.35);}
+        body.app-body.theme-night .page-backoffice .owners-finance-flash--success{background:rgba(52,211,153,.16);color:var(--night-text);border-color:rgba(52,211,153,.35);}
+        body.app-body.theme-night .bo-alert{background:rgba(15,32,56,.75);border:1px solid var(--night-border);color:var(--night-text);}
+        body.app-body.theme-night .bo-alert--success{background:rgba(52,211,153,.18);color:var(--night-text);border-color:rgba(52,211,153,.35);}
+        body.app-body.theme-night .bo-alert--error{background:rgba(251,113,133,.18);color:#fda4af;border-color:rgba(251,113,133,.4);}
+        body.app-body.theme-night .bo-empty,
+        body.app-body.theme-night .owners-empty{color:var(--night-text-muted);}
+        body.app-body.theme-night .responsive-table table{background:rgba(12,27,49,.65);}
+        body.app-body.theme-night .responsive-table thead th{background:rgba(17,38,71,.75);color:var(--night-text-muted);}
+        body.app-body.theme-night .responsive-table tbody tr{border-color:rgba(46,77,118,.45);}
+        body.app-body.theme-night .responsive-table td{color:var(--night-text);}
+        body.app-body.theme-night a{color:var(--night-accent-strong);}
+        body.app-body.theme-night a:hover{color:#ffd166;}
+        body.app-body.theme-night .tag{background:rgba(15,32,56,.72);color:var(--night-text-muted);}
+        body.app-body.theme-night .tag::before{color:inherit;}
+        body.app-body.theme-night .badge{background:rgba(15,32,56,.65);color:var(--night-text-muted);border:1px solid var(--night-border);}
+        body.app-body.theme-night .badge--success{background:rgba(52,211,153,.18);color:var(--night-text);}
+        body.app-body.theme-night .badge--warning{background:rgba(250,204,21,.18);color:#facc15;}
+        body.app-body.theme-night .badge--danger{background:rgba(251,113,133,.2);color:#fda4af;}
+        body.app-body.theme-night .stat-card{background:rgba(15,32,56,.65);border-color:var(--night-border);color:var(--night-text);}
+        body.app-body.theme-night .stat-card__hint{color:var(--night-text-muted);}
+        body.app-body.theme-night .table{color:var(--night-text);}
+        body.app-body.theme-night table{color:var(--night-text);}
+        body.app-body.theme-night th{color:var(--night-text-muted);}
+        body.app-body.theme-night td{color:var(--night-text);}
+        body.app-body.theme-night hr{border-color:var(--night-border-muted);}
+        body.app-body.theme-night code,
+        body.app-body.theme-night pre{background:rgba(15,32,56,.85);color:var(--night-accent-strong);border:1px solid var(--night-border);}
+        body.app-body.theme-night .owners-finance-inline-form label{color:var(--night-text-muted);}
+        body.app-body.theme-night .owners-finance-inline-form .input{min-width:120px;}
+        body.app-body.theme-night .owners-finance-inline-form--danger{background:rgba(251,113,133,.18);color:#fda4af;border:1px solid rgba(251,113,133,.4);}
+        body.app-body.theme-night .owners-simulation__results p{color:var(--night-text-muted);}
+        body.app-body.theme-night .owners-simulation__actions .btn{box-shadow:none;}
+        body.app-body.theme-night .owners-simulation__actions .btn-primary{box-shadow:0 16px 32px rgba(255,138,60,.42);}
+        body.app-body.theme-night .owners-summary__grid .bo-card,
+        body.app-body.theme-night .owners-property__content .bo-card{background:rgba(13,27,49,.65);}
+        body.app-body.theme-night .owners-property__meta .pill-indicator{border-color:var(--night-border);}
+        body.app-body.theme-night .bo-calendar-filters__summary{background:rgba(15,32,56,.72);color:var(--night-text);border-bottom:1px solid var(--night-border);}
+        body.app-body.theme-night .bo-calendar-filters__summary-hint{color:var(--night-text-muted);}
+        body.app-body.theme-night .bo-calendar-filters__body{background:rgba(12,27,49,.7);}
+        body.app-body.theme-night .bo-calendar-filters__form label{color:var(--night-text-muted);}
+        body.app-body.theme-night .bo-calendar-filters__actions .btn{background:rgba(15,32,56,.75);}
+        body.app-body.theme-night .calendar-toast[data-variant="success"]{background:rgba(52,211,153,.2);color:var(--night-text);}
+        body.app-body.theme-night .calendar-toast[data-variant="info"]{background:rgba(59,130,246,.2);color:#bfdbfe;}
+        body.app-body.theme-night .calendar-toast[data-variant="danger"]{background:rgba(251,113,133,.2);color:#fda4af;}
+        body.app-body.theme-night .calendar-action__card{background:rgba(12,27,49,.9);color:var(--night-text);}
+        body.app-body.theme-night .calendar-action__buttons .btn{background:rgba(15,32,56,.75);}
+        body.app-body.theme-night .calendar-action__buttons .btn-primary{background:var(--night-accent);color:#1b2238;}
+        body.app-body.theme-night .calendar-action__title{color:var(--night-text);}
+        body.app-body.theme-night .calendar-grid{background:transparent;}
       </style>
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
@@ -3093,6 +3313,7 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  twoFactorService,
   emailTemplates,
   mailer,
   bookingEmailer,
@@ -3133,13 +3354,15 @@ const context = {
   UNIT_TYPE_ICON_HINTS,
   slugify,
   decisionAssistant,
-  chatbotService
+  chatbotService,
+  ownerPushService
 };
 
 registerAuthRoutes(app, context);
 app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
+registerAccountModule(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================

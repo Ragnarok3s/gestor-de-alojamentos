@@ -123,6 +123,38 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_two_factor (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  secret TEXT NOT NULL,
+  recovery_codes_json TEXT NOT NULL,
+  enabled_at TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmed_at TEXT,
+  last_verified_at TEXT,
+  enforced INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS user_two_factor_setup (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  secret TEXT NOT NULL,
+  recovery_codes_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS two_factor_challenges (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ip TEXT,
+  user_agent TEXT,
+  metadata_json TEXT,
+  last_attempt_at TEXT,
+  used_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_two_factor_challenges_user ON two_factor_challenges(user_id);
+
 CREATE TABLE IF NOT EXISTS unit_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
@@ -156,6 +188,7 @@ CREATE TABLE IF NOT EXISTS session_logs (
   action TEXT NOT NULL,
   ip TEXT,
   user_agent TEXT,
+  metadata_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -237,6 +270,57 @@ CREATE TABLE IF NOT EXISTS housekeeping_tasks (
   completed_at TEXT,
   completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS owner_financial_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+  entry_type TEXT NOT NULL,
+  category TEXT,
+  description TEXT,
+  document_number TEXT,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  issue_date TEXT,
+  due_date TEXT,
+  status TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_financial_user ON owner_financial_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_owner_financial_property ON owner_financial_entries(property_id);
+CREATE INDEX IF NOT EXISTS idx_owner_financial_unit ON owner_financial_entries(unit_id);
+
+CREATE TABLE IF NOT EXISTS owner_push_devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL,
+  platform TEXT,
+  label TEXT,
+  last_active TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, token)
+);
+
+CREATE TABLE IF NOT EXISTS owner_push_notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  payload_json TEXT,
+  unique_key TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  delivered_at TEXT,
+  last_attempt_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_push_notifications_user ON owner_push_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_owner_push_notifications_status ON owner_push_notifications(status);
 `;
 
   db.exec(schema);
@@ -333,6 +417,7 @@ function runLightMigrations(db) {
     ensureColumn('sessions', 'user_agent', 'TEXT');
     ensureTimestampColumn('sessions', 'created_at');
     ensureTimestampColumn('sessions', 'last_seen_at');
+    ensureColumn('session_logs', 'metadata_json', 'TEXT');
     ensureColumn('email_templates', 'description', 'TEXT');
     ensureColumn('email_templates', 'metadata_json', 'TEXT');
     ensureTimestampColumn('email_templates', 'updated_at');
@@ -360,6 +445,109 @@ function runLightMigrations(db) {
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(unit_id, date)
       )`
+    );
+
+    ensureTable(
+      'user_two_factor',
+      `CREATE TABLE IF NOT EXISTS user_two_factor (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        secret TEXT NOT NULL,
+        recovery_codes_json TEXT NOT NULL,
+        enabled_at TEXT NOT NULL DEFAULT (datetime('now')),
+        confirmed_at TEXT,
+        last_verified_at TEXT,
+        enforced INTEGER NOT NULL DEFAULT 0
+      )`
+    );
+
+    ensureTable(
+      'user_two_factor_setup',
+      `CREATE TABLE IF NOT EXISTS user_two_factor_setup (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        secret TEXT NOT NULL,
+        recovery_codes_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'two_factor_challenges',
+      `CREATE TABLE IF NOT EXISTS two_factor_challenges (
+        token_hash TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        ip TEXT,
+        user_agent TEXT,
+        metadata_json TEXT,
+        last_attempt_at TEXT,
+        used_at TEXT
+      )`
+    );
+
+    ensureColumn('two_factor_challenges', 'last_attempt_at', 'TEXT');
+
+    ensureTable(
+      'owner_financial_entries',
+      `CREATE TABLE IF NOT EXISTS owner_financial_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+        unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+        entry_type TEXT NOT NULL,
+        category TEXT,
+        description TEXT,
+        document_number TEXT,
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        issue_date TEXT,
+        due_date TEXT,
+        status TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'owner_push_devices',
+      `CREATE TABLE IF NOT EXISTS owner_push_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token TEXT NOT NULL,
+        platform TEXT,
+        label TEXT,
+        last_active TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, token)
+      )`
+    );
+
+    ensureTable(
+      'owner_push_notifications',
+      `CREATE TABLE IF NOT EXISTS owner_push_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        payload_json TEXT,
+        unique_key TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        delivered_at TEXT,
+        last_attempt_at TEXT
+      )`
+    );
+
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_two_factor_challenges_user ON two_factor_challenges(user_id);
+       CREATE INDEX IF NOT EXISTS idx_owner_financial_user ON owner_financial_entries(user_id);
+       CREATE INDEX IF NOT EXISTS idx_owner_financial_property ON owner_financial_entries(property_id);
+       CREATE INDEX IF NOT EXISTS idx_owner_financial_unit ON owner_financial_entries(unit_id);
+       CREATE INDEX IF NOT EXISTS idx_owner_push_notifications_user ON owner_push_notifications(user_id);
+       CREATE INDEX IF NOT EXISTS idx_owner_push_notifications_status ON owner_push_notifications(status);`
     );
 
     ensureTable(
