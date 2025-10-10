@@ -1038,30 +1038,6 @@ function computeOperationalDashboard(rawFilters = {}) {
   return response;
 }
 
-try {
-  runAutomationSweep('startup');
-} catch (err) {
-  console.error('Automação: falha inicial', err);
-}
-
-try {
-  decisionAssistant.run({ reason: 'startup' });
-} catch (err) {
-  console.error('Assistente de decisões: falha inicial', err);
-}
-
-automationEngine
-  .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
-  .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
-
-setInterval(() => {
-  try {
-    runAutomationSweep('interval');
-  } catch (err) {
-    console.error('Automação: falha periódica', err);
-  }
-}, 30 * 60 * 1000);
-
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
@@ -1692,6 +1668,30 @@ scheduleDailyTask(() => {
 scheduleDailyTask(() => {
   automationEngine.handleEvent('daily.cron', { ts: Date.now() });
 }, 3, 30);
+
+try {
+  runAutomationSweep('startup');
+} catch (err) {
+  console.error('Automação: falha inicial', err);
+}
+
+try {
+  decisionAssistant.run({ reason: 'startup' });
+} catch (err) {
+  console.error('Assistente de decisões: falha inicial', err);
+}
+
+automationEngine
+  .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
+  .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
+
+setInterval(() => {
+  try {
+    runAutomationSweep('interval');
+  } catch (err) {
+    console.error('Automação: falha periódica', err);
+  }
+}, 30 * 60 * 1000);
 
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
