@@ -2335,6 +2335,24 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-metric{background:#fff7ed;border:1px solid #fed7aa;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
         .page-backoffice .bo-metric strong{font-size:1.4rem;color:#9a3412;}
         .page-backoffice .bo-metric span{font-size:.8rem;color:#b45309;}
+        .page-backoffice .bo-channel-layout{display:grid;gap:24px;align-items:start;}
+        .page-backoffice .bo-channel-stack{display:grid;gap:24px;align-content:start;}
+        @media (min-width:900px){.page-backoffice .bo-channel-layout{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        @media (min-width:1280px){.page-backoffice .bo-channel-layout{grid-template-columns:minmax(0,2fr) minmax(0,1fr);}}
+        .page-backoffice .bo-channel-card-list{display:grid;gap:18px;}
+        .page-backoffice .bo-channel-card-grid{display:grid;gap:18px;}
+        @media (min-width:960px){.page-backoffice .bo-channel-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        .page-backoffice .bo-channel-card-grid > *{min-width:0;}
+        .page-backoffice .bo-channel-form{display:grid;gap:16px;}
+        .page-backoffice .bo-channel-form__row{display:grid;gap:14px;}
+        .page-backoffice .bo-channel-form__row--thirds{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));}
+        .page-backoffice .bo-channel-form__row--split{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+        .page-backoffice .bo-channel-form__actions{display:flex;flex-wrap:wrap;gap:12px;}
+        .page-backoffice .bo-channel-form__actions .btn{flex:1 1 180px;justify-content:center;}
+        .page-backoffice .bo-channel-sync{display:inline-flex;margin-top:8px;}
+        .page-backoffice .bo-channel-sync .btn{justify-content:center;}
+        .page-backoffice .bo-channel-alerts{display:grid;gap:12px;}
+        .page-backoffice .bo-channel-upload-legend{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
         .page-backoffice .bo-calendar-filters{padding:0;overflow:hidden;}
         .page-backoffice .bo-calendar-filters__details{display:block;}
         .page-backoffice .bo-calendar-filters__summary{list-style:none;margin:0;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:600;font-size:.95rem;color:#9a3412;border-bottom:1px solid rgba(249,115,22,.18);}
