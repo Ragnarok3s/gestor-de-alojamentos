@@ -35,6 +35,46 @@
     if (fallback) fallback.hidden = false;
   }
 
+  function getComputedVar(token, fallback) {
+    var value = '';
+    try {
+      value = getComputedStyle(document.documentElement).getPropertyValue(token) || '';
+      if (!value && document.body) {
+        value = getComputedStyle(document.body).getPropertyValue(token) || '';
+      }
+    } catch (err) {
+      value = '';
+    }
+    value = (value || '').trim();
+    return value || fallback || '';
+  }
+
+  function isDarkThemeActive() {
+    var root = document.documentElement;
+    if (root && root.dataset && root.dataset.theme === 'dark') return true;
+    return document.body && document.body.classList && document.body.classList.contains('theme-night');
+  }
+
+  function hexToRgba(color, alpha) {
+    var hex = (color || '').trim();
+    if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return color;
+    var normalized = hex.slice(1);
+    if (normalized.length === 3) {
+      normalized = normalized
+        .split('')
+        .map(function (ch) {
+          return ch + ch;
+        })
+        .join('');
+    }
+    var num = parseInt(normalized, 16);
+    var r = (num >> 16) & 255;
+    var g = (num >> 8) & 255;
+    var b = num & 255;
+    var clampedAlpha = typeof alpha === 'number' ? Math.max(0, Math.min(1, alpha)) : 1;
+    return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + clampedAlpha + ')';
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     var dataEl = document.getElementById('revenue-analytics-data');
     if (!dataEl) return;
@@ -156,7 +196,26 @@
           return Number(((item.revenueCents || 0) / 100).toFixed(2));
         });
 
-        var colorPalette = ['#2563eb', '#22c55e', '#f97316', '#0ea5e9', '#a855f7', '#ef4444', '#14b8a6'];
+        var chartPrimary = getComputedVar('--chart-1', '#1F82FF');
+        var chartAccent = getComputedVar('--chart-2', '#FF8A3D');
+        var chartSuccess = getComputedVar('--chart-3', '#22C55E');
+        var chartInfo = getComputedVar('--chart-4', '#06B6D4');
+        var chartWarning = getComputedVar('--chart-5', '#F59E0B');
+        var colorPalette = [chartPrimary, chartAccent, chartSuccess, chartInfo, chartWarning];
+
+        if (isDarkThemeActive()) {
+          var defaultText = getComputedVar('--text', '#E6EEFF');
+          var defaultBorder = getComputedVar('--border', '#20304D');
+          Chart.defaults.color = defaultText || Chart.defaults.color;
+          Chart.defaults.borderColor = defaultBorder || Chart.defaults.borderColor;
+          if (Chart.defaults.plugins && Chart.defaults.plugins.legend && Chart.defaults.plugins.legend.labels) {
+            Chart.defaults.plugins.legend.labels.color = defaultText || Chart.defaults.plugins.legend.labels.color;
+          }
+          if (Chart.defaults.plugins && Chart.defaults.plugins.tooltip) {
+            Chart.defaults.plugins.tooltip.titleColor = defaultText || Chart.defaults.plugins.tooltip.titleColor;
+            Chart.defaults.plugins.tooltip.bodyColor = defaultText || Chart.defaults.plugins.tooltip.bodyColor;
+          }
+        }
 
         var revenueCtx = document.getElementById('revenue-line-chart');
         if (revenueCtx && labels.length) {
@@ -169,8 +228,8 @@
                   type: 'line',
                   label: 'Receita (EUR)',
                   data: revenueData,
-                  borderColor: '#2563eb',
-                  backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                  borderColor: chartPrimary,
+                  backgroundColor: hexToRgba(chartPrimary, 0.18),
                   pointRadius: 0,
                   tension: 0.3,
                   fill: true,
@@ -180,7 +239,8 @@
                   type: 'bar',
                   label: 'Noites vendidas',
                   data: nightsData,
-                  backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                  backgroundColor: hexToRgba(chartWarning, 0.6),
+                  borderColor: chartWarning,
                   borderRadius: 6,
                   yAxisID: 'y1'
                 }
@@ -240,7 +300,8 @@
                 {
                   label: 'Ocupação (%)',
                   data: occupancyData,
-                  backgroundColor: '#22c55e',
+                  backgroundColor: hexToRgba(chartSuccess, 0.6),
+                  borderColor: chartSuccess,
                   borderRadius: 6
                 }
               ]

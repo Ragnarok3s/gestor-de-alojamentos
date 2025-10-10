@@ -24,9 +24,12 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const registerAccountModule = require('./src/modules/account');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
+const { createTwoFactorService } = require('./src/services/twoFactorService');
+const { createOwnerPushService } = require('./src/services/ownerPush');
 const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
 const { createMailer } = require('./src/services/mailer');
@@ -57,6 +60,8 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const twoFactorService = createTwoFactorService({ db, dayjs });
+const ownerPushService = createOwnerPushService({ db, dayjs });
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -349,11 +354,18 @@ const insertPermissionOverrideStmt = db.prepare(
   'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
 );
 
-function logSessionEvent(userId, action, req) {
+function logSessionEvent(userId, action, req, meta = null) {
   try {
+    const metadata = meta ? JSON.stringify(meta) : null;
     db.prepare(
-      'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
-    ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
+      'INSERT INTO session_logs(user_id, action, ip, user_agent, metadata_json) VALUES (?,?,?,?,?)'
+    ).run(
+      userId || null,
+      action,
+      req ? req.ip : null,
+      req ? (req.get('user-agent') || null) : null,
+      metadata
+    );
   } catch (err) {
     console.error('Erro ao registar sessão', err.message);
   }
@@ -2086,7 +2098,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
     ? `<img src="${esc(theme.logoPath)}" alt="${esc(theme.logoAlt)}" class="brand-logo-img" />`
     : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
   const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
-  const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+  const bodyClass = ['app-body', 'theme-night', pageClass].filter(Boolean).join(' ');
 
   const renderNotificationItem = (item) => {
     if (!item) return '';
@@ -2655,6 +2667,246 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
           .gallery-overlay .gallery-next{right:1rem;}
           .gallery-overlay .gallery-caption{flex-direction:column;align-items:flex-start;}
         }
+        body.app-body.theme-night{
+          color-scheme:dark;
+          --bg:#0B1220;
+          --surface:#101A2C;
+          --elevated:#132037;
+          --popover:#0E1726;
+          --overlay:rgba(9,13,23,.72);
+          --text:#E6EEFF;
+          --text-muted:#A7B4CC;
+          --text-inverse:#0B1220;
+          --border:#20304D;
+          --primary-50:#E7F1FF;
+          --primary-100:#CFE3FF;
+          --primary-200:#9FCCFF;
+          --primary-300:#6FB4FF;
+          --primary-400:#469CFF;
+          --primary-500:#1F82FF;
+          --primary-600:#0B64D6;
+          --primary-700:#084DA5;
+          --primary-800:#063B82;
+          --primary-900:#052A5E;
+          --accent-50:#FFF1E6;
+          --accent-100:#FFE0CC;
+          --accent-200:#FFC399;
+          --accent-300:#FFA366;
+          --accent-400:#FF8A3D;
+          --accent-500:#FF6B0A;
+          --accent-600:#E55C00;
+          --accent-700:#B74800;
+          --accent-800:#8A3600;
+          --accent-900:#5C2400;
+          --success-500:#22C55E;
+          --warning-500:#F59E0B;
+          --error-500:#EF4444;
+          --error-600:#DC2626;
+          --info-500:#06B6D4;
+          --ring:#7DD3FC;
+          --shadow-elev:0 10px 30px rgba(0,0,0,.45);
+          --chart-1:#1F82FF;
+          --chart-2:#FF8A3D;
+          --chart-3:#22C55E;
+          --chart-4:#06B6D4;
+          --chart-5:#F59E0B;
+          --surface-muted:color-mix(in srgb,var(--surface) 82%, transparent);
+          --surface-soft:color-mix(in srgb,var(--surface) 65%, transparent);
+          --surface-strong:color-mix(in srgb,var(--elevated) 88%, transparent);
+          --border-soft:color-mix(in srgb,var(--border) 55%, transparent);
+          --accent-soft:color-mix(in srgb,var(--accent-500) 18%, var(--bg));
+          --accent-glow:color-mix(in srgb,var(--accent-500) 38%, transparent);
+          --primary-soft:color-mix(in srgb,var(--primary-500) 18%, transparent);
+          --text-faint:color-mix(in srgb,var(--text-muted) 75%, transparent);
+          background:var(--bg);
+          color:var(--text);
+        }
+        body.app-body.theme-night .app-shell,
+        body.app-body.theme-night .main-content,
+        body.app-body.theme-night .page-backoffice{background:var(--bg);color:var(--text);}
+        body.app-body.theme-night .topbar{background:var(--elevated);backdrop-filter:blur(18px);border-bottom:1px solid var(--border);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .nav-accent-bar{background:linear-gradient(120deg,var(--primary-500),var(--accent-500));}
+        body.app-body.theme-night .brand,
+        body.app-body.theme-night .brand-name{color:var(--text);}
+        body.app-body.theme-night .brand-info,
+        body.app-body.theme-night .brand-tagline{color:var(--text-muted);}
+        body.app-body.theme-night .brand-logo{background:linear-gradient(135deg,var(--primary-800),var(--primary-600));color:var(--text);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .brand-logo-img{mix-blend-mode:screen;}
+        body.app-body.theme-night .nav-link{color:var(--text-muted);}
+        body.app-body.theme-night .nav-link:hover,
+        body.app-body.theme-night .nav-link.active{color:var(--text);}
+        body.app-body.theme-night .nav-link.active::after{background:var(--primary-500);box-shadow:0 12px 22px color-mix(in srgb,var(--primary-500) 35%, transparent);}
+        body.app-body.theme-night .nav-actions{color:var(--text);}
+        body.app-body.theme-night .login-link{color:var(--accent-500);background:var(--surface-strong);border:1px solid var(--border);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .pill-indicator{background:var(--surface-soft);color:var(--text-muted);border:1px solid var(--border-soft);}
+        body.app-body.theme-night .pill-indicator--success{background:color-mix(in srgb,var(--success-500) 22%, transparent);color:var(--text);border-color:color-mix(in srgb,var(--success-500) 38%, var(--border));}
+        body.app-body.theme-night .pill-indicator--warning{background:color-mix(in srgb,var(--warning-500) 22%, transparent);color:var(--warning-500);border-color:color-mix(in srgb,var(--warning-500) 45%, var(--border));}
+        body.app-body.theme-night .footer{background:transparent;color:var(--text-muted);border-top:1px solid var(--border-soft);}
+        body.app-body.theme-night .btn{border:1px solid var(--border);background:var(--surface);color:var(--text);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .btn:hover{background:var(--surface-strong);}
+        body.app-body.theme-night .btn-primary{background:var(--primary-500);color:var(--text-inverse);box-shadow:0 16px 32px color-mix(in srgb,var(--primary-500) 35%, transparent);border-color:var(--primary-500);}
+        body.app-body.theme-night .btn-primary:hover{background:var(--primary-600);}
+        body.app-body.theme-night .btn-light{background:var(--primary-soft);color:var(--text);border-color:color-mix(in srgb,var(--primary-500) 28%, var(--border));}
+        body.app-body.theme-night .btn-muted{background:var(--surface-soft);color:var(--text-muted);border-color:var(--border-soft);}
+        body.app-body.theme-night .btn-danger{background:color-mix(in srgb,var(--error-500) 22%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));border-color:color-mix(in srgb,var(--error-500) 40%, var(--border));box-shadow:0 14px 30px color-mix(in srgb,var(--error-500) 28%, transparent);}
+        body.app-body.theme-night .btn[disabled]{opacity:.55;background:var(--surface-soft);color:var(--text-muted);box-shadow:none;}
+        body.app-body.theme-night .logout-form button{background:var(--surface);color:var(--text);border:1px solid var(--border);}
+        body.app-body.theme-night .btn-accent{background:var(--accent-500);color:var(--text-inverse);box-shadow:0 8px 28px color-mix(in srgb,var(--accent-500) 35%, transparent);}
+        body.app-body.theme-night .btn-accent:hover{background:var(--accent-600);}
+        body.app-body.theme-night .input,
+        body.app-body.theme-night select.input,
+        body.app-body.theme-night textarea.input{background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .input::placeholder{color:var(--text-muted);}
+        body.app-body.theme-night .input:focus{border-color:var(--primary-500);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary-500) 35%, transparent);}
+        body.app-body.theme-night .form-field__label{color:var(--text-muted);}
+        body.app-body.theme-night .radio-card{background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .radio-card input:checked + span{background:linear-gradient(135deg,var(--primary-500),var(--accent-500));-webkit-background-clip:text;background-clip:text;color:transparent;}
+        body.app-body.theme-night .nav-notifications__button{color:var(--text);background:var(--surface-soft);border:1px solid var(--border);}
+        body.app-body.theme-night .nav-notifications__panel{background:var(--popover);border:1px solid var(--border);box-shadow:0 22px 44px rgba(0,0,0,.6);}
+        body.app-body.theme-night .nav-notifications__title{color:var(--text);}
+        body.app-body.theme-night .nav-notifications__message{color:var(--text-muted);}
+        body.app-body.theme-night .nav-notifications__meta{color:var(--text-faint);}
+        body.app-body.theme-night .nav-notifications__footer-link{color:var(--primary-500);}
+        body.app-body.theme-night .page-backoffice .bo-sidebar,
+        body.app-body.theme-night .page-backoffice .bo-header,
+        body.app-body.theme-night .page-backoffice .bo-card,
+        body.app-body.theme-night .page-backoffice .bo-calendar-board,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview-row,
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__overview-grid,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid-wrapper,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid-viewport,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__cell,
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__day,
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry,
+        body.app-body.theme-night .page-backoffice .owners-alert,
+        body.app-body.theme-night .page-backoffice .owners-property__stat,
+        body.app-body.theme-night .page-backoffice .owners-list-item,
+        body.app-body.theme-night .page-backoffice .owners-simulation__results,
+        body.app-body.theme-night .page-backoffice .owners-finance__content .bo-card,
+        body.app-body.theme-night .page-backoffice .owners-finance-inline-form,
+        body.app-body.theme-night .page-backoffice .owners-finance-flash,
+        body.app-body.theme-night .page-backoffice .owners-simulation__grid,
+        body.app-body.theme-night .page-backoffice .owners-filter,
+        body.app-body.theme-night .page-backoffice .owners-summary__grid,
+        body.app-body.theme-night .page-backoffice .bo-stack,
+        body.app-body.theme-night .page-backoffice .bo-main{background:var(--surface);color:var(--text);border-color:var(--border);box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .page-backoffice .bo-header h1,
+        body.app-body.theme-night .page-backoffice .bo-card h2,
+        body.app-body.theme-night .page-backoffice .bo-card h3,
+        body.app-body.theme-night .page-backoffice .bo-card h4,
+        body.app-body.theme-night .page-backoffice .owners-property__stat strong,
+        body.app-body.theme-night .page-backoffice .owners-simulation__stats strong,
+        body.app-body.theme-night .page-backoffice .owners-finance__totals strong{color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-subtitle,
+        body.app-body.theme-night .page-backoffice .owners-property__stat span,
+        body.app-body.theme-night .page-backoffice .owners-simulation__stats span,
+        body.app-body.theme-night .page-backoffice .owners-finance__totals span,
+        body.app-body.theme-night .page-backoffice .owners-property__meta,
+        body.app-body.theme-night .page-backoffice .owners-list-item__meta,
+        body.app-body.theme-night .page-backoffice .owners-metric-hint,
+        body.app-body.theme-night .page-backoffice .bo-card p,
+        body.app-body.theme-night .page-backoffice .bo-card span,
+        body.app-body.theme-night .page-backoffice .bo-card li,
+        body.app-body.theme-night .page-backoffice .bo-card label{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-tab{background:var(--surface-soft);color:var(--text-muted);border:1px solid var(--border);}
+        body.app-body.theme-night .page-backoffice .bo-tab:hover{background:var(--surface);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-tab.is-active{background:var(--accent-500);color:var(--text-inverse);box-shadow:0 18px 38px color-mix(in srgb,var(--accent-500) 32%, transparent);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__day{background:var(--surface-soft);border-color:var(--border);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-grid__cell{background:var(--surface);border-color:var(--border-soft);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry{background:var(--elevated);border-color:var(--primary-700);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__guest{color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--confirmed{background:color-mix(in srgb,var(--success-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--cancelled{background:color-mix(in srgb,var(--error-500) 24%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--pending{background:color-mix(in srgb,var(--warning-500) 24%, transparent);color:var(--warning-500);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-entry__status--default{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-empty{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-empty-state{background:var(--surface-soft);color:var(--text-muted);border-color:var(--border);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item{background:var(--surface-soft);border-color:var(--border);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--confirmed{background:color-mix(in srgb,var(--success-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--pending{background:color-mix(in srgb,var(--warning-500) 24%, transparent);color:var(--warning-500);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-legend__item--blocked{background:color-mix(in srgb,var(--primary-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__badge{background:var(--surface);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking{box-shadow:var(--shadow-elev);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-confirmed{background:color-mix(in srgb,var(--success-500) 22%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-pending{background:color-mix(in srgb,var(--warning-500) 22%, transparent);color:var(--warning-500);}
+        body.app-body.theme-night .page-backoffice .bo-calendar-mobile__booking.is-blocked{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-delta--up{background:color-mix(in srgb,var(--success-500) 20%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-delta--down{background:color-mix(in srgb,var(--error-500) 24%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .page-backoffice .owners-delta--neutral{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-alert{background:var(--elevated);border-color:color-mix(in srgb,var(--accent-500) 32%, var(--border));}
+        body.app-body.theme-night .page-backoffice .owners-alert h2{color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-alert p,
+        body.app-body.theme-night .page-backoffice .owners-alert__list{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-list-item{background:var(--elevated);border-color:var(--border);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-list-empty{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-channels li{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-channels li strong{color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-status{background:var(--surface-soft);color:var(--text);border:1px solid var(--border);}
+        body.app-body.theme-night .page-backoffice .owners-status--confirmed{background:color-mix(in srgb,var(--success-500) 26%, transparent);}
+        body.app-body.theme-night .page-backoffice .owners-status--pending{background:color-mix(in srgb,var(--warning-500) 26%, transparent);color:var(--warning-500);}
+        body.app-body.theme-night .page-backoffice .owners-status--cancelled{background:color-mix(in srgb,var(--error-500) 26%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .page-backoffice .owners-status--default{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-table th{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-table td{color:var(--text);border-bottom:1px solid var(--border-soft);}
+        body.app-body.theme-night .page-backoffice .owners-table tbody tr:nth-child(even){background:var(--surface-muted);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--invoice{background:color-mix(in srgb,var(--success-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--expense{background:color-mix(in srgb,var(--error-500) 24%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .page-backoffice .owners-finance-type--adjustment{background:color-mix(in srgb,var(--primary-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .page-backoffice .owners-finance-meta{color:var(--text-muted);}
+        body.app-body.theme-night .page-backoffice .owners-finance-notes{color:var(--text-faint);}
+        body.app-body.theme-night .page-backoffice .owners-finance-flash--error{background:color-mix(in srgb,var(--error-500) 18%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));border-color:color-mix(in srgb,var(--error-500) 35%, var(--border));}
+        body.app-body.theme-night .page-backoffice .owners-finance-flash--success{background:color-mix(in srgb,var(--success-500) 18%, transparent);color:var(--text);border-color:color-mix(in srgb,var(--success-500) 35%, var(--border));}
+        body.app-body.theme-night .bo-alert{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);}
+        body.app-body.theme-night .bo-alert--success{background:color-mix(in srgb,var(--success-500) 22%, transparent);color:var(--text);border-color:color-mix(in srgb,var(--success-500) 38%, var(--border));}
+        body.app-body.theme-night .bo-alert--error{background:color-mix(in srgb,var(--error-500) 22%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));border-color:color-mix(in srgb,var(--error-500) 38%, var(--border));}
+        body.app-body.theme-night .bo-empty,
+        body.app-body.theme-night .owners-empty{color:var(--text-muted);}
+        body.app-body.theme-night .responsive-table table{background:var(--surface);}
+        body.app-body.theme-night .responsive-table thead th{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .responsive-table tbody tr{border-color:var(--border-soft);}
+        body.app-body.theme-night .responsive-table td{color:var(--text);}
+        body.app-body.theme-night a{color:var(--primary-400);}
+        body.app-body.theme-night a:hover{color:var(--primary-200);}
+        body.app-body.theme-night .tag{background:var(--surface-soft);color:var(--text-muted);}
+        body.app-body.theme-night .tag::before{color:inherit;}
+        body.app-body.theme-night .badge{background:var(--surface-soft);color:var(--text-muted);border:1px solid var(--border);}
+        body.app-body.theme-night .badge--success{background:color-mix(in srgb,var(--success-500) 24%, transparent);color:var(--text);}
+        body.app-body.theme-night .badge--warning{background:color-mix(in srgb,var(--warning-500) 24%, transparent);color:var(--warning-500);}
+        body.app-body.theme-night .badge--danger{background:color-mix(in srgb,var(--error-500) 24%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .stat-card{background:var(--surface);border-color:var(--border);color:var(--text);}
+        body.app-body.theme-night .stat-card__hint{color:var(--text-muted);}
+        body.app-body.theme-night .table,
+        body.app-body.theme-night table{color:var(--text);}
+        body.app-body.theme-night th{color:var(--text-muted);}
+        body.app-body.theme-night td{color:var(--text);}
+        body.app-body.theme-night hr{border-color:var(--border-soft);}
+        body.app-body.theme-night code,
+        body.app-body.theme-night pre{background:var(--surface);color:var(--primary-200);border:1px solid var(--border);}
+        body.app-body.theme-night .owners-finance-inline-form label{color:var(--text-muted);}
+        body.app-body.theme-night .owners-finance-inline-form .input{min-width:120px;}
+        body.app-body.theme-night .owners-finance-inline-form--danger{background:color-mix(in srgb,var(--error-500) 22%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));border:1px solid color-mix(in srgb,var(--error-500) 38%, var(--border));}
+        body.app-body.theme-night .owners-simulation__results p{color:var(--text-muted);}
+        body.app-body.theme-night .owners-simulation__actions .btn{box-shadow:none;}
+        body.app-body.theme-night .owners-simulation__actions .btn-primary{box-shadow:0 16px 32px color-mix(in srgb,var(--accent-500) 32%, transparent);}
+        body.app-body.theme-night .owners-summary__grid .bo-card,
+        body.app-body.theme-night .owners-property__content .bo-card{background:var(--surface);}
+        body.app-body.theme-night .owners-property__meta .pill-indicator{border-color:var(--border);}
+        body.app-body.theme-night .bo-calendar-filters__summary{background:var(--surface);color:var(--text);border-bottom:1px solid var(--border);}
+        body.app-body.theme-night .bo-calendar-filters__summary-hint{color:var(--text-muted);}
+        body.app-body.theme-night .bo-calendar-filters__body{background:var(--surface);}
+        body.app-body.theme-night .bo-calendar-filters__form label{color:var(--text-muted);}
+        body.app-body.theme-night .bo-calendar-filters__actions .btn{background:var(--surface-soft);}
+        body.app-body.theme-night .calendar-toast[data-variant="success"]{background:color-mix(in srgb,var(--success-500) 20%, transparent);color:var(--text);}
+        body.app-body.theme-night .calendar-toast[data-variant="info"]{background:color-mix(in srgb,var(--info-500) 22%, transparent);color:color-mix(in srgb,var(--info-500) 70%, var(--text));}
+        body.app-body.theme-night .calendar-toast[data-variant="danger"]{background:color-mix(in srgb,var(--error-500) 20%, transparent);color:color-mix(in srgb,var(--error-500) 70%, var(--text));}
+        body.app-body.theme-night .calendar-action__card{background:var(--popover);color:var(--text);}
+        body.app-body.theme-night .calendar-action__buttons .btn{background:var(--surface-soft);}
+        body.app-body.theme-night .calendar-action__buttons .btn-primary{background:var(--accent-500);color:var(--text-inverse);}
+        body.app-body.theme-night .calendar-action__title{color:var(--text);}
+        body.app-body.theme-night .calendar-grid{background:transparent;}
       </style>
       <script>
         const HAS_USER = ${hasUser ? 'true' : 'false'};
@@ -3093,6 +3345,7 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  twoFactorService,
   emailTemplates,
   mailer,
   bookingEmailer,
@@ -3133,13 +3386,15 @@ const context = {
   UNIT_TYPE_ICON_HINTS,
   slugify,
   decisionAssistant,
-  chatbotService
+  chatbotService,
+  ownerPushService
 };
 
 registerAuthRoutes(app, context);
 app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
+registerAccountModule(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================
