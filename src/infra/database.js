@@ -242,12 +242,35 @@ CREATE TABLE IF NOT EXISTS housekeeping_tasks (
 }
 
 function runLightMigrations(db) {
-  const listColumns = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  const tableExists = (table) => {
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      return !!row;
+    } catch (err) {
+      console.warn(`Não foi possível validar a existência da tabela ${table}:`, err.message);
+      return false;
+    }
+  };
+
+  const listColumns = (table) => {
+    if (!tableExists(table)) return [];
+    return db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  };
 
   const ensureColumn = (table, name, def) => {
+    if (!tableExists(table)) return;
     const cols = listColumns(table);
     if (!cols.includes(name)) {
       db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+    }
+  };
+
+  const ensureTable = (table, ddl) => {
+    if (tableExists(table)) return;
+    try {
+      db.exec(ddl);
+    } catch (err) {
+      console.warn(`Falha ao criar tabela ${table}:`, err.message);
     }
   };
 
@@ -300,6 +323,124 @@ function runLightMigrations(db) {
     ensureColumn('bookings', 'imported_at', 'TEXT');
     ensureColumn('bookings', 'source_payload', 'TEXT');
     ensureColumn('bookings', 'import_notes', 'TEXT');
+
+    ensureColumn('rate_plans', 'min_price', 'REAL DEFAULT NULL');
+    ensureColumn('rate_plans', 'max_price', 'REAL DEFAULT NULL');
+    ensureColumn('rate_plans', 'rules', "TEXT DEFAULT '{}' CHECK (json_valid(rules))");
+
+    ensureTable(
+      'pricing_snapshots',
+      `CREATE TABLE IF NOT EXISTS pricing_snapshots (
+        id TEXT PRIMARY KEY,
+        unit_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        suggested REAL NOT NULL,
+        reason TEXT NOT NULL,
+        inputs TEXT NOT NULL CHECK (json_valid(inputs)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(unit_id, date)
+      )`
+    );
+
+    ensureTable(
+      'calendar_price_overrides',
+      `CREATE TABLE IF NOT EXISTS calendar_price_overrides (
+        id TEXT PRIMARY KEY,
+        unit_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        price REAL NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(unit_id, date)
+      )`
+    );
+
+    ensureTable(
+      'import_batches',
+      `CREATE TABLE IF NOT EXISTS import_batches (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        stats TEXT NOT NULL CHECK (json_valid(stats)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'competitor_prices',
+      `CREATE TABLE IF NOT EXISTS competitor_prices (
+        id TEXT PRIMARY KEY,
+        unit_like TEXT NOT NULL,
+        date TEXT NOT NULL,
+        market_price REAL NOT NULL,
+        UNIQUE(unit_like, date)
+      )`
+    );
+
+    ensureTable(
+      'automations',
+      `CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        trigger TEXT NOT NULL,
+        conditions TEXT NOT NULL CHECK (json_valid(conditions)),
+        actions TEXT NOT NULL CHECK (json_valid(actions)),
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT
+      )`
+    );
+
+    ensureTable(
+      'automation_runs',
+      `CREATE TABLE IF NOT EXISTS automation_runs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        trigger_payload TEXT NOT NULL CHECK (json_valid(trigger_payload)),
+        status TEXT NOT NULL,
+        result TEXT CHECK (result IS NULL OR json_valid(result)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'decision_suggestions',
+      `CREATE TABLE IF NOT EXISTS decision_suggestions (
+        id TEXT PRIMARY KEY,
+        property_id TEXT NOT NULL,
+        unit_id TEXT,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT NOT NULL CHECK (json_valid(details)),
+        suggested_action TEXT NOT NULL CHECK (json_valid(suggested_action)),
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        acted_by TEXT
+      )`
+    );
+
+    ensureTable(
+      'chatbot_sessions',
+      `CREATE TABLE IF NOT EXISTS chatbot_sessions (
+        id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
+        state TEXT NOT NULL CHECK (json_valid(state)),
+        property_id TEXT
+      )`
+    );
+
+    ensureTable(
+      'chatbot_messages',
+      `CREATE TABLE IF NOT EXISTS chatbot_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }

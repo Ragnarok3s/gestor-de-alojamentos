@@ -32,6 +32,16 @@ const { createEmailTemplateService } = require('./src/services/email-templates')
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createAutomationEngine } = require('./server/automations/engine');
+const emailAction = require('./server/automations/actions/email');
+const notifyAction = require('./server/automations/actions/notify');
+const xlsxAppendAction = require('./server/automations/actions/xlsx.append');
+const createHousekeepingTaskAction = require('./server/automations/actions/create.housekeeping_task');
+const priceOverrideAction = require('./server/automations/actions/price.override');
+const logActivityAction = require('./server/automations/actions/log.activity');
+const { createDecisionAssistant } = require('./server/decisions/assistant');
+const { createChatbotService } = require('./server/chatbot/service');
+const { createChatbotRouter } = require('./server/chatbot/router');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1028,20 +1038,6 @@ function computeOperationalDashboard(rawFilters = {}) {
   return response;
 }
 
-try {
-  runAutomationSweep('startup');
-} catch (err) {
-  console.error('Automação: falha inicial', err);
-}
-
-setInterval(() => {
-  try {
-    runAutomationSweep('interval');
-  } catch (err) {
-    console.error('Automação: falha periódica', err);
-  }
-}, 30 * 60 * 1000);
-
 // Seeds
 const countProps = db.prepare('SELECT COUNT(*) AS c FROM properties').get().c;
 if (countProps === 0) {
@@ -1084,12 +1080,14 @@ const UPLOAD_ROOT = path.join(__dirname, 'uploads');
 const UPLOAD_UNITS = path.join(UPLOAD_ROOT, 'units');
 const UPLOAD_BRANDING = path.join(UPLOAD_ROOT, 'branding');
 const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
-const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS };
+const EXPORTS_DIR = path.join(UPLOAD_ROOT, 'exports');
+const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS, exports: EXPORTS_DIR };
 function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 ensureDir(UPLOAD_ROOT);
 ensureDir(UPLOAD_UNITS);
 ensureDir(UPLOAD_BRANDING);
 ensureDir(UPLOAD_CHANNEL_IMPORTS);
+ensureDir(EXPORTS_DIR);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1606,6 +1604,30 @@ const channelIntegrations = createChannelIntegrationService({
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
 
+const automationActionDrivers = {
+  email: emailAction,
+  notify: notifyAction,
+  'xlsx.append': xlsxAppendAction,
+  'create.housekeeping_task': createHousekeepingTaskAction,
+  'price.override': priceOverrideAction,
+  'log.activity': logActivityAction,
+};
+
+const automationEngine = createAutomationEngine({
+  db,
+  dayjs,
+  logActivity,
+  emailTemplates,
+  mailer,
+  ExcelJS,
+  ensureDir,
+  paths,
+  actionDrivers: automationActionDrivers,
+});
+
+const decisionAssistant = createDecisionAssistant({ db, dayjs });
+const chatbotService = createChatbotService({ db });
+
 channelIntegrations
   .autoSyncAll({ reason: 'startup' })
   .catch(err => console.warn('Integração de canais (startup):', err.message));
@@ -1614,6 +1636,61 @@ setInterval(() => {
   channelIntegrations
     .autoSyncAll({ reason: 'interval' })
     .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+}, 30 * 60 * 1000);
+
+function scheduleDailyTask(task, hour, minute) {
+  const run = () => {
+    try {
+      task();
+    } catch (err) {
+      console.error('Tarefa diária falhou:', err.message);
+    }
+    schedule();
+  };
+
+  function schedule() {
+    const now = dayjs();
+    let next = now.hour(hour).minute(minute).second(0).millisecond(0);
+    if (!next.isAfter(now)) {
+      next = next.add(1, 'day');
+    }
+    const delay = Math.max(60 * 1000, next.diff(now));
+    setTimeout(run, delay);
+  }
+
+  schedule();
+}
+
+scheduleDailyTask(() => {
+  decisionAssistant.run({ reason: 'daily' });
+}, 3, 10);
+
+scheduleDailyTask(() => {
+  automationEngine.handleEvent('daily.cron', { ts: Date.now() });
+}, 3, 30);
+
+try {
+  runAutomationSweep('startup');
+} catch (err) {
+  console.error('Automação: falha inicial', err);
+}
+
+try {
+  decisionAssistant.run({ reason: 'startup' });
+} catch (err) {
+  console.error('Assistente de decisões: falha inicial', err);
+}
+
+automationEngine
+  .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
+  .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
+
+setInterval(() => {
+  try {
+    runAutomationSweep('interval');
+  } catch (err) {
+    console.error('Automação: falha periódica', err);
+  }
 }, 30 * 60 * 1000);
 
 function wantsJson(req) {
@@ -2335,6 +2412,24 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-metric{background:#fff7ed;border:1px solid #fed7aa;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
         .page-backoffice .bo-metric strong{font-size:1.4rem;color:#9a3412;}
         .page-backoffice .bo-metric span{font-size:.8rem;color:#b45309;}
+        .page-backoffice .bo-channel-layout{display:grid;gap:24px;align-items:start;}
+        .page-backoffice .bo-channel-stack{display:grid;gap:24px;align-content:start;}
+        @media (min-width:900px){.page-backoffice .bo-channel-layout{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        @media (min-width:1280px){.page-backoffice .bo-channel-layout{grid-template-columns:minmax(0,2fr) minmax(0,1fr);}}
+        .page-backoffice .bo-channel-card-list{display:grid;gap:18px;}
+        .page-backoffice .bo-channel-card-grid{display:grid;gap:18px;}
+        @media (min-width:960px){.page-backoffice .bo-channel-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        .page-backoffice .bo-channel-card-grid > *{min-width:0;}
+        .page-backoffice .bo-channel-form{display:grid;gap:16px;}
+        .page-backoffice .bo-channel-form__row{display:grid;gap:14px;}
+        .page-backoffice .bo-channel-form__row--thirds{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));}
+        .page-backoffice .bo-channel-form__row--split{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+        .page-backoffice .bo-channel-form__actions{display:flex;flex-wrap:wrap;gap:12px;}
+        .page-backoffice .bo-channel-form__actions .btn{flex:1 1 180px;justify-content:center;}
+        .page-backoffice .bo-channel-sync{display:inline-flex;margin-top:8px;}
+        .page-backoffice .bo-channel-sync .btn{justify-content:center;}
+        .page-backoffice .bo-channel-alerts{display:grid;gap:12px;}
+        .page-backoffice .bo-channel-upload-legend{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
         .page-backoffice .bo-calendar-filters{padding:0;overflow:hidden;}
         .page-backoffice .bo-calendar-filters__details{display:block;}
         .page-backoffice .bo-calendar-filters__summary{list-style:none;margin:0;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:600;font-size:.95rem;color:#9a3412;border-bottom:1px solid rgba(249,115,22,.18);}
@@ -3026,6 +3121,7 @@ const context = {
   rescheduleBookingUpdateStmt,
   rescheduleBlockUpdateStmt,
   automationCache,
+  automationEngine,
   AUTO_CHAIN_THRESHOLD,
   AUTO_CHAIN_CLEANUP_NIGHTS,
   HOT_DEMAND_THRESHOLD,
@@ -3035,10 +3131,13 @@ const context = {
   MASTER_ROLE,
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
-  slugify
+  slugify,
+  decisionAssistant,
+  chatbotService
 };
 
 registerAuthRoutes(app, context);
+app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerBackoffice(app, context);
