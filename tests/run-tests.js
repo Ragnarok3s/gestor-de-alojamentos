@@ -4,6 +4,7 @@ const dayjs = require('dayjs');
 const { createDatabase } = require('../src/infra/database');
 const { createSessionService } = require('../src/services/session');
 const { createCsrfProtection } = require('../src/security/csrf');
+const { suggestPrice } = require('../server/services/pricing');
 
 function createMockRequest({ ip = '127.0.0.1', userAgent = 'jest/agent', body = {}, headers = {} } = {}) {
   return {
@@ -82,9 +83,35 @@ function testCsrfProtection() {
   assert.notEqual(rotated, token, 'token deve rodar');
 }
 
+function testPricingService() {
+  const unit = { id: 'u1', name: 'Studio Teste', base_price_cents: 12000 };
+  const history = {
+    occupancy: { '30': 0.25, '60': 0.3, '90': 0.35 },
+    pace: { last7: 1, last14: 2, typical7: 2, typical14: 4 },
+    leadTimeBuckets: { short: 0.9, medium: 0.95, long: 1.05 },
+    seasonality: {
+      [dayjs().add(1, 'day').format('MM')]: {
+        [String(dayjs().add(1, 'day').day())]: 0.95,
+      },
+    },
+  };
+  const ratePlan = { min_price: 80, max_price: 200, rules: '{}' };
+  const targetDate = dayjs().add(1, 'day').format('YYYY-MM-DD');
+  const { price, breakdown } = suggestPrice({ unit, targetDate, history, ratePlan });
+  assert.ok(price < 120, 'preço deve descer com ocupação baixa');
+  assert.ok(price >= 80, 'clamp mínimo deve aplicar-se');
+  assert.ok(breakdown.lastMinute < 0, 'ajuste last-minute deve existir');
+
+  const clampRatePlan = { min_price: 150, max_price: 160, rules: '{}' };
+  const { price: clamped } = suggestPrice({ unit, targetDate, history, ratePlan: clampRatePlan });
+  assert.ok(clamped <= 160, 'clamp máximo deve aplicar-se');
+  assert.ok(clamped >= 150, 'clamp mínimo deve aplicar-se com valores altos');
+}
+
 function main() {
   testSessionService();
   testCsrfProtection();
+  testPricingService();
   console.log('Todos os testes passaram.');
 }
 

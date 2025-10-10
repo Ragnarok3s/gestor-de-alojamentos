@@ -242,12 +242,35 @@ CREATE TABLE IF NOT EXISTS housekeeping_tasks (
 }
 
 function runLightMigrations(db) {
-  const listColumns = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  const tableExists = (table) => {
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      return !!row;
+    } catch (err) {
+      console.warn(`Não foi possível validar a existência da tabela ${table}:`, err.message);
+      return false;
+    }
+  };
+
+  const listColumns = (table) => {
+    if (!tableExists(table)) return [];
+    return db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  };
 
   const ensureColumn = (table, name, def) => {
+    if (!tableExists(table)) return;
     const cols = listColumns(table);
     if (!cols.includes(name)) {
       db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`).run();
+    }
+  };
+
+  const ensureTable = (table, ddl) => {
+    if (tableExists(table)) return;
+    try {
+      db.exec(ddl);
+    } catch (err) {
+      console.warn(`Falha ao criar tabela ${table}:`, err.message);
     }
   };
 
@@ -300,6 +323,59 @@ function runLightMigrations(db) {
     ensureColumn('bookings', 'imported_at', 'TEXT');
     ensureColumn('bookings', 'source_payload', 'TEXT');
     ensureColumn('bookings', 'import_notes', 'TEXT');
+
+    ensureColumn('rate_plans', 'min_price', 'REAL DEFAULT NULL');
+    ensureColumn('rate_plans', 'max_price', 'REAL DEFAULT NULL');
+    ensureColumn('rate_plans', 'rules', "TEXT DEFAULT '{}' CHECK (json_valid(rules))");
+
+    ensureTable(
+      'pricing_snapshots',
+      `CREATE TABLE IF NOT EXISTS pricing_snapshots (
+        id TEXT PRIMARY KEY,
+        unit_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        suggested REAL NOT NULL,
+        reason TEXT NOT NULL,
+        inputs TEXT NOT NULL CHECK (json_valid(inputs)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(unit_id, date)
+      )`
+    );
+
+    ensureTable(
+      'calendar_price_overrides',
+      `CREATE TABLE IF NOT EXISTS calendar_price_overrides (
+        id TEXT PRIMARY KEY,
+        unit_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        price REAL NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(unit_id, date)
+      )`
+    );
+
+    ensureTable(
+      'import_batches',
+      `CREATE TABLE IF NOT EXISTS import_batches (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        stats TEXT NOT NULL CHECK (json_valid(stats)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'competitor_prices',
+      `CREATE TABLE IF NOT EXISTS competitor_prices (
+        id TEXT PRIMARY KEY,
+        unit_like TEXT NOT NULL,
+        date TEXT NOT NULL,
+        market_price REAL NOT NULL,
+        UNIQUE(unit_like, date)
+      )`
+    );
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }
