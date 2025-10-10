@@ -24,9 +24,12 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const registerAccountModule = require('./src/modules/account');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
+const { createTwoFactorService } = require('./src/services/twoFactorService');
+const { createOwnerPushService } = require('./src/services/ownerPush');
 const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
 const { createMailer } = require('./src/services/mailer');
@@ -57,6 +60,8 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const twoFactorService = createTwoFactorService({ db, dayjs });
+const ownerPushService = createOwnerPushService({ db, dayjs });
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -349,11 +354,18 @@ const insertPermissionOverrideStmt = db.prepare(
   'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
 );
 
-function logSessionEvent(userId, action, req) {
+function logSessionEvent(userId, action, req, meta = null) {
   try {
+    const metadata = meta ? JSON.stringify(meta) : null;
     db.prepare(
-      'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
-    ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
+      'INSERT INTO session_logs(user_id, action, ip, user_agent, metadata_json) VALUES (?,?,?,?,?)'
+    ).run(
+      userId || null,
+      action,
+      req ? req.ip : null,
+      req ? (req.get('user-agent') || null) : null,
+      metadata
+    );
   } catch (err) {
     console.error('Erro ao registar sessão', err.message);
   }
@@ -3093,6 +3105,7 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  twoFactorService,
   emailTemplates,
   mailer,
   bookingEmailer,
@@ -3133,13 +3146,15 @@ const context = {
   UNIT_TYPE_ICON_HINTS,
   slugify,
   decisionAssistant,
-  chatbotService
+  chatbotService,
+  ownerPushService
 };
 
 registerAuthRoutes(app, context);
 app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
+registerAccountModule(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================
