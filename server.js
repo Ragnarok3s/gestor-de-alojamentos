@@ -2199,16 +2199,6 @@ function layout({
         </div>`
     : '';
 
-  const logoutCsrfField = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}" />` : '';
-  const sessionActionsHtml = hasUser
-    ? `<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
-        <form method="post" action="/logout" class="logout-form">
-          ${logoutCsrfField}
-          <button type="submit">${esc(logoutLabel)}</button>
-        </form>`
-    : `<a class="login-link" href="/login">${esc(loginLabel)}</a>`;
-  const navActionsHtml = `${languageSwitcherHtml}${themeToggleHtml}${hasUser ? notificationsMarkup : ''}${sessionActionsHtml}`;
-
   const navLinks = [];
   const pushNavLink = (key, href, label) => {
     navLinks.push(`<a class="${navClass(key)}" href="${href}">${label}</a>`);
@@ -2237,6 +2227,16 @@ function layout({
       <i data-lucide="moon-star"></i>
       <span class="theme-toggle__label" data-theme-toggle-label>${esc(themeLightLabel)}</span>
     </button>`;
+
+  const logoutCsrfField = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}" />` : '';
+  const sessionActionsHtml = hasUser
+    ? `<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
+        <form method="post" action="/logout" class="logout-form">
+          ${logoutCsrfField}
+          <button type="submit">${esc(logoutLabel)}</button>
+        </form>`
+    : `<a class="login-link" href="/login">${esc(loginLabel)}</a>`;
+  const navActionsHtml = `${languageSwitcherHtml}${themeToggleHtml}${hasUser ? notificationsMarkup : ''}${sessionActionsHtml}`;
 
   if (!isHousekeepingOnly) {
     pushNavLink('search', '/search', esc(t('nav.search', 'Pesquisar')));
