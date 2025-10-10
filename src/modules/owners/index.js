@@ -48,15 +48,15 @@ module.exports = function registerOwnersPortal(app, context) {
   function buildStatusPill(status) {
     const normalized = (status || '').toUpperCase();
     if (normalized === 'CONFIRMED') {
-      return '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">Confirmada</span>';
+      return '<span class="owners-status owners-status--confirmed">Confirmada</span>';
     }
     if (normalized === 'PENDING') {
-      return '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Pendente</span>';
+      return '<span class="owners-status owners-status--pending">Pendente</span>';
     }
     if (normalized === 'CANCELLED') {
-      return '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-700">Cancelada</span>';
+      return '<span class="owners-status owners-status--cancelled">Cancelada</span>';
     }
-    return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">${esc(normalized || 'Estado')}</span>`;
+    return `<span class="owners-status owners-status--default">${esc(normalized || 'Estado')}</span>`;
   }
 
   app.get('/owners', requireLogin, ensureOwnerPortalAccess, (req, res) => {
@@ -249,16 +249,16 @@ module.exports = function registerOwnersPortal(app, context) {
     const filterFormHtml =
       allProperties.length > 1
         ? html`
-            <form method="get" class="card p-4 flex flex-wrap items-end gap-3">
-              <div class="flex-1 min-w-[220px]">
-                <label class="block text-sm font-semibold text-slate-600">Propriedade</label>
-                <select name="property" class="input mt-1">
+            <form method="get" class="bo-card owners-filter">
+              <div class="form-field owners-filter__field">
+                <span class="form-label">Propriedade</span>
+                <select name="property" class="input">
                   <option value="">Todas as propriedades</option>
                   ${propertyFilterOptions}
                 </select>
               </div>
-              <div class="flex gap-2">
-                <button class="btn btn-muted" type="submit">Atualizar</button>
+              <div class="owners-filter__actions">
+                <button class="btn btn-primary" type="submit">Atualizar</button>
                 ${hasRequestedProperty ? html`<a class="btn btn-light" href="/owners">Limpar filtro</a>` : ''}
               </div>
             </form>
@@ -266,26 +266,28 @@ module.exports = function registerOwnersPortal(app, context) {
         : '';
 
     const summaryCardsHtml = html`
-      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div class="card p-5 flex flex-col gap-2">
-          <span class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Receita últimos 30 dias</span>
-          <span class="text-3xl font-semibold text-slate-800">€ ${eur(totalRevenue30)}</span>
-          <span class="text-xs text-slate-500">Reservas confirmadas com estadia neste período.</span>
-        </div>
-        <div class="card p-5 flex flex-col gap-2">
-          <span class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Noites vendidas (30 dias)</span>
-          <span class="text-3xl font-semibold text-slate-800">${integerFormatter.format(totalNights30)}</span>
-          <span class="text-xs text-slate-500">Soma das noites ocupadas nas últimas quatro semanas.</span>
-        </div>
-        <div class="card p-5 flex flex-col gap-2">
-          <span class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Taxa de ocupação (30 dias)</span>
-          <span class="text-3xl font-semibold text-slate-800">${percentFormatter.format(occupancyRate || 0)}</span>
-          <span class="text-xs text-slate-500">Considera ${integerFormatter.format(totalAvailableNights)} noites disponíveis.</span>
-        </div>
-        <div class="card p-5 flex flex-col gap-2">
-          <span class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Check-ins esta semana</span>
-          <span class="text-3xl font-semibold text-slate-800">${integerFormatter.format(totalWeekCheckins)}</span>
-          <span class="text-xs text-slate-500">Reservas confirmadas com entrada até ${weekEnd.subtract(1, 'day').format('DD/MM')}.</span>
+      <section class="bo-card owners-summary">
+        <div class="bo-metrics">
+          <article class="bo-metric">
+            <span class="owners-metric-label">Receita últimos 30 dias</span>
+            <strong>€ ${eur(totalRevenue30)}</strong>
+            <p class="owners-metric-hint">Reservas confirmadas com estadia neste período.</p>
+          </article>
+          <article class="bo-metric">
+            <span class="owners-metric-label">Noites vendidas (30 dias)</span>
+            <strong>${integerFormatter.format(totalNights30)}</strong>
+            <p class="owners-metric-hint">Soma das noites ocupadas nas últimas quatro semanas.</p>
+          </article>
+          <article class="bo-metric">
+            <span class="owners-metric-label">Taxa de ocupação (30 dias)</span>
+            <strong>${percentFormatter.format(occupancyRate || 0)}</strong>
+            <p class="owners-metric-hint">Considera ${integerFormatter.format(totalAvailableNights)} noites disponíveis.</p>
+          </article>
+          <article class="bo-metric">
+            <span class="owners-metric-label">Check-ins esta semana</span>
+            <strong>${integerFormatter.format(totalWeekCheckins)}</strong>
+            <p class="owners-metric-hint">Reservas confirmadas com entrada até ${weekEnd.subtract(1, 'day').format('DD/MM')}.</p>
+          </article>
         </div>
       </section>
     `;
@@ -293,10 +295,11 @@ module.exports = function registerOwnersPortal(app, context) {
     const pendingBannerHtml =
       totalPendingBookings > 0
         ? html`
-            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 flex flex-col gap-1">
-              <strong class="text-amber-900">${integerFormatter.format(totalPendingBookings)} reserva(s) pendente(s)</strong>
-              <span>Assim que a equipa confirmar, o hóspede recebe automaticamente um email com a validação final.</span>
-            </div>
+            <section class="bo-card owners-alert">
+              <h2>Reservas pendentes</h2>
+              <p><strong>${integerFormatter.format(totalPendingBookings)}</strong> reserva(s) a aguardar confirmação.</p>
+              <p>Assim que a equipa confirmar, o hóspede recebe automaticamente um email com a validação final.</p>
+            </section>
           `
         : '';
 
@@ -307,71 +310,70 @@ module.exports = function registerOwnersPortal(app, context) {
             const revenueLabel = `€ ${eur(summary.revenue30)}`;
             const pendingHtml =
               summary.pendingCount > 0
-                ? `<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">${summary.pendingCount} pendente(s)</span>`
-                : `<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">Sem pendentes</span>`;
+                ? `<span class="owners-status owners-status--pending">${summary.pendingCount} pendente(s)</span>`
+                : '<span class="owners-status owners-status--confirmed">Sem pendentes</span>';
             const upcomingItems = summary.upcoming.slice(0, 5);
             const upcomingListHtml = upcomingItems.length
               ? upcomingItems
                   .map(item => {
-                    return `<li class="flex flex-wrap items-center justify-between gap-3 border border-slate-200 rounded-xl px-3 py-2">
-                      <div>
-                        <div class="font-semibold text-slate-700">${esc(item.unitName)}</div>
-                        <div class="text-xs text-slate-500">${esc(item.guestName || 'Hóspede sem nome')} · ${item.checkinLabel} - ${item.checkoutLabel} (${integerFormatter.format(item.nights)} noite(s))</div>
-                      </div>
-                      <div class="flex flex-col items-end gap-1">
+                    return `<li class="owners-list-item">
+                      <div class="owners-list-item__header">
+                        <div class="owners-list-item__guest">${esc(item.guestName || 'Hóspede sem nome')}</div>
                         ${buildStatusPill(item.status)}
-                        <span class="text-xs text-slate-500">${esc(item.channelLabel)}</span>
                       </div>
+                      <div class="owners-list-item__meta">${esc(item.unitName)} · ${item.checkinLabel} - ${item.checkoutLabel} (${integerFormatter.format(item.nights)} noite(s))</div>
+                      <div class="owners-list-item__meta">Canal: ${esc(item.channelLabel)}</div>
                     </li>`;
                   })
                   .join('')
-              : '<li class="text-sm text-slate-500">Sem reservas futuras nos próximos 90 dias.</li>';
+              : '<li class="owners-list-empty">Sem reservas futuras nos próximos 90 dias.</li>';
             const channelListHtml = summary.channelList.length
               ? summary.channelList
                   .map(([label, count]) => {
-                    return `<li class="flex items-center justify-between gap-3 text-sm text-slate-600"><span>${esc(label)}</span><span class="font-semibold text-slate-800">${integerFormatter.format(count)}</span></li>`;
+                    return `<li><span>${esc(label)}</span><strong>${integerFormatter.format(count)}</strong></li>`;
                   })
                   .join('')
-              : '<li class="text-sm text-slate-500">Sem reservas confirmadas nos últimos 30 dias.</li>';
+              : '<li class="owners-list-empty">Sem reservas confirmadas nos últimos 30 dias.</li>';
 
             return html`
-              <section class="card p-6 space-y-5">
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <section class="bo-card owners-property">
+                <div class="owners-property__header">
                   <div>
-                    <h2 class="text-xl font-semibold text-slate-800">${esc(summary.name)}</h2>
-                    ${summary.location ? `<p class="text-sm text-slate-500">${esc(summary.location)}</p>` : ''}
+                    <h2>${esc(summary.name)}</h2>
+                    ${summary.location ? `<p class="bo-subtitle">${esc(summary.location)}</p>` : ''}
                   </div>
-                  <div class="flex flex-wrap gap-2 text-xs text-slate-600">
-                    <span class="inline-flex items-center px-3 py-1 rounded-full bg-slate-100 font-semibold">${integerFormatter.format(summary.totalUnits)} unidade(s)</span>
-                    <span class="inline-flex items-center px-3 py-1 rounded-full bg-slate-100 font-semibold">Capacidade total: ${integerFormatter.format(summary.totalCapacity)} hóspedes</span>
+                  <div class="owners-property__meta">
+                    <span>${integerFormatter.format(summary.totalUnits)} unidade(s)</span>
+                    <span>Capacidade total: ${integerFormatter.format(summary.totalCapacity)} hóspedes</span>
                   </div>
                 </div>
-                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div class="rounded-xl border border-slate-200 p-4">
-                    <div class="text-xs text-slate-500 uppercase tracking-wide">Receita 30 dias</div>
-                    <div class="text-lg font-semibold text-slate-800">${revenueLabel}</div>
+                <div class="owners-property__stats">
+                  <div class="owners-property__stat">
+                    <span>Receita 30 dias</span>
+                    <strong>${revenueLabel}</strong>
                   </div>
-                  <div class="rounded-xl border border-slate-200 p-4">
-                    <div class="text-xs text-slate-500 uppercase tracking-wide">Ocupação 30 dias</div>
-                    <div class="text-lg font-semibold text-slate-800">${occupancyLabel}</div>
+                  <div class="owners-property__stat">
+                    <span>Ocupação 30 dias</span>
+                    <strong>${occupancyLabel}</strong>
+                    <small>${integerFormatter.format(summary.availableNights)} noites disponíveis</small>
                   </div>
-                  <div class="rounded-xl border border-slate-200 p-4">
-                    <div class="text-xs text-slate-500 uppercase tracking-wide">Reservas confirmadas (mês)</div>
-                    <div class="text-lg font-semibold text-slate-800">${integerFormatter.format(summary.confirmedThisMonth)}</div>
+                  <div class="owners-property__stat">
+                    <span>Reservas confirmadas (mês)</span>
+                    <strong>${integerFormatter.format(summary.confirmedThisMonth)}</strong>
                   </div>
-                  <div class="rounded-xl border border-slate-200 p-4 flex flex-col gap-2">
-                    <div class="text-xs text-slate-500 uppercase tracking-wide">Estado actual</div>
+                  <div class="owners-property__stat">
+                    <span>Estado actual</span>
                     ${pendingHtml}
                   </div>
                 </div>
-                <div class="grid gap-5 lg:grid-cols-2">
+                <div class="owners-property__content">
                   <div>
-                    <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Próximas reservas</h3>
-                    <ul class="grid gap-2">${upcomingListHtml}</ul>
+                    <h3 class="bo-section-title">Próximas reservas</h3>
+                    <ul class="owners-list">${upcomingListHtml}</ul>
                   </div>
                   <div>
-                    <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Canais (últimos 30 dias)</h3>
-                    <ul class="space-y-2">${channelListHtml}</ul>
+                    <h3 class="bo-section-title">Canais (últimos 30 dias)</h3>
+                    <ul class="owners-channels">${channelListHtml}</ul>
                   </div>
                 </div>
               </section>
@@ -379,49 +381,44 @@ module.exports = function registerOwnersPortal(app, context) {
           })
           .join('')
       : html`
-          <section class="card p-6 space-y-3 text-slate-600">
-            <h2 class="text-lg font-semibold text-slate-800">Sem propriedades atribuídas</h2>
-            <p>Para consultar dados operacionais precisa que a direção associe a sua conta às propriedades relevantes.</p>
-            <p class="text-sm text-slate-500">Assim que existir pelo menos uma propriedade atribuída, esta área mostra reservas, receita e canais actualizados em tempo real.</p>
+          <section class="bo-card owners-empty">
+            <h2>Sem propriedades atribuídas</h2>
+            <p class="bo-subtitle">Para consultar dados operacionais precisa que a direção associe a sua conta às propriedades relevantes.</p>
+            <p>Assim que existir pelo menos uma propriedade atribuída, esta área mostra reservas, receita e canais actualizados em tempo real.</p>
           </section>
         `;
 
     const upcomingTableHtml = upcomingPreview.length
       ? html`
-          <section class="card p-6 space-y-4">
-            <div class="flex items-center justify-between">
-              <div>
-                <h2 class="text-lg font-semibold text-slate-800">Próximas chegadas</h2>
-                <p class="text-sm text-slate-500">As 10 reservas com entrada mais próxima entre as suas propriedades.</p>
-              </div>
-              <span class="text-xs font-semibold text-slate-500">Actualizado a ${dayjs().format('DD/MM/YYYY HH:mm')}</span>
-            </div>
-            <div class="overflow-x-auto -mx-3 sm:mx-0">
-              <table class="min-w-full divide-y divide-slate-200 text-sm">
-                <thead class="bg-slate-50">
+          <section class="bo-card owners-upcoming">
+            <h2>Próximas chegadas</h2>
+            <p class="bo-subtitle">As 10 reservas com entrada mais próxima entre as suas propriedades.</p>
+            <div class="owners-table">
+              <table>
+                <thead>
                   <tr>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Check-in</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Propriedade</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Unidade</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Hóspede</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Noites</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Canal</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Total</th>
-                    <th class="px-3 py-2 text-left font-semibold text-slate-600">Estado</th>
+                    <th>Check-in</th>
+                    <th>Propriedade</th>
+                    <th>Unidade</th>
+                    <th>Hóspede</th>
+                    <th>Noites</th>
+                    <th>Canal</th>
+                    <th>Total</th>
+                    <th>Estado</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-200">
+                <tbody>
                   ${upcomingPreview
                     .map(item => {
                       return `<tr>
-                        <td class="px-3 py-2 whitespace-nowrap">${esc(item.checkinLabel)}</td>
-                        <td class="px-3 py-2">${esc(item.propertyName)}</td>
-                        <td class="px-3 py-2">${esc(item.unitName)}</td>
-                        <td class="px-3 py-2">${esc(item.guestName || '—')}</td>
-                        <td class="px-3 py-2 text-center">${integerFormatter.format(item.nights)}</td>
-                        <td class="px-3 py-2">${esc(item.channelLabel)}</td>
-                        <td class="px-3 py-2 whitespace-nowrap">€ ${eur(item.totalCents)}</td>
-                        <td class="px-3 py-2 text-right">${buildStatusPill(item.status)}</td>
+                        <td>${esc(item.checkinLabel)}</td>
+                        <td>${esc(item.propertyName)}</td>
+                        <td>${esc(item.unitName)}</td>
+                        <td>${esc(item.guestName || '—')}</td>
+                        <td>${integerFormatter.format(item.nights)}</td>
+                        <td>${esc(item.channelLabel)}</td>
+                        <td>€ ${eur(item.totalCents)}</td>
+                        <td>${buildStatusPill(item.status)}</td>
                       </tr>`;
                     })
                     .join('')}
@@ -434,17 +431,14 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const channelSummaryHtml = channelSummary.length
       ? html`
-          <section class="card p-6 space-y-3">
-            <h2 class="text-lg font-semibold text-slate-800">Distribuição por canal (30 dias)</h2>
-            <p class="text-sm text-slate-500">Contagem de reservas confirmadas com estadia nas últimas quatro semanas.</p>
-            <ul class="space-y-2">
+          <section class="bo-card owners-channel-card">
+            <h2>Distribuição por canal (30 dias)</h2>
+            <p class="bo-subtitle">Contagem de reservas confirmadas com estadia nas últimas quatro semanas.</p>
+            <ul>
               ${channelSummary
                 .map(([label, count]) => {
                   const percentage = channelTotalCount ? count / channelTotalCount : 0;
-                  return `<li class="flex items-center justify-between gap-3 text-sm text-slate-600">
-                    <span>${esc(label)}</span>
-                    <span class="font-semibold text-slate-800">${integerFormatter.format(count)} (${percentFormatter.format(percentage)})</span>
-                  </li>`;
+                  return `<li><span>${esc(label)}</span><span>${integerFormatter.format(count)} (${percentFormatter.format(percentage)})</span></li>`;
                 })
                 .join('')}
             </ul>
@@ -452,12 +446,62 @@ module.exports = function registerOwnersPortal(app, context) {
         `
       : '';
 
+    const pageStyles = html`
+      <style>
+        .page-backoffice.page-owners .owners-main{display:grid;gap:24px;}
+        .page-backoffice.page-owners .owners-filter{display:grid;gap:18px;align-items:end;}
+        @media (min-width:720px){.page-backoffice.page-owners .owners-filter{grid-template-columns:minmax(0,1fr) auto;}}
+        .page-backoffice.page-owners .owners-filter__actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;}
+        .page-backoffice.page-owners .owners-metric-label{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;font-weight:600;}
+        .page-backoffice.page-owners .owners-metric-hint{margin:6px 0 0;font-size:.8rem;color:#b45309;}
+        .page-backoffice.page-owners .owners-alert{background:#fff7ed;border:1px solid #fcd34d;box-shadow:0 14px 28px rgba(251,191,36,.22);display:grid;gap:6px;}
+        .page-backoffice.page-owners .owners-alert h2{margin:0;font-size:1rem;color:#92400e;}
+        .page-backoffice.page-owners .owners-alert p{margin:0;font-size:.85rem;color:#b45309;}
+        .page-backoffice.page-owners .owners-property{display:grid;gap:18px;}
+        .page-backoffice.page-owners .owners-property__header{display:grid;gap:8px;}
+        @media (min-width:640px){.page-backoffice.page-owners .owners-property__header{grid-template-columns:minmax(0,1fr) auto;align-items:flex-start;}}
+        .page-backoffice.page-owners .owners-property__meta{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;font-weight:600;}
+        .page-backoffice.page-owners .owners-property__stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
+        .page-backoffice.page-owners .owners-property__stat{border-radius:18px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;padding:14px;display:grid;gap:4px;align-content:start;}
+        .page-backoffice.page-owners .owners-property__stat span{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:#b45309;}
+        .page-backoffice.page-owners .owners-property__stat strong{font-size:1.2rem;color:#9a3412;}
+        .page-backoffice.page-owners .owners-property__stat small{font-size:.75rem;color:#b45309;opacity:.85;}
+        .page-backoffice.page-owners .owners-property__content{display:grid;gap:18px;}
+        @media (min-width:960px){.page-backoffice.page-owners .owners-property__content{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        .page-backoffice.page-owners .owners-list{margin:0;padding:0;list-style:none;display:grid;gap:12px;}
+        .page-backoffice.page-owners .owners-list-item{border-radius:18px;border:1px solid rgba(148,163,184,.28);background:#fff;box-shadow:0 12px 26px rgba(15,23,42,.08);padding:14px 16px;display:grid;gap:6px;}
+        .page-backoffice.page-owners .owners-list-item__header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;}
+        .page-backoffice.page-owners .owners-list-item__guest{font-weight:600;color:#1f2937;}
+        .page-backoffice.page-owners .owners-list-item__meta{font-size:.78rem;color:#475569;}
+        .page-backoffice.page-owners .owners-list-empty{font-size:.85rem;color:#64748b;}
+        .page-backoffice.page-owners .owners-channels{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
+        .page-backoffice.page-owners .owners-channels li{display:flex;justify-content:space-between;gap:12px;font-size:.85rem;color:#334155;}
+        .page-backoffice.page-owners .owners-channels li strong{color:#9a3412;}
+        .page-backoffice.page-owners .owners-status{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+        .page-backoffice.page-owners .owners-status--confirmed{background:rgba(16,185,129,.18);color:#047857;}
+        .page-backoffice.page-owners .owners-status--pending{background:rgba(250,204,21,.24);color:#92400e;}
+        .page-backoffice.page-owners .owners-status--cancelled{background:rgba(248,113,113,.22);color:#b91c1c;}
+        .page-backoffice.page-owners .owners-status--default{background:rgba(148,163,184,.22);color:#334155;}
+        .page-backoffice.page-owners .owners-table{overflow:auto;}
+        .page-backoffice.page-owners .owners-table table{width:100%;border-collapse:collapse;min-width:720px;}
+        .page-backoffice.page-owners .owners-table th{background:#fff7ed;text-transform:uppercase;font-size:.7rem;letter-spacing:.08em;color:#b45309;padding:12px;text-align:left;}
+        .page-backoffice.page-owners .owners-table td{padding:12px;border-bottom:1px solid rgba(148,163,184,.25);font-size:.85rem;color:#334155;}
+        .page-backoffice.page-owners .owners-table tbody tr:nth-child(even){background:rgba(254,243,199,.35);}
+        .page-backoffice.page-owners .owners-empty{display:grid;gap:8px;color:#b45309;}
+        .page-backoffice.page-owners .owners-channel-card ul{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
+        .page-backoffice.page-owners .owners-channel-card li{display:flex;justify-content:space-between;gap:12px;font-size:.85rem;color:#334155;}
+        .page-backoffice.page-owners .owners-channel-card li span:last-child{font-weight:600;color:#9a3412;}
+        .page-backoffice.page-owners .bo-section-title{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#b45309;margin:0 0 8px;font-weight:700;}
+      </style>
+    `;
+
     const body = html`
-      <div class="owners-portal space-y-6">
-        <header class="space-y-2">
+      ${pageStyles}
+      <div class="bo-main owners-main">
+        <header class="bo-header">
           <span class="pill-indicator">Área de Proprietários</span>
-          <h1 class="text-3xl font-semibold text-slate-800">Resumo de desempenho</h1>
-          <p class="text-slate-600 max-w-3xl">Consulte receita recente, reservas futuras e a origem dos seus hóspedes sem precisar de aceder ao backoffice.</p>
+          <h1>Resumo de desempenho</h1>
+          <p>Consulte receita recente, reservas futuras e a origem dos seus hóspedes sem precisar de aceder ao backoffice.</p>
         </header>
         ${filterFormHtml}
         ${summaryCardsHtml}
@@ -473,7 +517,7 @@ module.exports = function registerOwnersPortal(app, context) {
         title: 'Área de Proprietários',
         user: viewer,
         activeNav: 'owners',
-        pageClass: 'page-owners',
+        pageClass: 'page-backoffice page-owners',
         body
       })
     );
