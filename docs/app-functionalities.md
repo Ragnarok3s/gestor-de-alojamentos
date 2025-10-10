@@ -47,14 +47,12 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】
   *Exemplo real*: Ao abrir um novo alojamento, a equipa altera rapidamente as cores do portal e cria acessos distintos para receção e direção.
 
-## Funcionalidades em falta
+- **Gestão de propriedades e unidades com métricas agregadas** – O painel principal do backoffice permite listar alojamentos atribuídos, adicionar novas propriedades e criar unidades com capacidade, preço base e características configuráveis, além de apresentar a receita total por ativo.【F:src/modules/backoffice/index.js†L3242-L3322】
+  *Exemplo real*: Ao integrar um novo edifício, a equipa cria a propriedade “Residência Aurora”, adiciona as três unidades disponíveis e verifica de imediato o volume de receita associado a cada uma.
 
-- **Gestão de Tarifas Inteligente (Yield Management)** – Ainda não existe o módulo de pricing no backoffice com geração automática de sugestões, aplicação de overrides nem importação de preços de mercado, apesar de a base de dados já possuir as tabelas necessárias.【F:docs/app-functionalities.md†L79-L108】
-  *Impacto*: A equipa de revenue continua a calcular ajustes de preços manualmente e não consegue aplicar as regras dinâmicas descritas nas especificações.
+- **Ficha completa da unidade com reservas, bloqueios e rates** – Cada unidade possui uma página com histórico de reservas, formulário para bloquear datas, criação de rates sazonais e edição rápida de capacidade ou preço base sem sair do contexto operacional.【F:src/modules/backoffice/index.js†L4110-L4245】
+  *Exemplo real*: Antes de aceitar um pedido de grupo, o gestor consulta a ficha da “Suite Vista Rio”, bloqueia duas noites entre estadias e ajusta o mínimo de noites da rate de verão.
 
-- **Sincronização interna em tempo real via SSE** – Falta implementar o bus de eventos, a rota `/realtime/stream` e os hooks para difundir alterações de reservas, bloqueios e preços entre as páginas abertas do backoffice.【F:docs/app-functionalities.md†L110-L115】
-  *Impacto*: Os utilizadores precisam atualizar manualmente as páginas para verem mudanças recentes, o que aumenta o risco de conflitos e informação desatualizada.
-
-- **Multicalendário Consolidado tipo Cloudbeds** – O novo ecrã “Calendário (multi)” com vista horizontal, drag-and-drop e virtualização ainda não foi desenvolvido, mantendo apenas o calendário semanal existente.【F:docs/app-functionalities.md†L117-L121】
-  *Impacto*: A direção não consegue visualizar rapidamente várias unidades e canais na mesma grelha nem reagendar com a ergonomia exigida para operações de média e grande escala.
+- **Gestão de galeria e assets das unidades** – As imagens são carregadas diretamente no backoffice, comprimidas automaticamente e podem ser reordenadas por arrastar-e-largar, definindo o destaque visual da unidade em segundos.【F:src/modules/backoffice/index.js†L4254-L4284】
+  *Exemplo real*: Após uma sessão fotográfica, o marketing sobe as novas imagens da “Casa das Laranjeiras”, marca a melhor fotografia como principal e remove capturas antigas para manter o catálogo coerente.
 
