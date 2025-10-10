@@ -716,6 +716,9 @@ module.exports = function registerFrontoffice(app, context) {
       user,
       activeNav: 'search',
       branding: theme,
+      locale: req.locale,
+      t: req.t,
+      csrfToken: res.locals.csrfToken,
       pageClass: 'page-backoffice page-search',
       body: html`
         <div class="bo-main search-main">
@@ -834,6 +837,9 @@ app.get('/book/:unitId', (req, res) => {
     user,
     activeNav: 'search',
     branding: theme,
+    locale: req.locale,
+    t: req.t,
+    csrfToken,
     body: html`
       <div class="result-header">
         <span class="pill-indicator">Passo 3 de 3</span>
@@ -1466,6 +1472,9 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     user: req.user,
     activeNav: 'calendar',
     branding: resolveBrandingForRequest(req),
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     pageClass: 'page-backoffice page-calendar',
     body: html`
       <div class="bo-main">
@@ -2099,6 +2108,9 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
     user: req.user,
     activeNav: 'export',
     branding: resolveBrandingForRequest(req),
+    locale: req.locale,
+    t: req.t,
+    csrfToken: res.locals.csrfToken,
     body: html`
       <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
       <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>

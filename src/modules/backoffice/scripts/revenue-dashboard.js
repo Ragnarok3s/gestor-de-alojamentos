@@ -77,6 +77,39 @@
       if (rangeEl) rangeEl.textContent = payload.range.label;
     }
 
+    function readCssVar(name, fallback) {
+      try {
+        var styles = getComputedStyle(document.documentElement);
+        var value = styles.getPropertyValue(name);
+        return value && value.trim() ? value.trim() : fallback;
+      } catch (err) {
+        return fallback;
+      }
+    }
+
+    function getPalette() {
+      return {
+        chartColors: {
+          revenueLine: readCssVar('--chart-1', '#2563eb'),
+          revenueFill: readCssVar('--chart-1-soft', 'rgba(37, 99, 235, 0.15)'),
+          nightsBar: readCssVar('--chart-3-soft', 'rgba(249, 115, 22, 0.6)'),
+          occupancyBar: readCssVar('--chart-2', '#22c55e')
+        },
+        channelPalette: [
+          readCssVar('--chart-1', '#2563eb'),
+          readCssVar('--chart-2', '#22c55e'),
+          readCssVar('--chart-3', '#f97316'),
+          readCssVar('--chart-4', '#0ea5e9'),
+          readCssVar('--chart-5', '#a855f7'),
+          readCssVar('--chart-6', '#ef4444'),
+          readCssVar('--chart-7', '#14b8a6')
+        ]
+      };
+    }
+
+    var palette = getPalette();
+    var charts = { revenue: null, occupancy: null, channel: null };
+
     var tableBody = document.getElementById('revenue-daily-table');
     if (tableBody) {
       if (daily.length === 0) {
@@ -156,11 +189,9 @@
           return Number(((item.revenueCents || 0) / 100).toFixed(2));
         });
 
-        var colorPalette = ['#2563eb', '#22c55e', '#f97316', '#0ea5e9', '#a855f7', '#ef4444', '#14b8a6'];
-
         var revenueCtx = document.getElementById('revenue-line-chart');
         if (revenueCtx && labels.length) {
-          new Chart(revenueCtx, {
+          charts.revenue = new Chart(revenueCtx, {
             type: 'line',
             data: {
               labels: labels,
@@ -169,8 +200,8 @@
                   type: 'line',
                   label: 'Receita (EUR)',
                   data: revenueData,
-                  borderColor: '#2563eb',
-                  backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                  borderColor: palette.chartColors.revenueLine,
+                  backgroundColor: palette.chartColors.revenueFill,
                   pointRadius: 0,
                   tension: 0.3,
                   fill: true,
@@ -180,7 +211,8 @@
                   type: 'bar',
                   label: 'Noites vendidas',
                   data: nightsData,
-                  backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                  backgroundColor: palette.chartColors.nightsBar,
+                  borderColor: palette.chartColors.nightsBar,
                   borderRadius: 6,
                   yAxisID: 'y1'
                 }
@@ -232,7 +264,7 @@
 
         var occupancyCtx = document.getElementById('revenue-occupancy-chart');
         if (occupancyCtx && labels.length) {
-          new Chart(occupancyCtx, {
+          charts.occupancy = new Chart(occupancyCtx, {
             type: 'bar',
             data: {
               labels: labels,
@@ -240,7 +272,7 @@
                 {
                   label: 'Ocupação (%)',
                   data: occupancyData,
-                  backgroundColor: '#22c55e',
+                  backgroundColor: palette.chartColors.occupancyBar,
                   borderRadius: 6
                 }
               ]
@@ -279,7 +311,7 @@
 
         var channelCtx = document.getElementById('revenue-channel-chart');
         if (channelCtx && channelLabels.length) {
-          new Chart(channelCtx, {
+          charts.channel = new Chart(channelCtx, {
             type: 'doughnut',
             data: {
               labels: channelLabels,
@@ -287,7 +319,7 @@
                 {
                   data: channelValues,
                   backgroundColor: channelLabels.map(function (_, index) {
-                    return colorPalette[index % colorPalette.length];
+                    return palette.channelPalette[index % palette.channelPalette.length];
                   }),
                   borderWidth: 0
                 }
@@ -314,6 +346,51 @@
             }
           });
         }
+
+        function applyChartTheme() {
+          palette = getPalette();
+          if (charts.revenue) {
+            var revenueDatasets = charts.revenue.data.datasets || [];
+            if (revenueDatasets[0]) {
+              revenueDatasets[0].borderColor = palette.chartColors.revenueLine;
+              revenueDatasets[0].backgroundColor = palette.chartColors.revenueFill;
+            }
+            if (revenueDatasets[1]) {
+              revenueDatasets[1].backgroundColor = palette.chartColors.nightsBar;
+              revenueDatasets[1].borderColor = palette.chartColors.nightsBar;
+            }
+            charts.revenue.update('none');
+          }
+          if (charts.occupancy) {
+            var occupancyDatasets = charts.occupancy.data.datasets || [];
+            if (occupancyDatasets[0]) {
+              occupancyDatasets[0].backgroundColor = palette.chartColors.occupancyBar;
+            }
+            charts.occupancy.update('none');
+          }
+          if (charts.channel) {
+            var channelDataset = charts.channel.data.datasets && charts.channel.data.datasets[0];
+            if (channelDataset) {
+              channelDataset.backgroundColor = channelDataset.data.map(function (_, index) {
+                return palette.channelPalette[index % palette.channelPalette.length];
+              });
+            }
+            charts.channel.update('none');
+          }
+        }
+
+        applyChartTheme();
+
+        var themeObserver = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i += 1) {
+            if (mutations[i].type === 'attributes') {
+              applyChartTheme();
+              break;
+            }
+          }
+        });
+
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
       })
       .catch(function (err) {
         console.error('Painel de revenue: não foi possível carregar os gráficos', err);
