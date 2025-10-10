@@ -44,6 +44,17 @@ A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A l
 - **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
   *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
 
-- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】  
+- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】
   *Exemplo real*: Ao abrir um novo alojamento, a equipa altera rapidamente as cores do portal e cria acessos distintos para receção e direção.
+
+## Funcionalidades em falta
+
+- **Gestão de Tarifas Inteligente (Yield Management)** – Ainda não existe o módulo de pricing no backoffice com geração automática de sugestões, aplicação de overrides nem importação de preços de mercado, apesar de a base de dados já possuir as tabelas necessárias.【F:docs/app-functionalities.md†L79-L108】
+  *Impacto*: A equipa de revenue continua a calcular ajustes de preços manualmente e não consegue aplicar as regras dinâmicas descritas nas especificações.
+
+- **Sincronização interna em tempo real via SSE** – Falta implementar o bus de eventos, a rota `/realtime/stream` e os hooks para difundir alterações de reservas, bloqueios e preços entre as páginas abertas do backoffice.【F:docs/app-functionalities.md†L110-L115】
+  *Impacto*: Os utilizadores precisam atualizar manualmente as páginas para verem mudanças recentes, o que aumenta o risco de conflitos e informação desatualizada.
+
+- **Multicalendário Consolidado tipo Cloudbeds** – O novo ecrã “Calendário (multi)” com vista horizontal, drag-and-drop e virtualização ainda não foi desenvolvido, mantendo apenas o calendário semanal existente.【F:docs/app-functionalities.md†L117-L121】
+  *Impacto*: A direção não consegue visualizar rapidamente várias unidades e canais na mesma grelha nem reagendar com a ergonomia exigida para operações de média e grande escala.
 
