@@ -2228,12 +2228,12 @@ module.exports = function registerBackoffice(app, context) {
             const autoForm = channel.supportsAuto
               ? `<div class="rounded-xl border border-slate-200 bg-white/70 p-3">
                   <h4 class="text-sm font-semibold text-slate-700">Configuração automática</h4>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="grid gap-3 mt-3">
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="bo-channel-form grid gap-3 mt-3">
                     <label class="form-field">
                       <span class="form-label">Ligação automática</span>
                       <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
                     </label>
-                    <div class="grid gap-3 md:grid-cols-3">
+                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-3 bo-channel-form__row--thirds">
                       <label class="form-field">
                         <span class="form-label">Formato</span>
                         <select name="autoFormat" class="input">
@@ -2264,7 +2264,7 @@ module.exports = function registerBackoffice(app, context) {
                         <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
                       </label>
                     </div>
-                    <div class="grid gap-3 md:grid-cols-2">
+                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
                       <label class="form-field">
                         <span class="form-label">Utilizador (opcional)</span>
                         <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
@@ -2282,11 +2282,11 @@ module.exports = function registerBackoffice(app, context) {
                       <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
                       <span>Ativar sincronização automática</span>
                     </label>
-                    <div class="flex flex-wrap gap-2">
+                    <div class="bo-channel-form__actions flex flex-wrap gap-2">
                       <button class="btn btn-primary">Guardar integração</button>
                     </div>
                   </form>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="mt-2 inline-flex">
+                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="bo-channel-sync mt-2 inline-flex">
                     <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
                   </form>
                 </div>`
@@ -2307,7 +2307,7 @@ module.exports = function registerBackoffice(app, context) {
                     ${attentionBadge}
                   </div>
                 </header>
-                <div class="grid gap-4 lg:grid-cols-2">
+                <div class="bo-channel-card-grid grid gap-4 lg:grid-cols-2">
                   ${autoForm}
                   ${infoPanel}
                 </div>
@@ -2358,8 +2358,8 @@ module.exports = function registerBackoffice(app, context) {
 
     const manualUploadSection = manualChannelOptions
       ? `
-        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="grid gap-3">
-          <div class="grid gap-3 md:grid-cols-2">
+        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="bo-channel-form grid gap-3">
+          <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
             <label class="form-field">
               <span class="form-label">Canal</span>
               <select name="channel_key" class="input" required>
@@ -2379,7 +2379,7 @@ module.exports = function registerBackoffice(app, context) {
             <span class="form-label">Ficheiro de reservas</span>
             <input type="file" name="file" class="input" required accept=".csv,.tsv,.xlsx,.xls,.ics,.ical,.json" />
           </label>
-          <div>
+          <div class="bo-channel-form__actions">
             <button class="btn btn-primary">Importar reservas</button>
           </div>
         </form>`
@@ -2453,7 +2453,6 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
       { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
-      { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
@@ -3458,27 +3457,27 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                 </div>
 
-                <div class="grid gap-6 xl:grid-cols-[2fr_1fr]">
-                  <div class="space-y-6">
+                <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr]">
+                  <div class="bo-channel-stack space-y-6">
                     <div class="bo-card">
                       <h3 class="bo-section-title">Conexões de canais</h3>
                       <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
-                      <div class="mt-4 space-y-4">${channelCardsHtml}</div>
+                      <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
                     </div>
 
                     <div class="bo-card">
                       <h3 class="bo-section-title">Upload manual de reservas</h3>
                       <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
-                      ${manualFormatsLegend ? `<ul class="mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
+                      ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
                       <div class="mt-4">${manualUploadSection}</div>
                     </div>
                   </div>
 
-                  <div class="space-y-6">
+                  <div class="bo-channel-stack space-y-6">
                     <div class="bo-card">
                       <h3 class="bo-section-title">Alertas do Channel Manager</h3>
                       <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
-                      <div class="mt-3 space-y-3">${channelAlertsHtml}</div>
+                      <div class="bo-channel-alerts mt-3 space-y-3">${channelAlertsHtml}</div>
                     </div>
 
                     <div class="bo-card">
