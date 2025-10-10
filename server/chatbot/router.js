@@ -1,96 +1,71 @@
+'use strict';
+
 const express = require('express');
-const { parseMessage } = require('./parser');
+const { randomUUID } = require('node:crypto');
+const { createChatbotBrain } = require('./brain');
 
 function createChatbotRouter(context) {
   const {
     chatbotService,
-    dayjs,
     db,
     esc,
     html,
-    rateQuote,
-    unitAvailable,
+    csrfProtection,
   } = context;
 
   if (!chatbotService) {
     throw new Error('Chatbot service não inicializado.');
   }
 
+  const brain = context.chatbotBrain || createChatbotBrain(context);
+
   const router = express.Router();
+  const insertFeedbackStmt = db.prepare(
+    `INSERT INTO kb_feedback (id, session_id, question, answer_given, chosen_kb_id, intent, confidence)
+     VALUES (@id, @session_id, @question, @answer_given, @chosen_kb_id, @intent, @confidence)`
+  );
+  const updateFeedbackStmt = db.prepare(
+    `UPDATE kb_feedback SET helpful = @helpful, notes = COALESCE(@notes, notes)
+      WHERE id = @id`
+  );
 
   function ensureSession(req, res) {
     chatbotService.expireOldSessions();
     const cookieId = req.cookies && req.cookies.cb_sid ? String(req.cookies.cb_sid) : '';
     let session = cookieId ? chatbotService.getSession(cookieId) : null;
     if (!session) {
-      session = chatbotService.createSession({ intent: null, messages: [] }, null);
-      res.cookie('cb_sid', session.id, { httpOnly: false, sameSite: 'Lax', maxAge: 1000 * 60 * 60 * 48 });
+      session = chatbotService.createSession({ intent: 'availability' }, null);
+      res.cookie('cb_sid', session.id, {
+        httpOnly: false,
+        sameSite: 'Lax',
+        maxAge: 1000 * 60 * 60 * 48,
+      });
     }
     return session;
   }
 
-  function renderMessage(role, text, extra = '') {
+  function renderMessage(role, body, extra = '') {
     const bubbleClass = role === 'user' ? 'chatbot-bubble is-user' : 'chatbot-bubble is-bot';
     return html`
       <div class="chatbot-message ${bubbleClass}">
-        <div class="chatbot-message__body">${text}</div>
+        <div class="chatbot-message__body">${body}</div>
         ${extra}
       </div>`;
   }
 
-  function renderAvailabilityCards(options = {}) {
-    const { checkin, checkout, guests } = options;
-    if (!checkin || !checkout) {
-      return '<p class="chatbot-hint">Preciso de datas válidas para verificar a disponibilidade.</p>';
-    }
+  function renderFeedbackControls(feedbackId, csrfToken) {
+    const positivePayload = JSON.stringify({ id: feedbackId, helpful: 1, _csrf: csrfToken }).replace(/"/g, '&quot;');
+    const negativePayload = JSON.stringify({ id: feedbackId, helpful: 0, _csrf: csrfToken }).replace(/"/g, '&quot;');
+    return html`
+      <div class="chatbot-feedback" hx-target="this" hx-swap="outerHTML">
+        <span>Foi útil?</span>
+        <button type="button" class="chatbot-feedback__btn" hx-post="/chatbot/feedback" hx-vals="${positivePayload}">👍</button>
+        <button type="button" class="chatbot-feedback__btn" hx-post="/chatbot/feedback" hx-vals="${negativePayload}">👎</button>
+      </div>`;
+  }
 
-    const units = db
-      .prepare(
-        `SELECT u.id, u.name, u.capacity, u.base_price_cents, p.name AS property_name, p.id AS property_id
-           FROM units u
-           JOIN properties p ON p.id = u.property_id
-          ORDER BY p.name, u.name`
-      )
-      .all();
-
-    const available = units.filter(unit => {
-      if (guests && unit.capacity < guests) return false;
-      return unitAvailable(unit.id, checkin, checkout);
-    });
-
-    if (!available.length) {
-      return '<p class="chatbot-hint">Não encontrei unidades disponíveis para esse intervalo. Podemos ajustar as datas?</p>';
-    }
-
-    const cards = available
-      .slice(0, 4)
-      .map(unit => {
-        const quote = rateQuote(unit.id, checkin, checkout, unit.base_price_cents);
-        const nights = quote.nights;
-        const total = quote.total_cents / 100;
-        const unitTitle = esc(unit.name);
-        const propertyName = esc(unit.property_name);
-        return html`
-          <article class="chatbot-card">
-            <div class="chatbot-card__header">
-              <h4>${unitTitle}</h4>
-              <span>${propertyName}</span>
-            </div>
-            <div class="chatbot-card__meta">
-              <span>${nights} noite(s)</span>
-              <span>${guests || '—'} hóspede(s)</span>
-            </div>
-            <div class="chatbot-card__price">€ ${total.toFixed(2)}</div>
-            <div class="chatbot-card__actions">
-              <a class="chatbot-card__cta" href="/?unit=${unit.id}&checkin=${encodeURIComponent(checkin)}&checkout=${encodeURIComponent(checkout)}&adults=${encodeURIComponent(guests || 1)}">
-                Reservar agora
-              </a>
-            </div>
-          </article>`;
-      })
-      .join('');
-
-    return `<div class="chatbot-cards">${cards}</div>`;
+  function stripHtml(raw = '') {
+    return String(raw).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
   router.post('/message', (req, res) => {
@@ -100,53 +75,54 @@ function createChatbotRouter(context) {
       return res.send(renderMessage('bot', 'Pode reformular a pergunta? Preciso de mais detalhes.'));
     }
 
-    chatbotService.recordMessage(session.id, 'user', text);
-    const parsed = parseMessage(dayjs, text);
-    const state = { ...session.state };
+    const csrfToken = req.body._csrf || (req.csrfToken ? req.csrfToken() : csrfProtection.ensureToken(req, res));
 
-    if (parsed.guests) state.guests = parsed.guests;
-    if (parsed.checkin) state.checkin = parsed.checkin.format('YYYY-MM-DD');
-    if (parsed.checkout) state.checkout = parsed.checkout.format('YYYY-MM-DD');
-    state.intent = parsed.intent || state.intent || 'availability';
-    chatbotService.saveSessionState(session.id, state);
-
-    let reply = '';
-    if (state.intent === 'availability') {
-      if (!state.checkin || !state.checkout) {
-        reply = renderMessage('bot', 'Diga-me as datas de chegada e saída para procurar a melhor opção.');
-      } else if (!state.guests) {
-        reply = renderMessage('bot', 'Quantos hóspedes vão viajar?');
-      } else {
-        const cards = renderAvailabilityCards({
-          checkin: state.checkin,
-          checkout: state.checkout,
-          guests: state.guests,
-        });
-        reply = renderMessage(
-          'bot',
-          `Encontrei algumas sugestões para ${dayjs(state.checkin).format('DD/MM')} – ${dayjs(state.checkout).format('DD/MM')}.`,
-          cards
-        );
-      }
-    } else if (state.intent === 'amenities') {
-      reply = renderMessage('bot', 'Aceitamos animais de estimação mediante pedido e disponibilidade. Pretende que verifique datas?');
-      state.intent = 'availability';
-      chatbotService.saveSessionState(session.id, state);
-    } else if (state.intent === 'policy') {
-      reply = renderMessage('bot', 'Check-in a partir das 15h e check-out até às 11h. Pode indicar datas para verificar disponibilidade?');
-      state.intent = 'availability';
-      chatbotService.saveSessionState(session.id, state);
-    } else if (state.intent === 'promo') {
-      reply = renderMessage('bot', 'Temos 5% de desconto para reservas diretas esta semana. Vamos procurar datas específicas?');
-      state.intent = 'availability';
-      chatbotService.saveSessionState(session.id, state);
-    } else {
-      reply = renderMessage('bot', 'Estou aqui para ajudar com disponibilidade e reservas. Quer indicar datas e número de hóspedes?');
-      state.intent = 'availability';
-      chatbotService.saveSessionState(session.id, state);
+    if (!csrfProtection.validateRequest(req)) {
+      return res.send(renderMessage('bot', 'Não foi possível validar o pedido. Atualize a página e tente novamente.'));
     }
 
-    res.send(renderMessage('user', esc(text)) + reply);
+    chatbotService.recordMessage(session.id, 'user', text);
+
+    const result = brain.process({ session, text, propertyId: session.property_id || null, locale: 'pt', csrfToken });
+
+    const nextState = {
+      ...session.state,
+      ...(result.nextState || {}),
+    };
+    chatbotService.saveSessionState(session.id, nextState);
+
+    const feedbackId = randomUUID();
+    const answerSummary = stripHtml(result.html);
+    insertFeedbackStmt.run({
+      id: feedbackId,
+      session_id: session.id,
+      question: text,
+      answer_given: answerSummary,
+      chosen_kb_id: result.kbRef,
+      intent: result.intent,
+      confidence: result.confidence,
+    });
+
+    chatbotService.recordMessage(session.id, 'assistant', answerSummary);
+
+    const feedbackControls = renderFeedbackControls(feedbackId, csrfToken);
+    const botMessage = renderMessage('bot', result.html, feedbackControls);
+
+    res.send(renderMessage('user', esc(text)) + botMessage);
+  });
+
+  router.post('/feedback', (req, res) => {
+    if (!csrfProtection.validateRequest(req)) {
+      return res.send('<div class="chatbot-feedback">Token inválido, por favor tente novamente.</div>');
+    }
+    const feedbackId = req.body.id;
+    if (!feedbackId) {
+      return res.send('<div class="chatbot-feedback">Obrigado pelo feedback!</div>');
+    }
+    const helpful = String(req.body.helpful || '1') === '1' ? 1 : 0;
+    const notes = typeof req.body.notes === 'string' ? req.body.notes.slice(0, 500) : null;
+    updateFeedbackStmt.run({ id: feedbackId, helpful, notes });
+    res.send('<div class="chatbot-feedback">Obrigado pelo feedback!</div>');
   });
 
   return router;

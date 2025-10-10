@@ -97,20 +97,38 @@ function extractDates(dayjs, text) {
 
 function detectIntent(text) {
   const normalized = normalizeText(text);
-  if (/preco|preço|quanto|disponibil/i.test(normalized)) {
+  if (/preco|preço|quanto|disponibil|procuro/i.test(normalized)) {
     return 'availability';
   }
   if (/promocao|promo|codigo/i.test(normalized)) {
     return 'promo';
   }
-  if (/check-in|check in|checkin|politica|politica/i.test(normalized)) {
+  if (/check-in|check in|checkin|politica|cancelament|late check|early check/i.test(normalized)) {
     return 'policy';
   }
-  if (/reservar|quero reservar|confirmar/i.test(normalized)) {
+  if (/reservar|quero reservar|confirmar|fechar|finalizar/i.test(normalized)) {
     return 'book';
   }
-  if (/animal|cao|cachorro|pet|gato/i.test(normalized)) {
+  if (/animal|cao|cachorro|pet|gato|wifi|wi-fi|internet|estacionamento|parking|carro|garagem|piscina|spa|limpeza|berco|bebe|crianca/i.test(normalized)) {
     return 'amenities';
+  }
+  if (/localizacao|localizac|onde fica|morada|perto|direc|mapa/i.test(normalized)) {
+    return 'location';
+  }
+  if (/contact|contato|contacto|telefone|telemovel|email|e-mail|whatsapp|whatsap|falar convosco/i.test(normalized)) {
+    return 'contact';
+  }
+  if (/pagamento|pagar|cartao|visa|mbway|mb way|transferencia|deposito|sinal|caucao/i.test(normalized)) {
+    return 'payments';
+  }
+  if (/ajuda|podes ajudar|preciso de ajuda|duvida|suporte/i.test(normalized)) {
+    return 'support';
+  }
+  if (/ola|bom dia|boa tarde|boa noite|hey|oi/i.test(normalized)) {
+    return 'greeting';
+  }
+  if (/obrigad|agradecid|thanks|valeu/i.test(normalized)) {
+    return 'gratitude';
   }
   return 'smalltalk';
 }
@@ -127,4 +145,4 @@ function parseMessage(dayjs, text) {
   };
 }
 
-module.exports = { parseMessage };
+module.exports = { parseMessage, normalizeText };
