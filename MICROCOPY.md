@@ -24,4 +24,6 @@
 | Estado vazio KPIs | "Ainda não temos dados suficientes para este período." | Mostrar contexto adicional com filtros. |
 | Toast undo sucesso | "Alteração anulada." | Enviado após `/rates/bulk/undo`. |
 | KPI info toast | "Monitoriza variações: queda de ocupação com ADR alto indica oportunidade de promoções rápidas." | Botão info no card combinado. |
+| Alerta ocupação baixa | "Ocupação abaixo do recomendado" / "Ativa campanhas ou ajusta o ADR para estimular reservas rápidas." | Mostrar quando taxa <30%. |
+| Alerta ocupação alta | "Ocupação em níveis máximos" / "Revê disponibilidade futura e considera aumentar o ADR para maximizar receita." | Mostrar quando taxa >90%. |
 | Erro noites fim-de-semana | "Intervalo sem noites para aplicar." | Validar quando filtro fim-de-semana remove todas as datas. |

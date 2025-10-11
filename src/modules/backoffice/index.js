@@ -2870,10 +2870,19 @@ module.exports = function registerBackoffice(app, context) {
               <h3 class="text-base font-semibold text-slate-800">Ocupação &amp; ADR unificados</h3>
               <p class="text-sm text-slate-600">Visão imediata do equilíbrio entre ocupação e preço médio diário.</p>
             </div>
-            <button type="button" class="btn btn-light btn-compact" data-kpi-info aria-describedby="kpi-tooltip-text">
-              <i data-lucide="info" class="w-4 h-4" aria-hidden="true"></i>
-              <span class="sr-only">Como interpretar os KPIs</span>
-            </button>
+            <div class="flex items-center gap-2 self-start">
+              <a
+                href="#operational-metrics"
+                class="text-sm font-medium text-sky-700 hover:text-sky-800 focus:outline-none focus-visible:ring focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                data-kpi-detail-link
+              >
+                Ver detalhe
+              </a>
+              <button type="button" class="btn btn-light btn-compact" data-kpi-info aria-describedby="kpi-tooltip-text">
+                <i data-lucide="info" class="w-4 h-4" aria-hidden="true"></i>
+                <span class="sr-only">Como interpretar os KPIs</span>
+              </button>
+            </div>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
@@ -2885,6 +2894,21 @@ module.exports = function registerBackoffice(app, context) {
               <div class="text-xs uppercase tracking-wide text-sky-600">ADR</div>
               <div class="text-2xl font-semibold text-sky-900" data-kpi-adr>${esc(revenueSummaryLabels.adr)}</div>
               <div class="text-xs text-sky-700">Preço médio por noite confirmada.</div>
+            </div>
+          </div>
+          <div
+            class="rounded-lg border p-3 flex gap-2 items-start bg-amber-50 border-amber-200"
+            data-kpi-alert
+            hidden
+            role="status"
+            aria-live="polite"
+          >
+            <span class="mt-0.5 flex-shrink-0 text-amber-600" aria-hidden="true" data-kpi-alert-icon>
+              <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+            </span>
+            <div class="space-y-1">
+              <p class="text-sm font-semibold text-slate-800" data-kpi-alert-title></p>
+              <p class="text-sm text-slate-600" data-kpi-alert-message></p>
             </div>
           </div>
           <div class="text-xs text-slate-500">Dados combinados do período ${esc(revenueRangeLabel)}. RevPAR atual: <span data-kpi-revpar>${esc(revenueSummaryLabels.revpar)}</span>.</div>

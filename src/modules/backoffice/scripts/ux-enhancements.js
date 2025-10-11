@@ -950,10 +950,73 @@
     var occupancyEl = card.querySelector('[data-kpi-occupancy]');
     var adrEl = card.querySelector('[data-kpi-adr]');
     var revparEl = card.querySelector('[data-kpi-revpar]');
+    var alertBox = card.querySelector('[data-kpi-alert]');
+    var alertTitle = card.querySelector('[data-kpi-alert-title]');
+    var alertMessage = card.querySelector('[data-kpi-alert-message]');
+    var alertIcon = card.querySelector('[data-kpi-alert-icon]');
+
+    function applyAlert(rate) {
+      if (!alertBox || !alertTitle || !alertMessage) return;
+      var numericRate = typeof rate === 'number' ? rate : parseFloat(rate);
+      if (!isFinite(numericRate)) numericRate = 0;
+      var state = null;
+      if (numericRate > 0 && numericRate < 0.3) {
+        state = 'low';
+      } else if (numericRate > 0.9) {
+        state = 'high';
+      }
+      if (!state) {
+        alertBox.hidden = true;
+        alertTitle.textContent = '';
+        alertMessage.textContent = '';
+        if (alertIcon) {
+          alertIcon.classList.remove('text-amber-600', 'text-emerald-600');
+          alertIcon.classList.add('text-amber-600');
+        }
+        ['bg-amber-50', 'border-amber-200', 'bg-emerald-50', 'border-emerald-200'].forEach(function (cls) {
+          alertBox.classList.remove(cls);
+        });
+        alertBox.classList.add('bg-amber-50', 'border-amber-200');
+        return;
+      }
+
+      var style = state === 'low'
+        ? {
+            title: 'Ocupação abaixo do recomendado',
+            message: 'Ativa campanhas ou ajusta o ADR para estimular reservas rápidas.',
+            containerClasses: ['bg-amber-50', 'border-amber-200'],
+            iconClass: 'text-amber-600'
+          }
+        : {
+            title: 'Ocupação em níveis máximos',
+            message: 'Revê disponibilidade futura e considera aumentar o ADR para maximizar receita.',
+            containerClasses: ['bg-emerald-50', 'border-emerald-200'],
+            iconClass: 'text-emerald-600'
+          };
+
+      ['bg-amber-50', 'border-amber-200', 'bg-emerald-50', 'border-emerald-200'].forEach(function (cls) {
+        alertBox.classList.remove(cls);
+      });
+      alertBox.hidden = false;
+      alertTitle.textContent = style.title;
+      alertMessage.textContent = style.message;
+      style.containerClasses.forEach(function (cls) {
+        alertBox.classList.add(cls);
+      });
+      if (alertIcon) {
+        alertIcon.classList.remove('text-amber-600', 'text-emerald-600');
+        alertIcon.classList.add(style.iconClass);
+      }
+    }
+
     if (config && config.kpi) {
-      if (occupancyEl) occupancyEl.textContent = formatPercent(config.kpi.occupancyRate || 0);
+      var occupancyRate = config.kpi.occupancyRate || 0;
+      if (occupancyEl) occupancyEl.textContent = formatPercent(occupancyRate);
       if (adrEl) adrEl.textContent = formatCurrencyFromCents(config.kpi.adrCents || 0);
       if (revparEl) revparEl.textContent = formatCurrencyFromCents(config.kpi.revparCents || 0);
+      applyAlert(occupancyRate);
+    } else {
+      applyAlert(0);
     }
     var infoBtn = card.querySelector('[data-kpi-info]');
     if (infoBtn) {
