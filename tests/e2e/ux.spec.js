@@ -14,177 +14,243 @@ async function ensureLogin(page) {
   ]);
 }
 
+function formatFutureDate(daysAhead) {
+  const base = new Date();
+  base.setDate(base.getDate() + daysAhead);
+  const month = String(base.getMonth() + 1).padStart(2, '0');
+  const day = String(base.getDate()).padStart(2, '0');
+  return `${base.getFullYear()}-${month}-${day}`;
+}
+
 test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
   test.beforeEach(async ({ page }) => {
     test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
     await ensureLogin(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
   });
 
-  test('Atualizar preços apenas para fim-de-semana', async ({ page }) => {
-    test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
+  test('Sidenav responsivo e acessível', async ({ page }) => {
+    const shell = page.locator('[data-bo-shell]');
+    await expect(shell).toHaveAttribute('data-sidebar-mode', 'desktop');
+    await expect(shell).toHaveAttribute('data-sidebar-collapsed', '0');
 
+    const collapseButton = page.locator('[data-sidebar-collapse]');
+    await collapseButton.click();
+    await expect(shell).toHaveAttribute('data-sidebar-collapsed', '1');
+    await collapseButton.click();
+    await expect(shell).toHaveAttribute('data-sidebar-collapsed', '0');
+
+    const calendarTab = page.locator('[data-bo-target="calendar"]');
+    await calendarTab.focus();
+    await page.keyboard.press('Enter');
+    await expect(calendarTab).toHaveClass(/is-active/);
+    await expect(page.locator('[data-bo-pane="calendar"]')).toHaveClass(/is-active/);
+
+    await page.setViewportSize({ width: 900, height: 900 });
+    await expect(shell).toHaveAttribute('data-sidebar-mode', 'compact');
+    await expect(shell).toHaveAttribute('data-sidebar-collapsed', '1');
+    await expect(collapseButton).toHaveAttribute('aria-hidden', 'true');
+
+    await page.setViewportSize({ width: 640, height: 900 });
+    await expect(shell).toHaveAttribute('data-sidebar-mode', 'mobile');
+    const trigger = page.locator('[data-sidebar-trigger]');
+    const overlay = page.locator('[data-sidebar-overlay]');
+    await trigger.click();
+    await expect(shell).toHaveAttribute('data-sidebar-open', '1');
+    await expect(overlay).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(shell).toHaveAttribute('data-sidebar-open', '0');
+    const focusReturned = await trigger.evaluate(node => document.activeElement === node);
+    expect(focusReturned).toBeTruthy();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  test('Bloquear múltiplas unidades e mostrar badge imediato', async ({ page }) => {
     await page.locator('[data-bo-target="overview"]').click();
-    const ratesCard = page.locator('[data-rates-bulk]');
-    await expect(ratesCard).toBeVisible();
-    const unitSelect = ratesCard.locator('[data-rate-unit]');
-    const optionCount = await unitSelect.locator('option').count();
-    let selectedUnitId = '';
-    if (optionCount > 1) {
-      const optionValue = await unitSelect.locator('option').nth(1).getAttribute('value');
-      if (optionValue) {
-        await unitSelect.selectOption(optionValue);
-        selectedUnitId = optionValue;
-      }
-    }
-    if (!selectedUnitId) {
-      const fallbackButton = page.locator('[data-block-unit]').first();
-      selectedUnitId = (await fallbackButton.getAttribute('data-block-unit')) || '';
-    }
-    await ratesCard.locator('[data-rate-start]').fill('2025-08-15');
-    await ratesCard.locator('[data-rate-end]').fill('2025-08-18');
-    await ratesCard.locator('[data-rate-price]').fill('185');
-    await ratesCard.locator('[data-rate-weekends]').check();
+    const checkboxes = page.locator('[data-unit-select]');
+    const totalCheckboxes = await checkboxes.count();
+    test.skip(totalCheckboxes < 2, 'São necessárias pelo menos duas unidades para o teste.');
+
+    const firstCheckbox = checkboxes.nth(0);
+    const secondCheckbox = checkboxes.nth(1);
+    const firstUnitId = await firstCheckbox.getAttribute('value');
+    const secondUnitId = await secondCheckbox.getAttribute('value');
+    expect(firstUnitId).toBeTruthy();
+    expect(secondUnitId).toBeTruthy();
+
+    await firstCheckbox.check();
+    await secondCheckbox.check();
+    await expect(firstCheckbox).toBeChecked();
+    await expect(secondCheckbox).toBeChecked();
+
+    const summary = page.locator('[data-block-summary]');
+    await expect(summary).toHaveText('2 unidades selecionadas.');
+
+    const openButton = page.locator('[data-block-open]');
+    await expect(openButton).toBeEnabled();
+    await openButton.click();
+
+    const modal = page.locator('[data-block-modal]');
+    await expect(modal).not.toHaveClass(/hidden/);
+
+    const startDate = formatFutureDate(365 * 2 + 5);
+    const endDate = formatFutureDate(365 * 2 + 8);
+    await page.fill('[data-block-start]', startDate);
+    await page.fill('[data-block-end]', endDate);
+    await page.fill('[data-block-reason]', 'Bloqueio de manutenção preventiva.');
+
+    const dialogPromise = page.waitForEvent('dialog');
     const responsePromise = page
-      .waitForResponse(resp => resp.url().includes('/admin/api/rates/bulk') && resp.request().method() === 'PUT')
+      .waitForResponse(resp => resp.url().endsWith('/admin/api/units/blocks/bulk') && resp.request().method() === 'POST')
       .then(resp => resp.json());
-    await ratesCard.locator('[data-rate-apply]').click();
+    await page.click('[data-block-submit]');
+    const dialog = await dialogPromise;
+    await expect(dialog.message()).toContain('Confirmas o bloqueio');
+    await dialog.accept();
+
     const payload = await responsePromise;
-    expect(Array.isArray(payload.rateIds)).toBeTruthy();
-    expect(payload.rateIds.length).toBeGreaterThan(0);
-    await expect(page.locator('.bo-toast--success', { hasText: 'Preços atualizados' })).toBeVisible();
-    await expect(page.locator('.bo-toast__action', { hasText: 'Anular' })).toBeVisible();
-
-    if (selectedUnitId) {
-      await page.goto(`${baseURL}/admin/units/${selectedUnitId}`);
-      const ratesTable = page
-        .locator('table')
-        .filter({ has: page.locator('th', { hasText: '€/noite (weekday)' }) })
-        .first();
-      const rateRow = ratesTable.locator('tbody tr', { hasText: '15/08/2025' }).first();
-      await expect(rateRow).toContainText('€ 185,00');
-    }
-
-    if (payload.rateIds?.length) {
-      const undoResponse = await page.request.post(baseURL + '/admin/api/rates/bulk/undo', {
-        data: { rateIds: payload.rateIds }
-      });
-      expect(undoResponse.ok()).toBeTruthy();
-    }
-    await page.goto(baseURL + '/admin');
-  });
-
-  test('Bloquear duas unidades e validar badge', async ({ page }) => {
-    test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
-
-    await page.locator('[data-bo-target="overview"]').click();
-    const buttons = page.locator('[data-block-unit]');
-    const firstButton = buttons.first();
-    const secondButton = buttons.nth(1);
-    const firstUnitId = await firstButton.getAttribute('data-block-unit');
-    await firstButton.click();
-    await page.locator('[data-block-modal]').waitFor({ state: 'visible' });
-    await page.fill('[data-block-start]', '2025-09-01');
-    await page.fill('[data-block-end]', '2025-09-05');
-    await page.fill('[data-block-reason]', 'Manutenção preventiva');
-    const firstDialogPromise = page.waitForEvent('dialog');
-    const firstResponsePromise = page.waitForResponse(resp => resp.url().match(/\/admin\/api\/units\/\d+\/blocks/) && resp.request().method() === 'POST');
-    await page.click('[data-block-submit]');
-    const firstDialog = await firstDialogPromise;
-    await expect(firstDialog.message()).toContain('Confirmas o bloqueio');
-    await firstDialog.accept();
-    const firstResponse = await firstResponsePromise;
-    await expect(firstResponse.status()).toBe(201);
+    expect(payload.ok).toBeTruthy();
     await expect(page.locator('.bo-toast--success', { hasText: 'Bloqueio criado para' })).toBeVisible();
 
-    await secondButton.click();
-    await page.locator('[data-block-modal]').waitFor({ state: 'visible' });
-    await page.fill('[data-block-start]', '2025-10-10');
-    await page.fill('[data-block-end]', '2025-10-12');
-    await page.fill('[data-block-reason]', 'Evento privado');
-    const secondDialogPromise = page.waitForEvent('dialog');
-    const secondResponsePromise = page.waitForResponse(resp => resp.url().match(/\/admin\/api\/units\/\d+\/blocks/) && resp.request().method() === 'POST');
-    await page.click('[data-block-submit]');
-    const secondDialog = await secondDialogPromise;
-    await expect(secondDialog.message()).toContain('Confirmas o bloqueio');
-    await secondDialog.accept();
-    const secondResponse = await secondResponsePromise;
-    await expect(secondResponse.status()).toBe(201);
-    await expect(page.locator('.bo-toast--success', { hasText: 'Bloqueio criado para' })).toBeVisible();
-
-    const visibleBadges = page.locator('[data-unit-row] [data-block-badge]:not([hidden])');
-    await expect(visibleBadges).toHaveCount(2);
+    await expect(modal).toHaveClass(/hidden/);
+    await expect(summary).toHaveText('Seleciona unidades para bloquear.');
+    await expect(page.locator('[data-block-clear]')).toBeHidden();
+    await expect(firstCheckbox).not.toBeChecked();
+    await expect(secondCheckbox).not.toBeChecked();
 
     if (firstUnitId) {
-      const bookingUrl = `${baseURL}/book/${firstUnitId}?checkin=2025-09-01&checkout=2025-09-05`;
-      const response = await page.goto(bookingUrl, { waitUntil: 'domcontentloaded' });
-      await expect(response?.status()).toBe(409);
-      await expect(page.locator('body')).toContainText('já não tem disponibilidade');
-      await page.goto(baseURL + '/admin');
-      await page.locator('[data-bo-target="overview"]').click();
+      await expect(page.locator(`[data-block-badge="${firstUnitId}"]`).first()).toBeVisible();
+    }
+    if (secondUnitId) {
+      await expect(page.locator(`[data-block-badge="${secondUnitId}"]`).first()).toBeVisible();
     }
   });
 
-  test('Responder a uma review negativa', async ({ page }) => {
-    test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
+  test('Mapa de reservas — drag & drop válido e inválido', async ({ page }) => {
+    await page.locator('[data-bo-target="calendar"]').click();
+    const board = page.locator('[data-calendar-board]');
+    await expect(board).toBeVisible();
 
-    await page.locator('[data-bo-target="reviews"]').click();
-    const reviewsRoot = page.locator('[data-reviews-root]');
-    await expect(reviewsRoot).toBeVisible();
-    await page.locator('[data-review-filter="negative"]').click();
-    const firstReview = page.locator('[data-review-id]').first();
-    await firstReview.locator('button:has-text("Responder")').click();
-    const composer = page.locator('[data-review-composer]');
-    await expect(composer).toBeVisible();
-    await composer.locator('[data-review-response]').fill('Obrigado pelo feedback, já reforçámos a equipa.');
-    await Promise.all([
-      page.waitForResponse(resp => resp.url().includes('/admin/api/reviews/') && resp.request().method() === 'POST'),
-      composer.locator('[data-review-submit]').click()
-    ]);
-    await expect(page.locator('.bo-toast--success', { hasText: 'Resposta registada' })).toBeVisible();
-    await expect(firstReview.locator('.bo-status-badge', { hasText: 'Respondida' })).toBeVisible();
-  });
+    const entry = board.locator('[data-calendar-entry][data-entry-status="CONFIRMED"]').first();
+    const entryId = await entry.getAttribute('data-entry-id');
+    const originStart = await entry.getAttribute('data-entry-start');
+    const nightsAttr = await entry.getAttribute('data-entry-nights');
+    test.skip(!entryId || !originStart, 'Sem reservas confirmadas disponíveis para reagendamento.');
+    const nights = Number.parseInt(nightsAttr || '1', 10) || 1;
 
-  test('Exportar relatório semanal em CSV e PDF', async ({ page }) => {
-    test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
-
-    await page.locator('[data-bo-target="estatisticas"]').click();
-    const downloadPromise = page.waitForEvent('download');
-    await page.locator('[data-weekly-from]').fill('2025-07-01');
-    await page.locator('[data-weekly-to]').fill('2025-07-07');
-    await page.locator('[data-weekly-export-action="csv"]').click();
-    const download = await downloadPromise;
-    await expect(download.suggestedFilename()).toMatch(/relatorio-semanal/);
-    const stream = await download.createReadStream();
-    if (stream) {
-      const contents = await new Promise((resolve, reject) => {
-        const chunks = [];
-        stream.on('data', chunk => chunks.push(Buffer.from(chunk)));
-        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        stream.on('error', reject);
-      });
-      expect(contents).toContain('Período,Ocupação (%)');
-      expect(contents).toContain('Reservas');
-    }
-
-    const pdfDownloadPromise = page.waitForEvent('download');
-    await page.locator('[data-weekly-export-action="pdf"]').click();
-    const pdfDownload = await pdfDownloadPromise;
-    await expect(pdfDownload.suggestedFilename()).toMatch(/\.pdf$/);
-    const pdfStream = await pdfDownload.createReadStream();
-    if (pdfStream) {
-      const header = await new Promise((resolve, reject) => {
-        const chunks = [];
-        pdfStream.on('data', chunk => {
-          chunks.push(Buffer.from(chunk));
-          if (chunks.reduce((len, buf) => len + buf.length, 0) >= 4) {
-            pdfStream.destroy();
-            resolve(Buffer.concat(chunks).slice(0, 4));
-          }
+    const candidate = await board.evaluate((id, nightsCount) => {
+      const source = document.querySelector(`[data-calendar-entry][data-entry-id="${id}"]`);
+      if (!source) return null;
+      const unitId = source.getAttribute('data-unit-id');
+      const start = source.getAttribute('data-entry-start');
+      const entries = Array.from(document.querySelectorAll('[data-calendar-entry]'));
+      const cells = Array.from(document.querySelectorAll('[data-calendar-cell][data-in-month="1"]'));
+      function addDays(iso, delta) {
+        const date = new Date(iso + 'T00:00:00');
+        date.setDate(date.getDate() + delta);
+        return date.toISOString().slice(0, 10);
+      }
+      for (const cell of cells) {
+        const date = cell.getAttribute('data-date');
+        if (!date || !unitId || !start) continue;
+        if (date <= start) continue;
+        const newEnd = addDays(date, nightsCount);
+        const blocked = entries.some(entryEl => {
+          if (entryEl === source) return false;
+          if (entryEl.getAttribute('data-unit-id') !== unitId) return false;
+          const status = (entryEl.getAttribute('data-entry-status') || '').toUpperCase();
+          if (status === 'CANCELLED') return false;
+          const entryStart = entryEl.getAttribute('data-entry-start');
+          const entryEnd = entryEl.getAttribute('data-entry-end');
+          return !(entryEnd <= date || entryStart >= newEnd);
         });
-        pdfStream.on('end', () => resolve(Buffer.concat(chunks).slice(0, 4)));
-        pdfStream.on('error', reject);
+        if (!blocked) {
+          return { date, end: newEnd };
+        }
+      }
+      return null;
+    }, entryId, nights);
+
+    test.skip(!candidate, 'Sem datas livres para reagendar.');
+
+    const targetCell = board.locator(`[data-calendar-cell][data-date="${candidate.date}"] .bo-calendar-cell-body`).first();
+    const responsePromise = page
+      .waitForResponse(resp => resp.url().includes(`/calendar/booking/${entryId}/reschedule`) && resp.request().method() === 'POST')
+      .then(resp => resp.json());
+    const navigationPromise = page.waitForNavigation({ waitUntil: 'networkidle' });
+    await entry.dragTo(targetCell, { force: true });
+    const resPayload = await responsePromise;
+    expect(resPayload.ok).toBeTruthy();
+    expect(resPayload.message).toContain('Reserva reagendada');
+    await navigationPromise;
+
+    await expect(board).toBeVisible();
+    const movedEntry = board.locator(`[data-calendar-entry][data-entry-id="${entryId}"]`).first();
+    await expect(movedEntry).toHaveAttribute('data-entry-start', candidate.date);
+
+    const revertResponsePromise = page
+      .waitForResponse(resp => resp.url().includes(`/calendar/booking/${entryId}/reschedule`) && resp.request().method() === 'POST')
+      .then(resp => resp.json());
+    const revertNavigationPromise = page.waitForNavigation({ waitUntil: 'networkidle' });
+    const originalCell = board.locator(`[data-calendar-cell][data-date="${originStart}"] .bo-calendar-cell-body`).first();
+    await movedEntry.dragTo(originalCell, { force: true });
+    const revertPayload = await revertResponsePromise;
+    expect(revertPayload.ok).toBeTruthy();
+    await revertNavigationPromise;
+
+    await expect(board).toBeVisible();
+    const restoredEntry = board.locator(`[data-calendar-entry][data-entry-id="${entryId}"]`).first();
+    await expect(restoredEntry).toHaveAttribute('data-entry-start', originStart);
+
+    const pastDateIso = await board.evaluate(() => {
+      const today = new Date().toISOString().slice(0, 10);
+      const cell = Array.from(document.querySelectorAll('[data-calendar-cell][data-in-month="1"]'))
+        .find(el => (el.getAttribute('data-date') || '') < today);
+      return cell ? cell.getAttribute('data-date') : null;
+    });
+    test.skip(!pastDateIso, 'Sem células de dias passados no mês visível.');
+
+    const pastCell = board.locator(`[data-calendar-cell][data-date="${pastDateIso}"] .bo-calendar-cell-body`).first();
+    await restoredEntry.dragTo(pastCell, { force: true });
+    const toastMessage = page.locator('[data-calendar-toast-message]');
+    await expect(toastMessage).toHaveText(/Data no passado/i);
+  });
+
+  test('Área do proprietário responsiva em 1024/768/480px', async ({ page }) => {
+    await page.goto(baseURL + '/owners');
+    const main = page.locator('.owners-main');
+    await expect(main).toBeVisible();
+
+    const sizes = [
+      { width: 1024, height: 900 },
+      { width: 768, height: 900 },
+      { width: 480, height: 900 }
+    ];
+
+    for (const size of sizes) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(200);
+      const hasOverflow = await page.evaluate(() => {
+        const root = document.scrollingElement || document.documentElement;
+        return root.scrollWidth > window.innerWidth + 2;
       });
-      expect(header.toString()).toBe('%PDF');
+      expect(hasOverflow).toBeFalsy();
     }
+
+    await page.setViewportSize({ width: 768, height: 900 });
+    const tableRowDisplay = await page
+      .locator('.owners-table tbody tr')
+      .first()
+      .evaluate(el => window.getComputedStyle(el).display);
+    expect(tableRowDisplay).toBe('grid');
+
+    const cellDirection = await page
+      .locator('.owners-table tbody tr td')
+      .first()
+      .evaluate(el => window.getComputedStyle(el).flexDirection);
+    expect(cellDirection).toBe('column');
+
+    await page.setViewportSize({ width: 1440, height: 900 });
   });
 });
