@@ -824,9 +824,28 @@
     var fromInput = wrapper.querySelector('[data-weekly-from]');
     var toInput = wrapper.querySelector('[data-weekly-to]');
     var statusEl = wrapper.querySelector('[data-weekly-status]');
+    var actionButtons = Array.prototype.slice.call(
+      wrapper.querySelectorAll('[data-weekly-export-action]')
+    );
     if (config && config.weeklyDefaults) {
       if (fromInput) fromInput.value = config.weeklyDefaults.from;
       if (toInput) toInput.value = config.weeklyDefaults.to;
+    }
+
+    function setBusy(isBusy) {
+      wrapper.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+      actionButtons.forEach(function (button) {
+        button.disabled = isBusy;
+        button.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
+      });
+    }
+
+    function setStatus(message, focus) {
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      if (focus && message && typeof statusEl.focus === 'function') {
+        statusEl.focus();
+      }
     }
 
     function validateRange() {
@@ -849,10 +868,16 @@
 
     function download(format) {
       if (!validateRange()) return;
-      var url = '/admin/api/reports/weekly?from=' + encodeURIComponent(fromInput.value) + '&to=' + encodeURIComponent(toInput.value) + '&format=' + format;
-      if (statusEl) {
-        statusEl.textContent = 'A gerar ' + format.toUpperCase() + '…';
-      }
+      var upperFormat = format.toUpperCase();
+      var url =
+        '/admin/api/reports/weekly?from=' +
+        encodeURIComponent(fromInput.value) +
+        '&to=' +
+        encodeURIComponent(toInput.value) +
+        '&format=' +
+        format;
+      setBusy(true);
+      setStatus('A gerar ' + upperFormat + '…');
       fetch(url)
         .then(function (resp) {
           if (!resp.ok) return resp.json().then(function (payload) { throw payload; });
@@ -867,17 +892,20 @@
           link.click();
           document.body.removeChild(link);
           setTimeout(function () { URL.revokeObjectURL(downloadUrl); }, 1000);
-          toast.show({ type: 'success', message: 'Relatório semanal exportado (' + format.toUpperCase() + ').' });
+          setStatus('Download ' + upperFormat + ' iniciado.', true);
+          toast.show({ type: 'success', message: 'Relatório semanal exportado (' + upperFormat + ').' });
         })
         .catch(function (err) {
-          toast.show({ type: 'error', message: (err && err.error) || 'Não foi possível exportar o relatório.' });
+          var errorMessage = (err && err.error) || 'Não foi possível exportar o relatório.';
+          setStatus(errorMessage, true);
+          toast.show({ type: 'error', message: errorMessage });
         })
         .finally(function () {
-          if (statusEl) statusEl.textContent = '';
+          setBusy(false);
         });
     }
 
-    wrapper.querySelectorAll('[data-weekly-export-action]').forEach(function (button) {
+    actionButtons.forEach(function (button) {
       button.addEventListener('click', function () {
         download(button.dataset.weeklyExportAction);
       });

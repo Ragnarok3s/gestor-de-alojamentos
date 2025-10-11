@@ -40,6 +40,7 @@ function createReportingService({ db, dayjs }) {
 
     let occupiedNights = 0;
     let revenueCents = 0;
+    let reservationCount = 0;
 
     for (const row of rows) {
       const bookingStart = dayjs(row.checkin);
@@ -49,6 +50,7 @@ function createReportingService({ db, dayjs }) {
       const overlapEnd = bookingEnd.isBefore(endExclusive) ? bookingEnd : endExclusive;
       const overlap = overlapEnd.diff(overlapStart, 'day');
       if (overlap <= 0) continue;
+      reservationCount += 1;
       occupiedNights += overlap;
       const nightly = row.total_cents / bookingNights;
       revenueCents += nightly * overlap;
@@ -64,6 +66,7 @@ function createReportingService({ db, dayjs }) {
         to: end.format('YYYY-MM-DD')
       },
       units: totalUnits,
+      reservations: reservationCount,
       nights: {
         occupied: occupiedNights,
         available: totalNights
@@ -72,13 +75,24 @@ function createReportingService({ db, dayjs }) {
         occupancy: occupancy != null ? formatDecimal(occupancy, 4) : null,
         adr: adr != null ? formatDecimal(adr, 2) : null,
         revpar: revpar != null ? formatDecimal(revpar, 2) : null,
-        revenue: formatDecimal(revenueCents / 100, 2)
+        revenue: formatDecimal(revenueCents / 100, 2),
+        reservations: reservationCount
       }
     };
   }
 
   function toCsv(snapshot) {
-    const headers = ['Período', 'Ocupação (%)', 'ADR', 'RevPAR', 'Receita', 'Noites Ocupadas', 'Noites Disponíveis', 'Unidades'];
+    const headers = [
+      'Período',
+      'Ocupação (%)',
+      'ADR',
+      'RevPAR',
+      'Receita',
+      'Reservas',
+      'Noites Ocupadas',
+      'Noites Disponíveis',
+      'Unidades'
+    ];
     const { range, kpis, nights, units } = snapshot;
     const line = [
       `${range.from} a ${range.to}`,
@@ -86,6 +100,7 @@ function createReportingService({ db, dayjs }) {
       kpis.adr != null ? kpis.adr.toFixed(2) : '—',
       kpis.revpar != null ? kpis.revpar.toFixed(2) : '—',
       kpis.revenue != null ? kpis.revenue.toFixed(2) : '—',
+      kpis.reservations,
       nights.occupied,
       nights.available,
       units
@@ -103,6 +118,7 @@ function createReportingService({ db, dayjs }) {
       `ADR: ${snapshot.kpis.adr != null ? `€${snapshot.kpis.adr.toFixed(2)}` : '—'}`,
       `RevPAR: ${snapshot.kpis.revpar != null ? `€${snapshot.kpis.revpar.toFixed(2)}` : '—'}`,
       `Receita: ${snapshot.kpis.revenue != null ? `€${snapshot.kpis.revenue.toFixed(2)}` : '—'}`,
+      `Reservas confirmadas: ${snapshot.kpis.reservations}`,
       `Noites ocupadas: ${snapshot.nights.occupied}`,
       `Noites disponíveis: ${snapshot.nights.available}`
     ];

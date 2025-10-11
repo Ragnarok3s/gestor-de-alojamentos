@@ -2891,7 +2891,7 @@ module.exports = function registerBackoffice(app, context) {
           <p id="kpi-tooltip-text" class="sr-only">Ocupação mede noites vendidas face à disponibilidade. ADR é a receita média por noite confirmada.</p>
         </div>
 
-        <div class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3" data-weekly-export>
+        <div class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3" data-weekly-export aria-busy="false">
           <div>
             <h3 class="text-base font-semibold text-slate-800">Exportar semana (CSV/PDF)</h3>
             <p class="text-sm text-slate-600">Gera um relatório com ocupação, ADR, RevPAR e receita da semana selecionada.</p>
@@ -2910,7 +2910,7 @@ module.exports = function registerBackoffice(app, context) {
             <div class="lg:col-span-2 flex flex-wrap items-center gap-2">
               <button type="button" class="btn btn-light" data-weekly-export-action="csv">Exportar CSV</button>
               <button type="button" class="btn btn-light" data-weekly-export-action="pdf">Exportar PDF</button>
-              <span class="text-xs text-slate-500" data-weekly-status role="status"></span>
+              <span class="text-xs text-slate-500" data-weekly-status role="status" aria-live="polite" tabindex="-1"></span>
             </div>
           </div>
         </div>

@@ -120,5 +120,16 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
     await page.locator('[data-weekly-export-action="csv"]').click();
     const download = await downloadPromise;
     await expect(download.suggestedFilename()).toMatch(/relatorio-semanal/);
+    const stream = await download.createReadStream();
+    if (stream) {
+      const contents = await new Promise((resolve, reject) => {
+        const chunks = [];
+        stream.on('data', chunk => chunks.push(Buffer.from(chunk)));
+        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        stream.on('error', reject);
+      });
+      expect(contents).toContain('Período,Ocupação (%)');
+      expect(contents).toContain('Reservas');
+    }
   });
 });
