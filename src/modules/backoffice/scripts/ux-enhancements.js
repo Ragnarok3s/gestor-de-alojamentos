@@ -589,12 +589,14 @@
     var listEl = pane.querySelector('[data-reviews-list]');
     var counterEl = pane.querySelector('[data-reviews-counter]');
     var emptyEl = pane.querySelector('[data-reviews-empty]');
-    var skeletons = pane.querySelectorAll('[data-review-skeleton]');
+    var skeletonMarkup = listEl ? listEl.innerHTML : '';
     var composer = pane.querySelector('[data-review-composer]');
     var selectedReviewEl = pane.querySelector('[data-selected-review]');
     var responseInput = pane.querySelector('[data-review-response]');
+    var responseField = responseInput ? responseInput.closest('[data-field]') : null;
     var countEl = pane.querySelector('[data-review-count]');
     var loadingEl = pane.querySelector('[data-review-loading]');
+    var submitBtn = pane.querySelector('[data-review-submit]');
     var filters = pane.querySelectorAll('[data-review-filter]');
     if (!listEl || !composer || !selectedReviewEl || !responseInput) return;
 
@@ -603,9 +605,12 @@
 
     function setBusy(flag) {
       listEl.setAttribute('aria-busy', flag ? 'true' : 'false');
-      skeletons.forEach(function (item) {
-        item.hidden = !flag;
-      });
+      if (flag) {
+        if (skeletonMarkup) {
+          listEl.innerHTML = skeletonMarkup;
+        }
+        if (emptyEl) emptyEl.hidden = true;
+      }
     }
 
     function updateCharCount() {
@@ -614,7 +619,7 @@
     }
 
     responseInput.addEventListener('input', function () {
-      setFieldError(responseInput.closest('[data-field]'), '');
+      if (responseField) setFieldError(responseField, '');
       updateCharCount();
       autoGrow(responseInput);
     });
@@ -679,6 +684,7 @@
     function openComposer(review) {
       activeReview = review;
       composer.hidden = false;
+      if (responseField) setFieldError(responseField, '');
       selectedReviewEl.innerHTML = '<div class="text-sm font-semibold text-slate-700">' + (review.title || 'Review sem título') + '</div>' +
         '<div class="text-xs text-slate-500">' + (review.guest_name || 'Hóspede anónimo') + '</div>' +
         '<p class="text-sm text-slate-600 whitespace-pre-line">' + (review.body || '') + '</p>';
@@ -696,28 +702,36 @@
       responseInput.value = '';
       updateCharCount();
       selectedReviewEl.innerHTML = '';
+      if (responseField) setFieldError(responseField, '');
     }
 
     pane.querySelector('[data-review-cancel]')?.addEventListener('click', function () {
       closeComposer();
     });
 
-    pane.querySelector('[data-review-submit]')?.addEventListener('click', function () {
+    submitBtn?.addEventListener('click', function () {
       if (!activeReview) return;
       var value = responseInput.value.trim();
       if (!value) {
-        setFieldError(responseInput.closest('[data-field]'), 'Escreve uma resposta antes de enviar.');
+        if (responseField) setFieldError(responseField, 'Escreve uma resposta antes de enviar.');
         return;
       }
-      setFieldError(responseInput.closest('[data-field]'), '');
+      if (responseField) setFieldError(responseField, '');
       if (loadingEl) loadingEl.hidden = false;
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.setAttribute('aria-disabled', 'true');
+      }
       fetch('/admin/api/reviews/' + activeReview.id + '/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ response: value })
       })
         .then(function (resp) {
-          if (!resp.ok) return resp.json().then(function (payload) { throw payload; });
+          if (!resp.ok)
+            return resp.json().then(function (payload) {
+              throw { status: resp.status, payload: payload };
+            });
           return resp.json();
         })
         .then(function (payload) {
@@ -726,16 +740,28 @@
           refreshReviews(activeFilter);
         })
         .catch(function (err) {
-          var message = (err && err.error) || 'Não foi possível enviar a resposta.';
+          var message = (err && err.payload && err.payload.error) || (err && err.error) || 'Não foi possível enviar a resposta.';
+          if (err && err.status === 400 && responseField) {
+            setFieldError(responseField, message);
+          }
           toast.show({ type: 'error', message: message });
         })
         .finally(function () {
           if (loadingEl) loadingEl.hidden = true;
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.removeAttribute('aria-disabled');
+          }
         });
     });
 
     function renderReviews(reviews) {
-      if (counterEl) counterEl.textContent = reviews.length + ' review' + (reviews.length === 1 ? '' : 's');
+      if (counterEl) {
+        var label = reviews.length + ' review' + (reviews.length === 1 ? '' : 's');
+        if (activeFilter === 'negative') label += ' negativas';
+        if (activeFilter === 'recent') label += ' recentes';
+        counterEl.textContent = label;
+      }
       listEl.innerHTML = '';
       if (!reviews.length) {
         emptyEl && (emptyEl.hidden = false);
@@ -752,16 +778,20 @@
     function refreshReviews(filter) {
       activeFilter = filter;
       setBusy(true);
-      fetch('/admin/api/reviews' + (filter === 'negative' ? '?filter=negative' : ''))
+      var url = '/admin/api/reviews';
+      if (filter === 'negative' || filter === 'recent') {
+        url += '?filter=' + encodeURIComponent(filter);
+      }
+      fetch(url)
         .then(function (resp) {
-          if (!resp.ok) return resp.json().then(function (payload) { throw payload; });
+          if (!resp.ok)
+            return resp.json().then(function (payload) {
+              throw payload;
+            });
           return resp.json();
         })
         .then(function (payload) {
           var reviews = (payload && payload.reviews) || [];
-          if (filter === 'recent') {
-            reviews = reviews.slice(0, 5);
-          }
           renderReviews(reviews);
         })
         .catch(function (err) {
@@ -781,6 +811,7 @@
         button.classList.add('is-active');
         button.setAttribute('aria-selected', 'true');
         refreshReviews(button.dataset.reviewFilter || 'all');
+        closeComposer();
       });
     });
 

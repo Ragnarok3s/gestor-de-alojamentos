@@ -103,7 +103,8 @@ module.exports = function registerUxApi(app, context) {
     try {
       const filter = typeof req.query.filter === 'string' ? req.query.filter : '';
       const onlyNegative = filter === 'negative';
-      const reviews = reviewService.listReviews({ onlyNegative });
+      const onlyRecent = filter === 'recent';
+      const reviews = reviewService.listReviews({ onlyNegative, onlyRecent });
       return res.json({ ok: true, reviews });
     } catch (err) {
       return handleError(res, err);

@@ -31,12 +31,26 @@ function createReviewService({ db, dayjs }) {
      WHERE id = ?`
   );
 
-  function listReviews({ onlyNegative = false } = {}) {
+  function listReviews({ onlyNegative = false, onlyRecent = false } = {}) {
     const rows = onlyNegative ? filterByRatingStmt.all(3) : listStmt.all();
-    return rows.map(row => ({
+    let processed = rows;
+
+    if (onlyRecent) {
+      const recentThreshold = dayjs().subtract(14, 'day');
+      processed = processed.filter(row => {
+        if (!row.created_at) return true;
+        const createdAt = dayjs(row.created_at);
+        if (!createdAt.isValid()) return true;
+        return createdAt.isAfter(recentThreshold) || createdAt.isSame(recentThreshold, 'day');
+      });
+    }
+
+    const mapped = processed.map(row => ({
       ...row,
       responded: !!row.responded_at
     }));
+
+    return onlyRecent ? mapped.slice(0, 10) : mapped;
   }
 
   function respondToReview(reviewId, text, userId) {
