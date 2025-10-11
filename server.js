@@ -42,6 +42,7 @@ const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { createChatbotService } = require('./server/chatbot/service');
 const { createChatbotRouter } = require('./server/chatbot/router');
+const { createTelemetry } = require('./src/services/telemetry');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1603,6 +1604,7 @@ const channelIntegrations = createChannelIntegrationService({
   ensureDir,
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
+const telemetry = createTelemetry({ logger: console });
 
 const automationActionDrivers = {
   email: emailAction,
@@ -3091,6 +3093,7 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  telemetry,
   wantsJson,
   formatAuditValue,
   renderAuditDiff,
