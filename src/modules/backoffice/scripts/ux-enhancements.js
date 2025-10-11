@@ -902,7 +902,7 @@
           if (format === 'csv') {
             return resp.text().then(function (text) {
               var BOM = '\uFEFF';
-              var safeText = text.charAt(0) === '\uFEFF' ? text : BOM + text;
+              var safeText = text.startsWith(BOM) ? text : BOM + text;
               var blob = new Blob([safeText], { type: 'text/csv;charset=utf-8' });
               return { blob: blob, disposition: disposition };
             });

@@ -130,7 +130,7 @@ module.exports = function registerUxApi(app, context) {
     }
   });
 
-  router.get('/reports/weekly', (req, res) => {
+  router.get('/reports/weekly', async (req, res) => {
     try {
       const from = req.query.from;
       const to = req.query.to;
@@ -152,15 +152,21 @@ module.exports = function registerUxApi(app, context) {
         const csv = reportingService.toCsv(snapshot);
         const filename = `weekly_${snapshot.range.from}_${snapshot.range.to}.csv`;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
         return res.send(`\uFEFF${csv}`);
       }
 
       if (format === 'pdf') {
-        const pdf = reportingService.toPdf(snapshot);
+        const pdf = await reportingService.toPdf(snapshot);
         res.setHeader('Content-Type', 'application/pdf');
         const filename = `weekly_${snapshot.range.from}_${snapshot.range.to}.pdf`;
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
         return res.send(pdf);
       }
 
