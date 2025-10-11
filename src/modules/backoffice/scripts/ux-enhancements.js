@@ -195,6 +195,7 @@
       if (!selectedUnits.length || !nights.length) {
         previewBody.innerHTML = '<tr><td colspan="3" class="text-sm text-center text-slate-500">Seleciona um intervalo para visualizar o impacto.</td></tr>';
         if (previewWrapper) previewWrapper.hidden = true;
+        if (summaryEl) summaryEl.textContent = '';
         return;
       }
       var nightBadges = nights
@@ -210,7 +211,11 @@
             ((unit.propertyName ? unit.propertyName + ' · ' : '') + unit.name) +
             '</span></td>' +
             '<td data-label="Noites" class="space-x-1">' + nightBadges + '</td>' +
-            '<td data-label="Preço aplicado">€ ' + priceValue.toFixed(2).replace('.', ',') + '</td>' +
+            '<td data-label="Preço aplicado">' +
+            (priceValue > 0
+              ? '€ ' + priceValue.toFixed(2).replace('.', ',')
+              : '<span class="text-slate-400">—</span>') +
+            '</td>' +
             '</tr>'
           );
         })
@@ -232,6 +237,16 @@
     function setBusy(flag) {
       card.setAttribute('aria-busy', flag ? 'true' : 'false');
       if (loadingEl) loadingEl.hidden = !flag;
+    }
+
+    function refreshPreview() {
+      var start = startInput.value;
+      var end = endInput.value;
+      var priceValue = Number(priceInput.value);
+      var weekendsOnly = !!(weekendCheckbox && weekendCheckbox.checked);
+      var selectedUnits = getSelectedUnits();
+      var nights = buildNights(start, end, weekendsOnly);
+      populatePreview(selectedUnits, nights, Number.isFinite(priceValue) ? priceValue : 0);
     }
 
     function applyBulkUpdate() {
@@ -303,10 +318,11 @@
           if (feedbackEl) feedbackEl.textContent = describePreview(selectedUnits, nights) + ' · ' + nightsCount + ' noites impactadas.';
           form.reset();
           if (previewWrapper) previewWrapper.hidden = true;
+          refreshPreview();
           if (toastInstance && toastInstance.element) toastInstance.element.focus();
         })
         .catch(function (err) {
-          var message = (err && err.error) || 'Não foi possível atualizar as tarifas.';
+          var message = (err && (err.error || err.message)) || 'Não foi possível atualizar os preços. Tenta novamente.';
           toast.show({ type: 'error', message: message });
           if (feedbackEl) feedbackEl.textContent = message;
         })
@@ -334,13 +350,26 @@
         });
     }
 
-    card.querySelectorAll('[data-field] input, [data-field] select, [data-field] textarea').forEach(function (input) {
-      input.addEventListener('input', function () {
-        setFieldError(input.closest('[data-field]'), '');
+    function attachClearHandler(input) {
+      if (!input) return;
+      var field = input.closest('[data-field]');
+      var eventName = input.tagName === 'SELECT' || input.type === 'checkbox' ? 'change' : 'input';
+      input.addEventListener(eventName, function () {
+        setFieldError(field, '');
+        refreshPreview();
       });
+    }
+
+    card.querySelectorAll('[data-field] input, [data-field] select, [data-field] textarea').forEach(function (input) {
+      attachClearHandler(input);
     });
 
     card.querySelector('[data-rate-apply]')?.addEventListener('click', function (event) {
+      event.preventDefault();
+      applyBulkUpdate();
+    });
+
+    form.addEventListener('submit', function (event) {
       event.preventDefault();
       applyBulkUpdate();
     });
