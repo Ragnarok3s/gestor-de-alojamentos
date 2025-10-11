@@ -26,17 +26,51 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
     await page.locator('[data-bo-target="overview"]').click();
     const ratesCard = page.locator('[data-rates-bulk]');
     await expect(ratesCard).toBeVisible();
+    const unitSelect = ratesCard.locator('[data-rate-unit]');
+    const optionCount = await unitSelect.locator('option').count();
+    let selectedUnitId = '';
+    if (optionCount > 1) {
+      const optionValue = await unitSelect.locator('option').nth(1).getAttribute('value');
+      if (optionValue) {
+        await unitSelect.selectOption(optionValue);
+        selectedUnitId = optionValue;
+      }
+    }
+    if (!selectedUnitId) {
+      const fallbackButton = page.locator('[data-block-unit]').first();
+      selectedUnitId = (await fallbackButton.getAttribute('data-block-unit')) || '';
+    }
     await ratesCard.locator('[data-rate-start]').fill('2025-08-15');
     await ratesCard.locator('[data-rate-end]').fill('2025-08-18');
     await ratesCard.locator('[data-rate-price]').fill('185');
     await ratesCard.locator('[data-rate-weekends]').check();
-    await Promise.all([
-      page.waitForResponse(resp => resp.url().includes('/admin/api/rates/bulk') && resp.request().method() === 'PUT'),
-      ratesCard.locator('[data-rate-apply]').click()
-    ]);
+    const responsePromise = page
+      .waitForResponse(resp => resp.url().includes('/admin/api/rates/bulk') && resp.request().method() === 'PUT')
+      .then(resp => resp.json());
+    await ratesCard.locator('[data-rate-apply]').click();
+    const payload = await responsePromise;
+    expect(Array.isArray(payload.rateIds)).toBeTruthy();
+    expect(payload.rateIds.length).toBeGreaterThan(0);
     await expect(page.locator('.bo-toast--success', { hasText: 'Preços atualizados' })).toBeVisible();
-    await page.locator('.bo-toast__action', { hasText: 'Anular' }).click();
-    await expect(page.locator('.bo-toast--success', { hasText: 'Alteração anulada' })).toBeVisible();
+    await expect(page.locator('.bo-toast__action', { hasText: 'Anular' })).toBeVisible();
+
+    if (selectedUnitId) {
+      await page.goto(`${baseURL}/admin/units/${selectedUnitId}`);
+      const ratesTable = page
+        .locator('table')
+        .filter({ has: page.locator('th', { hasText: '€/noite (weekday)' }) })
+        .first();
+      const rateRow = ratesTable.locator('tbody tr', { hasText: '15/08/2025' }).first();
+      await expect(rateRow).toContainText('€ 185,00');
+    }
+
+    if (payload.rateIds?.length) {
+      const undoResponse = await page.request.post(baseURL + '/admin/api/rates/bulk/undo', {
+        data: { rateIds: payload.rateIds }
+      });
+      expect(undoResponse.ok()).toBeTruthy();
+    }
+    await page.goto(baseURL + '/admin');
   });
 
   test('Bloquear duas unidades e validar badge', async ({ page }) => {
@@ -110,7 +144,7 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
     await expect(firstReview.locator('.bo-status-badge', { hasText: 'Respondida' })).toBeVisible();
   });
 
-  test('Exportar relatório semanal em CSV', async ({ page }) => {
+  test('Exportar relatório semanal em CSV e PDF', async ({ page }) => {
     test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
 
     await page.locator('[data-bo-target="estatisticas"]').click();
@@ -130,6 +164,27 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
       });
       expect(contents).toContain('Período,Ocupação (%)');
       expect(contents).toContain('Reservas');
+    }
+
+    const pdfDownloadPromise = page.waitForEvent('download');
+    await page.locator('[data-weekly-export-action="pdf"]').click();
+    const pdfDownload = await pdfDownloadPromise;
+    await expect(pdfDownload.suggestedFilename()).toMatch(/\.pdf$/);
+    const pdfStream = await pdfDownload.createReadStream();
+    if (pdfStream) {
+      const header = await new Promise((resolve, reject) => {
+        const chunks = [];
+        pdfStream.on('data', chunk => {
+          chunks.push(Buffer.from(chunk));
+          if (chunks.reduce((len, buf) => len + buf.length, 0) >= 4) {
+            pdfStream.destroy();
+            resolve(Buffer.concat(chunks).slice(0, 4));
+          }
+        });
+        pdfStream.on('end', () => resolve(Buffer.concat(chunks).slice(0, 4)));
+        pdfStream.on('error', reject);
+      });
+      expect(header.toString()).toBe('%PDF');
     }
   });
 });
