@@ -100,6 +100,20 @@ CREATE TABLE IF NOT EXISTS blocks (
   end_date TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS unit_blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
+
 CREATE TABLE IF NOT EXISTS rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
@@ -116,6 +130,28 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'admin'
 );
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+  guest_name TEXT,
+  rating INTEGER NOT NULL,
+  title TEXT,
+  body TEXT NOT NULL,
+  source TEXT,
+  stay_date TEXT,
+  status TEXT NOT NULL DEFAULT 'published',
+  response_text TEXT,
+  response_author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  responded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_property ON reviews(property_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_unit ON reviews(unit_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at);
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
@@ -428,6 +464,46 @@ function runLightMigrations(db) {
     ensureColumn('bookings', 'imported_at', 'TEXT');
     ensureColumn('bookings', 'source_payload', 'TEXT');
     ensureColumn('bookings', 'import_notes', 'TEXT');
+
+    ensureTable(
+      'unit_blocks',
+      `CREATE TABLE IF NOT EXISTS unit_blocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);`
+    );
+
+    ensureTable(
+      'reviews',
+      `CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+        unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+        guest_name TEXT,
+        rating INTEGER NOT NULL,
+        title TEXT,
+        body TEXT NOT NULL,
+        source TEXT,
+        stay_date TEXT,
+        status TEXT NOT NULL DEFAULT 'published',
+        response_text TEXT,
+        response_author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        responded_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_reviews_property ON reviews(property_id);
+      CREATE INDEX IF NOT EXISTS idx_reviews_unit ON reviews(unit_id);
+      CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at);`
+    );
 
     ensureColumn('rate_plans', 'min_price', 'REAL DEFAULT NULL');
     ensureColumn('rate_plans', 'max_price', 'REAL DEFAULT NULL');

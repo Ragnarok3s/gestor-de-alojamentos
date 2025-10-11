@@ -1,3 +1,5 @@
+const registerUxApi = require('./ux-api');
+
 const FEATURE_PRESETS = [
   {
     icon: 'shower-head',
@@ -159,6 +161,8 @@ module.exports = function registerBackoffice(app, context) {
 
   app.use('/admin', requireLogin, requireBackofficeAccess);
 
+  registerUxApi(app, context);
+
   const HOUSEKEEPING_TASK_TYPES = new Set(['checkout', 'checkin', 'midstay', 'custom']);
   const HOUSEKEEPING_TYPE_LABELS = {
     checkout: 'Limpeza de saída',
@@ -213,12 +217,14 @@ module.exports = function registerBackoffice(app, context) {
   const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
+  const uxEnhancementsSource = fs.readFileSync(path.join(scriptsDir, 'ux-enhancements.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
   const revenueDashboardScript = inlineScript(revenueDashboardSource);
+  const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
 
   function renderDashboardTabsScript(defaultPaneId) {
     const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
@@ -1857,6 +1863,19 @@ module.exports = function registerBackoffice(app, context) {
         longitude: Number.isFinite(lon) ? lon : null
       };
     });
+    const activeUnitBlocks = db
+      .prepare(
+        `SELECT unit_id, start_date, end_date, reason
+           FROM unit_blocks
+          WHERE end_date > ?
+          ORDER BY start_date`
+      )
+      .all(dayjs().format('YYYY-MM-DD'));
+    const unitBlockIndex = new Map();
+    activeUnitBlocks.forEach(block => {
+      if (!unitBlockIndex.has(block.unit_id)) unitBlockIndex.set(block.unit_id, []);
+      unitBlockIndex.get(block.unit_id).push(block);
+    });
     const propertyUnitMap = new Map();
     props.forEach(p => propertyUnitMap.set(p.id, []));
     units.forEach(u => {
@@ -2451,9 +2470,9 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
       { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-      { id: 'revenue', label: 'Revenue', icon: 'trending-up', allowed: true },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
+      { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
@@ -2499,14 +2518,40 @@ module.exports = function registerBackoffice(app, context) {
 
     const unitsTableRows = units.length
       ? units
-          .map(u => `
-            <tr>
-              <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
-              <td data-label="Unidade"><span class="table-cell-value">${esc(u.name)}</span></td>
-              <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
-              <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
-              <td data-label="Ações"><div class="table-cell-actions"><a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a></div></td>
-            </tr>`)
+          .map(u => {
+            const blocks = unitBlockIndex.get(u.id) || [];
+            const blockSummaries = blocks
+              .map(block => {
+                const endLabel = dayjs(block.end_date).subtract(1, 'day');
+                const endDisplay = endLabel.isValid() ? endLabel.format('DD/MM') : dayjs(block.end_date).format('DD/MM');
+                return `${dayjs(block.start_date).format('DD/MM')}–${endDisplay}`;
+              })
+              .join(', ');
+            const blockTitle = blocks.length
+              ? esc(`Bloqueado ${blockSummaries}${blocks[0].reason ? ` · ${blocks[0].reason}` : ''}`)
+              : '';
+            const blockBadge = blocks.length
+              ? `<span class="bo-status-badge bo-status-badge--warning" data-block-badge="${u.id}" title="${blockTitle}">Bloqueado</span>`
+              : `<span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
+            return `
+              <tr data-unit-row="${u.id}">
+                <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
+                <td data-label="Unidade">
+                  <span class="table-cell-value">${esc(u.name)}</span>
+                  ${blockBadge}
+                </td>
+                <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
+                <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
+                <td data-label="Ações">
+                  <div class="table-cell-actions" data-unit-actions>
+                    <button type="button" class="btn btn-light btn-compact" data-block-unit="${u.id}" data-unit-name="${esc(
+              u.property_name + ' · ' + u.name
+            )}">Bloquear unidade</button>
+                    <a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a>
+                  </div>
+                </td>
+              </tr>`;
+          })
           .join('')
       : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
 
@@ -2708,6 +2753,33 @@ module.exports = function registerBackoffice(app, context) {
       bookingPace: decimalFormatter.format(revenueSummary.bookingPace || 0)
     };
 
+    const unitsForPricing = units.map(u => ({
+      id: u.id,
+      name: u.name,
+      propertyId: u.property_id,
+      propertyName: u.property_name,
+      unitType: u.unit_type || null,
+      basePriceCents: u.base_price_cents
+    }));
+    const defaultWeekStart = dayjs().startOf('week');
+    const defaultWeekEnd = defaultWeekStart.add(6, 'day');
+    const uxDashboardConfig = {
+      units: unitsForPricing,
+      unitTypes: unitTypeOptions,
+      properties: props.map(p => ({ id: p.id, name: p.name })),
+      blocks: activeUnitBlocks,
+      weeklyDefaults: {
+        from: defaultWeekStart.format('YYYY-MM-DD'),
+        to: defaultWeekEnd.format('YYYY-MM-DD')
+      },
+      kpi: {
+        occupancyRate: revenueSummary.occupancyRate || 0,
+        adrCents: revenueSummary.adrCents || 0,
+        revparCents: revenueSummary.revparCents || 0
+      }
+    };
+    const uxDashboardConfigJson = jsonScriptPayload(uxDashboardConfig);
+
     const revenueChannelsHtml = revenueChannels
       .map(channel => {
         const revenueLabel = `€ ${eur(channel.revenueCents || 0)}`;
@@ -2790,6 +2862,83 @@ module.exports = function registerBackoffice(app, context) {
               </select>
             </label>
           </form>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3" data-kpi-card>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-slate-800">Ocupação &amp; ADR unificados</h3>
+              <p class="text-sm text-slate-600">Visão imediata do equilíbrio entre ocupação e preço médio diário.</p>
+            </div>
+            <div class="flex items-center gap-2 self-start">
+              <a
+                href="#operational-metrics"
+                class="text-sm font-medium text-sky-700 hover:text-sky-800 focus:outline-none focus-visible:ring focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                data-kpi-detail-link
+              >
+                Ver detalhe
+              </a>
+              <button type="button" class="btn btn-light btn-compact" data-kpi-info aria-describedby="kpi-tooltip-text">
+                <i data-lucide="info" class="w-4 h-4" aria-hidden="true"></i>
+                <span class="sr-only">Como interpretar os KPIs</span>
+              </button>
+            </div>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+              <div class="text-xs uppercase tracking-wide text-emerald-600">Ocupação</div>
+              <div class="text-2xl font-semibold text-emerald-900" data-kpi-occupancy>${esc(revenueSummaryLabels.occupancy)}</div>
+              <div class="text-xs text-emerald-700">Percentagem de noites vendidas no período analisado.</div>
+            </div>
+            <div class="rounded-lg border border-sky-200 bg-sky-50 p-3">
+              <div class="text-xs uppercase tracking-wide text-sky-600">ADR</div>
+              <div class="text-2xl font-semibold text-sky-900" data-kpi-adr>${esc(revenueSummaryLabels.adr)}</div>
+              <div class="text-xs text-sky-700">Preço médio por noite confirmada.</div>
+            </div>
+          </div>
+          <div
+            class="rounded-lg border p-3 flex gap-2 items-start bg-amber-50 border-amber-200"
+            data-kpi-alert
+            hidden
+            role="status"
+            aria-live="polite"
+          >
+            <span class="mt-0.5 flex-shrink-0 text-amber-600" aria-hidden="true" data-kpi-alert-icon>
+              <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+            </span>
+            <div class="space-y-1">
+              <p class="text-sm font-semibold text-slate-800" data-kpi-alert-title></p>
+              <p class="text-sm text-slate-600" data-kpi-alert-message></p>
+            </div>
+          </div>
+          <div class="text-xs text-slate-500">Dados combinados do período ${esc(revenueRangeLabel)}. RevPAR atual: <span data-kpi-revpar>${esc(revenueSummaryLabels.revpar)}</span>.</div>
+          <p id="kpi-tooltip-text" class="sr-only">Ocupação mede noites vendidas face à disponibilidade. ADR é a receita média por noite confirmada.</p>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3" data-weekly-export aria-busy="false">
+          <div>
+            <h3 class="text-base font-semibold text-slate-800">Exportar semana (CSV/PDF)</h3>
+            <p class="text-sm text-slate-600">Gera um relatório com ocupação, ADR, RevPAR e receita da semana selecionada.</p>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label class="form-field" data-field>
+              <span class="form-label">Início</span>
+              <input type="date" class="input" data-weekly-from />
+              <p class="form-error text-xs text-rose-600" data-error hidden></p>
+            </label>
+            <label class="form-field" data-field>
+              <span class="form-label">Fim</span>
+              <input type="date" class="input" data-weekly-to />
+              <p class="form-error text-xs text-rose-600" data-error hidden></p>
+            </label>
+            <div class="lg:col-span-2 flex flex-wrap items-center gap-2">
+              <button type="button" class="btn btn-light" data-weekly-export-action="csv">Exportar CSV</button>
+              <button type="button" class="btn btn-light" data-weekly-export-action="pdf">Exportar PDF</button>
+              <span class="text-xs text-slate-500" data-weekly-status role="status" aria-live="polite" tabindex="-1">
+                Seleciona o intervalo semanal e escolhe o formato para exportar.
+              </span>
+            </div>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="operational-metrics">
@@ -3237,7 +3386,83 @@ module.exports = function registerBackoffice(app, context) {
                 <p>Todos os dados essenciais de gestão em formato compacto.</p>
               </header>
 
+              <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
+
               <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
+                  <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
+                      <p class="text-sm text-slate-600">Aplica tarifas por intervalo com filtros por unidade, tipologia e fins-de-semana.</p>
+                    </div>
+                    <div
+                      class="text-xs text-slate-500"
+                      data-rate-feedback
+                      role="status"
+                      aria-live="polite"
+                    >Seleciona datas e unidades para pré-visualizar o impacto.</div>
+                  </div>
+                  <form class="grid gap-3 md:grid-cols-5" data-rates-form novalidate>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Data inicial</span>
+                      <input type="date" class="input" data-rate-start required />
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Data final</span>
+                      <input type="date" class="input" data-rate-end required />
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Preço €/noite</span>
+                      <input type="number" min="1" step="0.01" class="input" data-rate-price placeholder="Ex.: 165" required />
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Unidade</span>
+                      <select class="input" data-rate-unit>
+                        <option value="">Todas</option>
+                      </select>
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Tipologia</span>
+                      <select class="input" data-rate-type>
+                        <option value="">Todas</option>
+                      </select>
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <div class="md:col-span-5 flex flex-wrap items-center gap-3" data-field>
+                      <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+                        <input type="checkbox" data-rate-weekends />
+                        <span>Aplicar apenas a noites de fim-de-semana</span>
+                      </label>
+                      <button type="button" class="btn btn-primary" data-rate-apply>Atualizar preços</button>
+                      <span class="text-xs text-slate-500" data-rate-loading hidden aria-live="assertive">A atualizar tarifas…</span>
+                    </div>
+                  </form>
+                  <div class="rounded-xl border border-slate-200 bg-white/80 p-3 space-y-3" data-rate-preview-wrapper hidden>
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <h3 class="font-semibold text-slate-700">Pré-visualização</h3>
+                      <span class="text-xs text-slate-500" data-rate-summary></span>
+                    </div>
+                    <div class="bo-table responsive-table">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Unidade</th>
+                            <th>Noites</th>
+                            <th>Preço aplicado</th>
+                          </tr>
+                        </thead>
+                        <tbody data-rate-preview>
+                          <tr><td colspan="3" class="text-sm text-center text-slate-500">Seleciona um intervalo para visualizar o impacto.</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <p class="text-xs text-slate-500">Após confirmar, tens 5 segundos para anular a alteração.</p>
+                </div>
                 <div class="bo-card">
                   <h2>Propriedades</h2>
                   <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
@@ -3501,6 +3726,57 @@ module.exports = function registerBackoffice(app, context) {
                 ${canViewAutomation ? statisticsCard : '<div class="bo-card"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
               </section>
 
+              <section class="bo-pane" data-bo-pane="reviews" data-reviews-pane>
+                <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
+                  <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 class="text-lg font-semibold text-slate-800">Avaliações dos hóspedes</h2>
+                      <p class="text-sm text-slate-600">Filtra rapidamente as reviews recentes ou negativas e responde com confirmação imediata.</p>
+                    </div>
+                    <div class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600" data-reviews-counter>—</div>
+                  </header>
+                  <div class="flex flex-wrap items-center gap-2" role="tablist">
+                    <button type="button" class="btn btn-light btn-compact is-active" data-review-filter="all" role="tab" aria-selected="true">Todas</button>
+                    <button type="button" class="btn btn-light btn-compact" data-review-filter="negative" role="tab" aria-selected="false">Negativas</button>
+                    <button type="button" class="btn btn-light btn-compact" data-review-filter="recent" role="tab" aria-selected="false">Recentes</button>
+                  </div>
+                  <div class="space-y-3" data-reviews-list aria-busy="true">
+                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
+                      <div class="h-4 bg-slate-200 rounded w-1/3 mb-2"></div>
+                      <div class="h-3 bg-slate-200 rounded w-2/3"></div>
+                    </div>
+                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
+                      <div class="h-4 bg-slate-200 rounded w-1/2 mb-2"></div>
+                      <div class="h-3 bg-slate-200 rounded w-3/4"></div>
+                    </div>
+                  </div>
+                  <p class="text-sm text-slate-500" data-reviews-empty hidden role="status" aria-live="polite">
+                    Sem novas avaliações esta semana.
+                  </p>
+                </div>
+                <div class="bo-card space-y-3" data-review-composer hidden>
+                  <header>
+                    <h3 class="text-base font-semibold text-slate-800">Responder à avaliação</h3>
+                    <p class="text-xs text-slate-500">A resposta ficará visível no portal após sincronização com o canal.</p>
+                  </header>
+                  <article class="rounded-lg border border-slate-200 bg-white/70 p-3 space-y-1" data-selected-review aria-live="polite"></article>
+                  <label class="form-field" data-field>
+                    <span class="form-label">Resposta</span>
+                    <textarea class="input" rows="3" maxlength="1000" data-review-response placeholder="Obrigado pela partilha..." required></textarea>
+                    <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
+                      <span data-review-hint>Máx. 1000 caracteres.</span>
+                      <span data-review-count>0 / 1000</span>
+                    </div>
+                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                  </label>
+                  <div class="flex items-center gap-3">
+                    <button type="button" class="btn btn-primary" data-review-submit>Enviar resposta</button>
+                    <button type="button" class="btn btn-light" data-review-cancel>Cancelar</button>
+                    <span class="text-xs text-slate-500" data-review-loading hidden aria-live="assertive">A enviar resposta…</span>
+                  </div>
+                </div>
+              </section>
+
               <section class="bo-pane" data-bo-pane="housekeeping">
                 ${canSeeHousekeeping
                   ? html`
@@ -3612,10 +3888,51 @@ module.exports = function registerBackoffice(app, context) {
               </section>
             </div>
           </div>
+          <div class="bo-modal hidden" data-block-modal aria-hidden="true" role="dialog" aria-modal="true">
+            <div class="bo-modal__backdrop" data-block-dismiss tabindex="-1"></div>
+            <div class="bo-modal__content" role="document">
+              <header class="bo-modal__header">
+                <h2 class="text-lg font-semibold text-slate-800" data-block-title>Bloquear unidade</h2>
+                <button type="button" class="bo-modal__close" data-block-dismiss aria-label="Fechar">×</button>
+              </header>
+              <form class="bo-modal__body space-y-3" data-block-form novalidate>
+                <p class="text-sm text-slate-600">Seleciona o intervalo e descreve o motivo visível para a equipa.</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label class="form-field" data-field>
+                    <span class="form-label">Data inicial</span>
+                    <input type="date" class="input" data-block-start required />
+                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                  </label>
+                  <label class="form-field" data-field>
+                    <span class="form-label">Data final</span>
+                    <input type="date" class="input" data-block-end required />
+                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                  </label>
+                </div>
+                <label class="form-field" data-field>
+                  <span class="form-label">Motivo</span>
+                  <textarea class="input" rows="3" maxlength="240" data-block-reason placeholder="Ex.: Manutenção preventiva nas casas de banho" required></textarea>
+                  <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
+                    <span data-block-hint>Máx. 240 caracteres.</span>
+                    <span data-block-count>0 / 240</span>
+                  </div>
+                  <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                </label>
+                <p class="text-xs text-slate-500" data-block-conflict hidden role="alert"></p>
+                <div class="flex items-center gap-3">
+                  <button type="submit" class="btn btn-primary" data-block-submit>Confirmar bloqueio</button>
+                  <button type="button" class="btn btn-light" data-block-dismiss>Cancelar</button>
+                  <span class="text-xs text-slate-500" data-block-loading hidden aria-live="assertive">A criar bloqueio…</span>
+                </div>
+              </form>
+            </div>
+          </div>
+          <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
+          <script>${uxEnhancementsScript}</script>
         `
       })
     );
@@ -4098,7 +4415,44 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     iconWrapClass: 'inline-flex items-center justify-center text-emerald-700'
   });
   const bookings = db.prepare('SELECT * FROM bookings WHERE unit_id = ? ORDER BY checkin').all(u.id);
-  const blocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
+  const legacyBlocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
+  const modernBlocks = db
+    .prepare('SELECT id, start_date, end_date, reason FROM unit_blocks WHERE unit_id = ? ORDER BY start_date')
+    .all(u.id);
+  const blockEntries = modernBlocks
+    .map(block => {
+      const startDate = dayjs(block.start_date);
+      const endDate = dayjs(block.end_date);
+      return {
+        id: block.id,
+        start: block.start_date,
+        endExclusive: block.end_date,
+        startLabel: startDate.isValid() ? startDate.format('DD/MM/YYYY') : block.start_date,
+        endLabel: endDate.isValid()
+          ? endDate.subtract(1, 'day').format('DD/MM/YYYY')
+          : block.end_date,
+        reason: block.reason || '',
+        source: 'modern'
+      };
+    })
+    .concat(
+      legacyBlocks.map(block => {
+        const startDate = dayjs(block.start_date);
+        const endDate = dayjs(block.end_date);
+        return {
+          id: block.id,
+          start: block.start_date,
+          endExclusive: endDate.isValid()
+            ? endDate.add(1, 'day').format('YYYY-MM-DD')
+            : block.end_date,
+          startLabel: startDate.isValid() ? startDate.format('DD/MM/YYYY') : block.start_date,
+          endLabel: endDate.isValid() ? endDate.format('DD/MM/YYYY') : block.end_date,
+          reason: '',
+          source: 'legacy'
+        };
+      })
+    )
+    .sort((a, b) => a.start.localeCompare(b.start));
   const rates = db.prepare('SELECT * FROM rates WHERE unit_id = ? ORDER BY start_date').all(u.id);
   const images = db.prepare(
     'SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id'
@@ -4182,14 +4536,23 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
             </form>
           </div>
 
-          ${blocks.length ? `
+          ${blockEntries.length ? `
             <div class="mt-6">
               <h3 class="font-semibold mb-2">Bloqueios ativos</h3>
               <ul class="space-y-2">
-                ${blocks.map(block => `
+                ${blockEntries.map(block => `
                   <li class="flex items-center justify-between text-sm">
-                    <span>${dayjs(block.start_date).format('DD/MM/YYYY')} &rarr; ${dayjs(block.end_date).format('DD/MM/YYYY')}</span>
-                    <form method="post" action="/admin/blocks/${block.id}/delete" onsubmit="return confirm('Desbloquear estas datas?');">
+                    <span>
+                      ${esc(block.startLabel)} &rarr; ${esc(block.endLabel)}
+                      ${block.reason
+                        ? `<span class="ml-2 text-xs text-slate-500" title="${esc(block.reason)}">${esc(block.reason)}</span>`
+                        : ''}
+                    </span>
+                    <form method="post" action="${
+                      block.source === 'modern'
+                        ? `/admin/unit-blocks/${block.id}/delete`
+                        : `/admin/blocks/${block.id}/delete`
+                    }" onsubmit="return confirm('Desbloquear estas datas?');">
                       <button class="text-rose-600">Desbloquear</button>
                     </form>
                   </li>
@@ -4345,6 +4708,28 @@ app.post('/admin/blocks/:blockId/delete', requireLogin, requirePermission('calen
     start_date: block.start_date,
     end_date: block.end_date
   }, null);
+  res.redirect(`/admin/units/${block.unit_id}`);
+});
+
+app.post('/admin/unit-blocks/:blockId/delete', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
+  const blockId = Number(req.params.blockId);
+  const block = db
+    .prepare('SELECT id, unit_id, start_date, end_date, reason FROM unit_blocks WHERE id = ?')
+    .get(blockId);
+  if (!block) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+    return res.status(404).send('Bloqueio não encontrado');
+  }
+  db.prepare('DELETE FROM unit_blocks WHERE id = ?').run(blockId);
+  if (req.user && req.user.id) {
+    logActivity(req.user.id, 'unit_block_deleted', 'unit', block.unit_id, {
+      blockId,
+      start: block.start_date,
+      end: block.end_date,
+      hadReason: !!(block.reason && String(block.reason).trim())
+    });
+  }
+  if (wantsJson(req)) return res.json({ ok: true, unit_id: block.unit_id });
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
