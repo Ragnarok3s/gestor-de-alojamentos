@@ -97,51 +97,6 @@ module.exports = function registerUxApi(app, context) {
     }
   });
 
-  router.post('/units/blocks/bulk', (req, res) => {
-    const startedAt = Date.now();
-    try {
-      const unitIds = Array.isArray(req.body?.unitIds) ? req.body.unitIds : [];
-      const payload = blockService.normalizeBlockPayload(req.body || {});
-      const blocks = blockService.createBlocks({
-        unitIds,
-        startDate: payload.startDate,
-        endDateExclusive: payload.endDateExclusive,
-        reason: payload.reason,
-        userId: req.user ? req.user.id : null
-      });
-      const createdIds = blocks.map(block => block.unit_id);
-      const meta = {
-        unitIds: createdIds,
-        nights: payload.nights,
-        reasonLength: payload.reason.length
-      };
-      if (req.user && req.user.id) {
-        logActivity(req.user.id, 'unit_block_created_bulk', 'unit', null, meta);
-      }
-      emitTelemetry('unit_block_created_bulk', { req, startedAt, success: true, meta });
-      return res.status(201).json({
-        ok: true,
-        block: {
-          start_date: payload.startDate,
-          end_date: payload.endDateExclusive,
-          reason: payload.reason
-        },
-        summary: {
-          nights: payload.nights,
-          units: createdIds.length
-        }
-      });
-    } catch (err) {
-      emitTelemetry('unit_block_created_bulk', {
-        req,
-        startedAt,
-        success: false,
-        meta: { error: err && err.message ? err.message : 'Erro inesperado' }
-      });
-      return handleError(res, err);
-    }
-  });
-
   router.post('/units/:unitId/blocks', (req, res) => {
     const startedAt = Date.now();
     try {

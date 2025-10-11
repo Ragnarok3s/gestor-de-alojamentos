@@ -6,15 +6,9 @@
 | Toast erro preços | "Não foi possível atualizar os preços. Tenta novamente." | Usar quando API devolve erro genérico. |
 | Undo preços | "Anular" | Botão dentro do toast, devolve foco após ação. |
 | Validação preços | "Seleciona pelo menos uma unidade e um intervalo válido." | Inline abaixo do date-range picker. |
-| Toast sucesso bloqueio | "Bloqueio criado para {alvo} durante {n} noite(s)." | `{alvo}` pode ser nome da unidade ou "{m} unidades". Mostrar badge imediatamente. |
+| Toast sucesso bloqueio | "Bloqueio criado para {n} noites." | Mostrar badge imediatamente. |
 | Erro conflito bloqueio | "Já existem reservas neste intervalo. Ajusta as datas." | Estado `aria-live="assertive"`. |
-| Erro bloqueio duplicado | "Intervalo já se encontra bloqueado." | Mesma mensagem para blocos legados. |
 | Modal bloqueio label | "Motivo do bloqueio" | `aria-label` e `placeholder` "Manutenção, uso interno, etc." |
-| Modal bloqueio hint | "Bloqueio aplicado a {count} unidade(s)." | `count` = 1 mostra singular; plural caso contrário. |
-| Toolbar bloqueio vazio | "Seleciona unidades para bloquear." | `data-block-summary`, `aria-live="polite"`. |
-| Toolbar bloqueio singular | "1 unidade selecionada." | Atualizado ao marcar a primeira unidade. |
-| Toolbar bloqueio plural | "{n} unidades selecionadas." | `{n}` >= 2. |
-| Toast info bloqueio | "Seleciona pelo menos uma unidade válida." | Surge ao tentar abrir modal sem seleção. |
 | Badge bloqueado | "Bloqueado" | Contraste AAA (#7C2D12 em fundo #FED7AA). |
 | Reviews estado vazio | "Sem novas avaliações esta semana." | Complementar com link "Ver histórico". |
 | CTA responder review | "Responder" | Botão principal em cada review. |
@@ -33,5 +27,3 @@
 | Alerta ocupação baixa | "Ocupação abaixo do recomendado" / "Ativa campanhas ou ajusta o ADR para estimular reservas rápidas." | Mostrar quando taxa <30%. |
 | Alerta ocupação alta | "Ocupação em níveis máximos" / "Revê disponibilidade futura e considera aumentar o ADR para maximizar receita." | Mostrar quando taxa >90%. |
 | Erro noites fim-de-semana | "Intervalo sem noites para aplicar." | Validar quando filtro fim-de-semana remove todas as datas. |
-| Toast DnD bloqueado | "As novas datas estão bloqueadas." | Quando o drop coincide com bloqueios existentes. |
-| Toast DnD passado | "Data no passado." | Ao tentar reagendar para datas anteriores a hoje. |

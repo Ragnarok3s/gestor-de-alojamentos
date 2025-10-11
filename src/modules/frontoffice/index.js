@@ -36,28 +36,6 @@ module.exports = function registerFrontoffice(app, context) {
     return source.replace(/<\/(script)/gi, '<\\/$1');
   }
 
-  const selectUnitWithPriceStmt = db.prepare('SELECT id, base_price_cents FROM units WHERE id = ?');
-  const calendarBookingConflictStmt = db.prepare(
-    `SELECT 1 FROM bookings
-      WHERE unit_id = ?
-        AND id <> ?
-        AND status IN ('CONFIRMED','PENDING')
-        AND NOT (checkout <= ? OR checkin >= ?)
-      LIMIT 1`
-  );
-  const calendarLegacyBlockConflictStmt = db.prepare(
-    `SELECT 1 FROM blocks
-      WHERE unit_id = ?
-        AND NOT (end_date <= ? OR start_date >= ?)
-      LIMIT 1`
-  );
-  const calendarUnitBlockConflictStmt = db.prepare(
-    `SELECT 1 FROM unit_blocks
-      WHERE unit_id = ?
-        AND NOT (end_date <= ? OR start_date >= ?)
-      LIMIT 1`
-  );
-
   function sanitizeBookingSubmission(payload, { requireAgency }) {
     const errors = [];
 
@@ -1367,10 +1345,6 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
       </div>
       ${canRescheduleCalendar ? '<p class="bo-calendar-hint">Arraste uma reserva confirmada para reagendar rapidamente.</p>' : ''}
       ${calendarGridHtml}
-      <div class="calendar-toast" data-calendar-toast hidden role="status" aria-live="assertive">
-        <span class="calendar-toast__dot"></span>
-        <span data-calendar-toast-message></span>
-      </div>
     </section>`;
 
   const calendarDragScript = html`
@@ -1382,13 +1356,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         const entries = board.querySelectorAll('[data-calendar-entry]');
         const cells = Array.from(board.querySelectorAll('[data-calendar-cell]'));
         if (!entries.length || !cells.length) return;
-        const scrollContainer = board.querySelector('.bo-calendar-grid-wrapper');
-        const toast = board.querySelector('[data-calendar-toast]');
-        const toastMessage = toast ? toast.querySelector('[data-calendar-toast-message]') : null;
-        const todayIso = new Date().toISOString().slice(0, 10);
         let dragData = null;
-        let currentDropCell = null;
-        let toastTimer = null;
 
         function addDays(iso, days) {
           if (!iso) return iso;
@@ -1399,102 +1367,10 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           return date.toISOString().slice(0, 10);
         }
 
-        function showToast(message, variant) {
-          if (!toast) {
-            if (message) window.alert(message);
-            return;
-          }
-          if (toastTimer) {
-            clearTimeout(toastTimer);
-            toastTimer = null;
-          }
-          toast.setAttribute('data-variant', variant || 'info');
-          if (toastMessage) toastMessage.textContent = message || '';
-          toast.hidden = false;
-          toastTimer = window.setTimeout(function () {
-            toast.hidden = true;
-          }, 4000);
-        }
-
-        function setDropFeedback(cell, allowed) {
-          if (currentDropCell && currentDropCell !== cell) {
-            currentDropCell.classList.remove('is-drop-target', 'is-drop-denied');
-          }
-          if (!cell) {
-            currentDropCell = null;
-            return;
-          }
-          if (allowed) {
-            cell.classList.add('is-drop-target');
-            cell.classList.remove('is-drop-denied');
-          } else {
+        function clearDropTargets() {
+          cells.forEach(function(cell){
             cell.classList.remove('is-drop-target');
-            cell.classList.add('is-drop-denied');
-          }
-          currentDropCell = cell;
-        }
-
-        function clearDropFeedback() {
-          if (currentDropCell) {
-            currentDropCell.classList.remove('is-drop-target', 'is-drop-denied');
-            currentDropCell = null;
-          }
-        }
-
-        function evaluateDropTarget(cell, entryTarget) {
-          const result = { allowed: false, changed: false, reason: '', unitId: null, startDate: null, endDate: null };
-          if (!dragData) return result;
-          const targetDate = cell.getAttribute('data-date');
-          if (!targetDate) return result;
-          const nights = Number.isFinite(dragData.nights) && dragData.nights > 0 ? dragData.nights : 1;
-          const entryUnit = entryTarget && entryTarget.getAttribute('data-unit-id');
-          const originUnit = dragData.element ? dragData.element.getAttribute('data-unit-id') : null;
-          const unitId = entryUnit || originUnit;
-          if (!unitId) {
-            result.reason = 'Unidade inválida.';
-            return result;
-          }
-          const newStart = targetDate;
-          const newEnd = addDays(targetDate, nights);
-          result.unitId = unitId;
-          result.startDate = newStart;
-          result.endDate = newEnd;
-          result.changed = unitId !== originUnit || newStart !== dragData.start;
-          if (targetDate < todayIso) {
-            result.reason = 'Data no passado.';
-            return result;
-          }
-          let overlapReason = '';
-          const overlapping = Array.from(entries).some(function (entryEl) {
-            if (entryEl === dragData.element) return false;
-            if (entryEl.getAttribute('data-unit-id') !== unitId) return false;
-            const status = (entryEl.getAttribute('data-entry-status') || '').toUpperCase();
-            if (status === 'CANCELLED') return false;
-            const entryStart = entryEl.getAttribute('data-entry-start');
-            const entryEnd = entryEl.getAttribute('data-entry-end');
-            const overlapsRange = !(entryEnd <= newStart || entryStart >= newEnd);
-            if (overlapsRange) {
-              overlapReason = status === 'BLOCKED' ? 'As novas datas estão bloqueadas.' : 'Existe sobreposição nas novas datas.';
-            }
-            return overlapsRange;
           });
-          if (overlapping) {
-            result.reason = overlapReason || 'Existe sobreposição nas novas datas.';
-            return result;
-          }
-          result.allowed = result.changed;
-          return result;
-        }
-
-        function handleAutoScroll(event) {
-          if (!scrollContainer) return;
-          const rect = scrollContainer.getBoundingClientRect();
-          const edge = 48;
-          if (event.clientX < rect.left + edge) {
-            scrollContainer.scrollLeft -= 14;
-          } else if (event.clientX > rect.right - edge) {
-            scrollContainer.scrollLeft += 14;
-          }
         }
 
         entries.forEach(function(entry){
@@ -1509,8 +1385,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
               start: start,
               end: end,
               nights: Number(entry.getAttribute('data-entry-nights') || '1'),
-              element: entry,
-              unitId: entry.getAttribute('data-unit-id') || ''
+              element: entry
             };
             entry.classList.add('is-dragging');
             if (event.dataTransfer) {
@@ -1520,8 +1395,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           });
           entry.addEventListener('dragend', function(){
             entry.classList.remove('is-dragging');
-            entry.classList.remove('is-saving');
-            clearDropFeedback();
+            clearDropTargets();
             dragData = null;
           });
         });
@@ -1530,23 +1404,15 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
           cell.addEventListener('dragover', function(event){
             if (!dragData) return;
             if (cell.getAttribute('data-in-month') !== '1') return;
-            const evaluation = evaluateDropTarget(cell, event.target.closest('[data-calendar-entry]'));
-            if (!evaluation.changed) {
-              setDropFeedback(cell, false);
-            } else {
-              setDropFeedback(cell, evaluation.allowed);
-            }
-            if (!event.defaultPrevented) {
-              event.preventDefault();
-              if (event.dataTransfer) event.dataTransfer.dropEffect = evaluation.allowed ? 'move' : 'none';
-            }
-            handleAutoScroll(event);
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+            cells.forEach(function(other){
+              if (other !== cell) other.classList.remove('is-drop-target');
+            });
+            cell.classList.add('is-drop-target');
           });
           cell.addEventListener('dragleave', function(){
-            if (currentDropCell === cell) {
-              cell.classList.remove('is-drop-target', 'is-drop-denied');
-              currentDropCell = null;
-            }
+            cell.classList.remove('is-drop-target');
           });
           cell.addEventListener('drop', function(event){
             if (!dragData) return;
@@ -1554,58 +1420,40 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
             event.preventDefault();
             const entry = dragData.element;
             const entryId = dragData.id;
-            const evaluation = evaluateDropTarget(cell, event.target.closest('[data-calendar-entry]'));
-            clearDropFeedback();
-            if (!evaluation.changed) {
-              if (entry) entry.classList.remove('is-dragging');
-              dragData = null;
-              return;
-            }
-            if (!evaluation.allowed) {
-              if (entry) entry.classList.remove('is-dragging');
-              showToast(evaluation.reason || 'Datas indisponíveis.', 'danger');
-              dragData = null;
-              return;
-            }
-            if (!entryId || !evaluation.startDate || !evaluation.endDate) {
-              if (entry) entry.classList.remove('is-dragging');
-              dragData = null;
-              return;
-            }
+            const originalStart = dragData.start;
+            const nights = Number.isFinite(dragData.nights) && dragData.nights > 0 ? dragData.nights : 1;
+            const targetDate = cell.getAttribute('data-date');
+            clearDropTargets();
+            dragData = null;
+            if (!entryId || !targetDate || targetDate === originalStart) return;
             if (entry) {
               entry.classList.remove('is-dragging');
               entry.classList.add('is-saving');
             }
+            const checkout = addDays(targetDate, nights);
             fetch('/calendar/booking/' + encodeURIComponent(entryId) + '/reschedule', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ checkin: evaluation.startDate, checkout: evaluation.endDate, unitId: evaluation.unitId })
+              body: JSON.stringify({ checkin: targetDate, checkout: checkout })
             })
               .then(function(res){
-                return res
-                  .json()
-                  .catch(function(){ return { ok: false, message: 'Erro inesperado.' }; })
-                  .then(function(data){ return { res: res, data: data }; });
+                return res.json().catch(function(){ return { ok: false, message: 'Erro inesperado.' }; }).then(function(data){
+                  return { res: res, data: data };
+                });
               })
               .then(function(result){
-                var ok = result && result.res && result.res.ok && result.data && result.data.ok;
+                const ok = result && result.res && result.res.ok && result.data && result.data.ok;
                 if (ok) {
-                  showToast(result.data && result.data.message ? result.data.message : 'Reserva reagendada.', 'success');
-                  setTimeout(function () {
-                    window.location.reload();
-                  }, 600);
+                  window.location.reload();
                 } else {
                   if (entry) entry.classList.remove('is-saving');
-                  var message = result && result.data && result.data.message ? result.data.message : 'Não foi possível reagendar a reserva.';
-                  showToast(message, 'danger');
+                  const message = result && result.data && result.data.message ? result.data.message : 'Não foi possível reagendar a reserva.';
+                  window.alert(message);
                 }
               })
               .catch(function(){
                 if (entry) entry.classList.remove('is-saving');
-                showToast('Erro de rede ao reagendar a reserva.', 'danger');
-              })
-              .finally(function(){
-                dragData = null;
+                window.alert('Erro de rede ao reagendar a reserva.');
               });
           });
         });
@@ -1969,45 +1817,36 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, requirePermission('ca
   if (!checkin || !checkout) return res.status(400).json({ ok: false, message: 'Datas inválidas.' });
   if (!dayjs(checkout).isAfter(dayjs(checkin))) return res.status(400).json({ ok: false, message: 'checkout deve ser > checkin' });
 
-  let targetUnitId = booking.unit_id;
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'unitId')) {
-    const requestedUnitId = Number(req.body.unitId);
-    if (!Number.isInteger(requestedUnitId) || requestedUnitId <= 0) {
-      return res.status(400).json({ ok: false, message: 'Unidade destino inválida.' });
-    }
-    targetUnitId = requestedUnitId;
-  }
-
-  let targetUnitBasePrice = booking.base_price_cents;
-  if (targetUnitId !== booking.unit_id) {
-    const targetUnit = selectUnitWithPriceStmt.get(targetUnitId);
-    if (!targetUnit) {
-      return res.status(404).json({ ok: false, message: 'Unidade de destino não encontrada.' });
-    }
-    targetUnitBasePrice = targetUnit.base_price_cents;
-  }
-
-  const conflict = calendarBookingConflictStmt.get(targetUnitId, booking.id, checkin, checkout);
+  const conflict = db.prepare(`
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
+       AND id <> ?
+       AND status IN ('CONFIRMED','PENDING')
+       AND NOT (checkout <= ? OR checkin >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, booking.id, checkin, checkout);
   if (conflict) return res.status(409).json({ ok: false, message: 'Conflito com outra reserva.' });
 
-  const blockConflictLegacy = calendarLegacyBlockConflictStmt.get(targetUnitId, checkin, checkout);
-  if (blockConflictLegacy) return res.status(409).json({ ok: false, message: 'As novas datas estão bloqueadas.' });
+  const blockConflict = db.prepare(`
+    SELECT 1 FROM blocks
+     WHERE unit_id = ?
+       AND NOT (end_date <= ? OR start_date >= ?)
+     LIMIT 1
+  `).get(booking.unit_id, checkin, checkout);
+  if (blockConflict) return res.status(409).json({ ok: false, message: 'As novas datas estão bloqueadas.' });
 
-  const blockConflictUnit = calendarUnitBlockConflictStmt.get(targetUnitId, checkin, checkout);
-  if (blockConflictUnit) return res.status(409).json({ ok: false, message: 'As novas datas estão bloqueadas.' });
-
-  const quote = rateQuote(targetUnitId, checkin, checkout, targetUnitBasePrice);
+  const quote = rateQuote(booking.unit_id, checkin, checkout, booking.base_price_cents);
   if (quote.nights < quote.minStayReq)
     return res.status(400).json({ ok: false, message: `Estadia mínima: ${quote.minStayReq} noites.` });
 
-  rescheduleBookingUpdateStmt.run(targetUnitId, checkin, checkout, quote.total_cents, booking.id);
+  rescheduleBookingUpdateStmt.run(checkin, checkout, quote.total_cents, booking.id);
 
   logChange(req.user.id, 'booking', booking.id, 'reschedule',
-    { unit_id: booking.unit_id, checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
-    { unit_id: targetUnitId, checkin, checkout, total_cents: quote.total_cents }
+    { checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
+    { checkin, checkout, total_cents: quote.total_cents }
   );
 
-  res.json({ ok: true, message: 'Reserva reagendada.', unit_id: targetUnitId });
+  res.json({ ok: true, message: 'Reserva reagendada.', unit_id: booking.unit_id });
 });
 
 app.post('/calendar/booking/:id/cancel', requireLogin, requirePermission('calendar.cancel'), (req, res) => {

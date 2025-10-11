@@ -396,7 +396,7 @@
 
   function setupBlockModal(config, toast) {
     var modal = document.querySelector('[data-block-modal]');
-    if (!modal) return null;
+    if (!modal) return;
     var titleEl = modal.querySelector('[data-block-title]');
     var form = modal.querySelector('[data-block-form]');
     var startInput = modal.querySelector('[data-block-start]');
@@ -406,13 +406,8 @@
     var countEl = modal.querySelector('[data-block-count]');
     var loadingEl = modal.querySelector('[data-block-loading]');
     var submitButton = modal.querySelector('[data-block-submit]');
-    var selectionWrapper = modal.querySelector('[data-block-selection]');
-    var selectionHint = modal.querySelector('[data-block-selection-hint]');
-    var selectionList = modal.querySelector('[data-block-selection-list]');
     var lastTrigger = null;
-    var selectedUnits = { ids: [], labels: [] };
-    var successHandlers = [];
-    if (!form || !startInput || !endInput || !reasonInput) return null;
+    if (!form || !startInput || !endInput || !reasonInput) return;
 
     function updateCount() {
       if (!countEl) return;
@@ -423,31 +418,13 @@
     reasonInput.addEventListener('input', updateCount);
     updateCount();
 
-    function resetSelection() {
-      selectedUnits.ids = [];
-      selectedUnits.labels = [];
-      if (selectionWrapper) {
-        selectionWrapper.hidden = true;
-      }
-      if (selectionList) {
-        selectionList.innerHTML = '';
-      }
-      if (selectionHint) {
-        selectionHint.textContent = '';
-      }
-    }
-
-    function closeModal(options) {
-      options = options || {};
+    function closeModal() {
       modal.classList.add('hidden');
       modal.setAttribute('aria-hidden', 'true');
       document.body.style.overflow = '';
-      resetSelection();
-      if (conflictEl) {
-        conflictEl.hidden = true;
-        conflictEl.removeAttribute('tabindex');
-      }
-      var trigger = options.keepTrigger ? null : lastTrigger;
+      modal.dataset.unitId = '';
+      modal.dataset.unitName = '';
+      var trigger = lastTrigger;
       lastTrigger = null;
       if (trigger && typeof trigger.focus === 'function') {
         setTimeout(function () {
@@ -460,45 +437,7 @@
       }
     }
 
-    function renderSelection(ids, labels) {
-      if (!selectionWrapper) return;
-      if (!Array.isArray(ids) || !ids.length) {
-        resetSelection();
-        return;
-      }
-      selectionWrapper.hidden = false;
-      if (selectionHint) {
-        selectionHint.textContent = ids.length === 1
-          ? 'Bloqueio aplicado a 1 unidade.'
-          : 'Bloqueio aplicado a ' + ids.length + ' unidades.';
-      }
-      if (selectionList) {
-        var items = labels && labels.length ? labels : ids.map(function (id) { return 'Unidade #' + id; });
-        selectionList.innerHTML = '';
-        items.forEach(function (label) {
-          var li = document.createElement('li');
-          li.textContent = label;
-          selectionList.appendChild(li);
-        });
-      }
-    }
-
-    function openModal(selection) {
-      var ids = Array.isArray(selection && selection.unitIds)
-        ? selection.unitIds
-            .map(function (id) { return Number(id); })
-            .filter(function (id) { return Number.isInteger(id) && id > 0; })
-        : [];
-      if (!ids.length) {
-        toast.show({ type: 'info', message: 'Seleciona pelo menos uma unidade válida.' });
-        return;
-      }
-      var labels = Array.isArray(selection && selection.labels)
-        ? selection.labels.map(function (label) { return String(label || ''); })
-        : [];
-      selectedUnits.ids = ids.slice();
-      selectedUnits.labels = labels.slice();
-      lastTrigger = selection && selection.trigger ? selection.trigger : null;
+    function openModal(button) {
       clearFieldErrors(form);
       if (conflictEl) {
         conflictEl.hidden = true;
@@ -506,20 +445,19 @@
       }
       form.reset();
       updateCount();
+      modal.dataset.unitId = button.dataset.blockUnit;
+      modal.dataset.unitName = button.dataset.unitName || '';
+      lastTrigger = button;
+      if (titleEl) {
+        var base = 'Bloquear unidade';
+        if (modal.dataset.unitName) base += ' – ' + modal.dataset.unitName;
+        titleEl.textContent = base;
+      }
       var today = new Date();
       var startDefault = today.toISOString().slice(0, 10);
       var endDefault = new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       startInput.value = startDefault;
       endInput.value = endDefault;
-      if (titleEl) {
-        if (ids.length === 1) {
-          var singleLabel = labels[0] || 'Unidade #' + ids[0];
-          titleEl.textContent = 'Bloquear unidade – ' + singleLabel;
-        } else {
-          titleEl.textContent = 'Bloquear unidades';
-        }
-      }
-      renderSelection(ids, labels);
       modal.classList.remove('hidden');
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -534,37 +472,28 @@
       if (loadingEl) loadingEl.hidden = !flag;
     }
 
-    function updateBadges(unitIds, start, endExclusive, reason) {
-      var ids = Array.isArray(unitIds) ? unitIds : [unitIds];
+    function updateBadges(unitId, start, endExclusive, reason) {
+      var badges = document.querySelectorAll('[data-block-badge="' + unitId + '"]');
+      if (!badges.length) return;
       var rangeLabel = formatDateRangeLabel(start, endExclusive);
-      ids.forEach(function (unitId) {
-        var badges = document.querySelectorAll('[data-block-badge="' + unitId + '"]');
-        if (!badges.length) return;
-        badges.forEach(function (badge) {
-          badge.hidden = false;
-          badge.classList.remove('hidden');
-          badge.textContent = 'Bloqueado';
-          var tooltip = 'Bloqueado ' + rangeLabel + (reason ? ' · ' + reason : '');
-          badge.setAttribute('aria-label', tooltip);
-          badge.title = tooltip;
-        });
+      badges.forEach(function (badge) {
+        badge.hidden = false;
+        badge.classList.remove('hidden');
+        badge.textContent = 'Bloqueado';
+        badge.setAttribute('aria-label', 'Bloqueado ' + rangeLabel + (reason ? ' · ' + reason : ''));
+        badge.title = 'Bloqueado ' + rangeLabel + (reason ? ' · ' + reason : '');
       });
     }
 
     function submitBlock(event) {
       event.preventDefault();
       clearFieldErrors(form);
-      if (conflictEl) {
-        conflictEl.hidden = true;
-        conflictEl.removeAttribute('tabindex');
-      }
+      if (conflictEl) conflictEl.hidden = true;
       var start = startInput.value;
       var end = endInput.value;
       var reason = reasonInput.value.trim();
-      if (!selectedUnits.ids.length) {
-        toast.show({ type: 'info', message: 'Seleciona pelo menos uma unidade.' });
-        return;
-      }
+      var unitId = modal.dataset.unitId;
+      if (!unitId) return;
       var valid = true;
       if (!start) {
         setFieldError(startInput.closest('[data-field]'), 'Seleciona a data inicial.');
@@ -584,6 +513,7 @@
       }
       if (!valid) return;
 
+      var unitLabel = modal.dataset.unitName || 'unidade';
       var confirmEndExclusive = end;
       var endForConfirm = new Date(end + 'T00:00:00');
       if (Number.isFinite(endForConfirm.getTime())) {
@@ -591,23 +521,18 @@
         confirmEndExclusive = endForConfirm.toISOString().slice(0, 10);
       }
       var confirmRange = formatDateRangeLabel(start, confirmEndExclusive);
-      var labelPreview = selectedUnits.labels.length === 1
-        ? selectedUnits.labels[0]
-        : selectedUnits.ids.length + ' unidades';
-      var confirmationMessage = 'Confirmas o bloqueio de ' + labelPreview + ' entre ' + confirmRange + '?';
+      var confirmationMessage = 'Confirmas o bloqueio de ' + unitLabel + ' entre ' + confirmRange + '?';
       var confirmResult = typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(confirmationMessage) : true;
       if (!confirmResult) return;
 
       setBusy(true);
-      fetch('/admin/api/units/blocks/bulk', {
+      fetch('/admin/api/units/' + unitId + '/blocks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ unitIds: selectedUnits.ids, start: start, end: end, reason: reason })
+        body: JSON.stringify({ start: start, end: end, reason: reason })
       })
         .then(function (resp) {
-          if (!resp.ok) {
-            return resp.json().catch(function () { return {}; }).then(function (payload) { throw payload; });
-          }
+          if (!resp.ok) return resp.json().then(function (payload) { throw payload; });
           return resp.json();
         })
         .then(function (payload) {
@@ -626,32 +551,27 @@
           }
           var blockReason = typeof block.reason === 'string' ? block.reason : reason;
           var nightsCount = payload.summary && payload.summary.nights ? payload.summary.nights : null;
-          var successBase = selectedUnits.ids.length === 1
-            ? 'Bloqueio criado para ' + (selectedUnits.labels[0] || 'a unidade selecionada')
-            : 'Bloqueio criado para ' + selectedUnits.ids.length + ' unidades';
-          var successMessage = successBase + '.';
+          var successMessage = 'Bloqueio criado para ' + unitLabel + '.';
           if (Number.isFinite(nightsCount)) {
-            successMessage = successBase + ' durante ' + nightsCount + ' noite' + (nightsCount === 1 ? '' : 's') + '.';
+            successMessage =
+              'Bloqueio criado para ' + unitLabel + ' durante ' + nightsCount + ' noite' + (nightsCount === 1 ? '' : 's') + '.';
           }
           toast.show({ type: 'success', message: successMessage });
-          updateBadges(selectedUnits.ids, blockStart, blockEnd, blockReason);
-          successHandlers.forEach(function (handler) {
-            try {
-              handler(selectedUnits.ids.slice());
-            } catch (err) {}
-          });
+          updateBadges(unitId, blockStart, blockEnd, blockReason);
           closeModal();
         })
         .catch(function (err) {
-          var message = (err && err.error) || 'Não foi possível bloquear as unidades.';
+          var message = (err && err.error) || 'Não foi possível bloquear a unidade.';
           if (err && err.details) message = err.details;
-          if (conflictEl && err && err.error && typeof err.error === 'string' && err.error.toLowerCase().includes('reserva')) {
-            conflictEl.textContent = err.error;
-            conflictEl.hidden = false;
-            conflictEl.setAttribute('tabindex', '-1');
-            setTimeout(function () {
-              try { conflictEl.focus(); } catch (focusErr) {}
-            }, 40);
+          if (err && err.error && err.error.includes('reservas')) {
+            if (conflictEl) {
+              conflictEl.textContent = err.error;
+              conflictEl.hidden = false;
+              conflictEl.setAttribute('tabindex', '-1');
+              setTimeout(function () {
+                try { conflictEl.focus(); } catch (focusErr) {}
+              }, 40);
+            }
           } else {
             toast.show({ type: 'error', message: message });
           }
@@ -676,105 +596,12 @@
 
     form.addEventListener('submit', submitBlock);
 
-    return {
-      open: openModal,
-      onSuccess: function (handler) {
-        if (typeof handler === 'function') successHandlers.push(handler);
-      }
-    };
-  }
-
-  function setupUnitBlockSelection(modalController, toast) {
-    if (!modalController) return;
-    var table = document.querySelector('[data-unit-selection]');
-    var checkboxes = Array.from(document.querySelectorAll('[data-unit-select]'));
-    var openButton = document.querySelector('[data-block-open]');
-    var summaryEl = document.querySelector('[data-block-summary]');
-    var clearButton = document.querySelector('[data-block-clear]');
-    var selectAll = document.querySelector('[data-block-select-all]');
-    if (!table || !openButton || !checkboxes.length) return;
-
-    function selectedCheckboxes() {
-      return checkboxes.filter(function (checkbox) { return checkbox.checked; });
-    }
-
-    function updateSummary() {
-      var selected = selectedCheckboxes();
-      if (summaryEl) {
-        if (selected.length === 0) {
-          summaryEl.textContent = 'Seleciona unidades para bloquear.';
-        } else if (selected.length === 1) {
-          summaryEl.textContent = '1 unidade selecionada.';
-        } else {
-          summaryEl.textContent = selected.length + ' unidades selecionadas.';
-        }
-      }
-      openButton.disabled = selected.length === 0;
-      if (clearButton) clearButton.hidden = selected.length === 0;
-      if (selectAll) {
-        var allChecked = selected.length === checkboxes.length && checkboxes.length > 0;
-        selectAll.checked = allChecked;
-        selectAll.indeterminate = selected.length > 0 && selected.length < checkboxes.length;
-      }
-    }
-
-    checkboxes.forEach(function (checkbox) {
-      checkbox.addEventListener('change', updateSummary);
-    });
-
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        var checked = !!selectAll.checked;
-        checkboxes.forEach(function (checkbox) {
-          checkbox.checked = checked;
-        });
-        updateSummary();
-      });
-    }
-
-    if (clearButton) {
-      clearButton.addEventListener('click', function (event) {
+    document.querySelectorAll('[data-block-unit]').forEach(function (button) {
+      button.addEventListener('click', function (event) {
         event.preventDefault();
-        checkboxes.forEach(function (checkbox) {
-          checkbox.checked = false;
-        });
-        updateSummary();
+        openModal(button);
       });
-    }
-
-    openButton.addEventListener('click', function (event) {
-      event.preventDefault();
-      var selected = selectedCheckboxes();
-      if (!selected.length) {
-        toast.show({ type: 'info', message: 'Seleciona pelo menos uma unidade.' });
-        return;
-      }
-      var ids = selected
-        .map(function (checkbox) { return Number(checkbox.value || checkbox.getAttribute('value')); })
-        .filter(function (id) { return Number.isInteger(id) && id > 0; });
-      if (!ids.length) {
-        toast.show({ type: 'error', message: 'Falha ao identificar as unidades selecionadas.' });
-        return;
-      }
-      var labels = selected.map(function (checkbox) {
-        return checkbox.getAttribute('data-unit-label') || ('Unidade #' + (checkbox.value || ''));
-      });
-      modalController.open({ unitIds: ids, labels: labels, trigger: openButton });
     });
-
-    modalController.onSuccess(function (unitIds) {
-      if (!Array.isArray(unitIds)) return;
-      var idSet = new Set(unitIds.map(function (id) { return Number(id); }));
-      checkboxes.forEach(function (checkbox) {
-        var id = Number(checkbox.value || checkbox.getAttribute('value'));
-        if (idSet.has(id)) {
-          checkbox.checked = false;
-        }
-      });
-      updateSummary();
-    });
-
-    updateSummary();
   }
 
   function setupReviews(toast) {
@@ -1229,8 +1056,7 @@
     var toast = createToastManager();
     initKpiCard(config, toast);
     setupRatesModule(config, toast);
-    var blockModal = setupBlockModal(config, toast);
-    setupUnitBlockSelection(blockModal, toast);
+    setupBlockModal(config, toast);
     setupReviews(toast);
     setupWeeklyExport(config, toast);
   });

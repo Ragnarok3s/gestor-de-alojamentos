@@ -215,7 +215,6 @@ module.exports = function registerBackoffice(app, context) {
   const scriptsDir = path.join(__dirname, 'scripts');
   const featureBuilderSource = fs.readFileSync(path.join(scriptsDir, 'feature-builder-runtime.js'), 'utf8');
   const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
-  const sidebarNavigationSource = fs.readFileSync(path.join(scriptsDir, 'sidebar-navigation.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
   const uxEnhancementsSource = fs.readFileSync(path.join(scriptsDir, 'ux-enhancements.js'), 'utf8');
@@ -223,7 +222,6 @@ module.exports = function registerBackoffice(app, context) {
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
   );
-  const sidebarNavigationScript = inlineScript(sidebarNavigationSource);
   const galleryManagerScript = inlineScript(galleryManagerSource);
   const revenueDashboardScript = inlineScript(revenueDashboardSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
@@ -2218,7 +2216,7 @@ module.exports = function registerBackoffice(app, context) {
             const summary = channel.last_summary || null;
             const summaryBadges = summary
               ? `
-                <div class="bo-channel-card__chips">
+                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
                   <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
                   ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
                   ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
@@ -2313,22 +2311,22 @@ module.exports = function registerBackoffice(app, context) {
                 </div>`
               : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
             return `
-              <article class="bo-channel-card">
-                <header class="bo-channel-card__header">
-                  <div class="bo-channel-card__intro">
-                    <h3 class="bo-channel-card__title">${esc(channel.name)}</h3>
-                    ${channel.description ? `<p class="bo-channel-card__summary">${esc(channel.description)}</p>` : ''}
-                    <p class="bo-channel-card__sync">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
-                    ${channel.last_error ? `<p class="text-xs text-rose-600">${esc(channel.last_error)}</p>` : ''}
+              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
+                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
+                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
+                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
+                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
                     ${summaryBadges}
                   </div>
-                  <div class="bo-channel-card__badges">
+                  <div class="flex flex-wrap gap-2">
                     <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
                     ${manualBadge}
                     ${attentionBadge}
                   </div>
                 </header>
-                <div class="bo-channel-card__grid">
+                <div class="bo-channel-card-grid grid gap-4 lg:grid-cols-2">
                   ${autoForm}
                   ${infoPanel}
                 </div>
@@ -2485,15 +2483,11 @@ module.exports = function registerBackoffice(app, context) {
         const classes = ['bo-tab'];
         if (item.id === 'channel-manager') classes.push('bo-tab--compact');
         if (item.id === defaultPane) classes.push('is-active');
-        const label = esc(item.label);
-        const disabledAttr = item.allowed
-          ? ''
-          : ' disabled data-disabled="true" aria-disabled="true" title="Sem permissões"';
-        const tooltipAttr = item.allowed ? ` data-tooltip="${label}"` : '';
+        const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
         const iconMarkup = item.iconSvg
-          ? `<span class="bo-tab__icon" aria-hidden="true">${item.iconSvg}</span>`
-          : `<span class="bo-tab__icon" aria-hidden="true"><i data-lucide="${item.icon}" class="w-5 h-5"></i></span>`;
-        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}" aria-label="${label}"${disabledAttr}${tooltipAttr}>${iconMarkup}<span class="bo-tab__label">${label}</span></button>`;
+          ? item.iconSvg
+          : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
+        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}>${iconMarkup}<span>${esc(item.label)}</span></button>`;
       })
       .join('');
 
@@ -2533,8 +2527,6 @@ module.exports = function registerBackoffice(app, context) {
                 return `${dayjs(block.start_date).format('DD/MM')}–${endDisplay}`;
               })
               .join(', ');
-            const unitLabelRaw = [u.property_name, u.name].filter(Boolean).join(' · ') || `Unidade #${u.id}`;
-            const unitLabelEsc = esc(unitLabelRaw);
             const blockTitle = blocks.length
               ? esc(`Bloqueado ${blockSummaries}${blocks[0].reason ? ` · ${blocks[0].reason}` : ''}`)
               : '';
@@ -2542,35 +2534,26 @@ module.exports = function registerBackoffice(app, context) {
               ? `<span class="bo-status-badge bo-status-badge--warning" data-block-badge="${u.id}" title="${blockTitle}">Bloqueado</span>`
               : `<span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
             return `
-              <tr data-unit-row="${u.id}" data-unit-label="${unitLabelEsc}">
-                <td data-label="Selecionar" class="bo-table__select">
-                  <label class="sr-only" for="unit-select-${u.id}">Selecionar ${unitLabelEsc}</label>
-                  <input
-                    type="checkbox"
-                    id="unit-select-${u.id}"
-                    class="bo-checkbox"
-                    data-unit-select
-                    value="${u.id}"
-                    data-unit-label="${unitLabelEsc}"
-                    aria-label="Selecionar ${unitLabelEsc}"
-                  />
-                </td>
-                <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name || '—')}</span></td>
+              <tr data-unit-row="${u.id}">
+                <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
                 <td data-label="Unidade">
-                  <span class="table-cell-value">${esc(u.name || `Unidade #${u.id}`)}</span>
+                  <span class="table-cell-value">${esc(u.name)}</span>
                   ${blockBadge}
                 </td>
                 <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
                 <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
                 <td data-label="Ações">
                   <div class="table-cell-actions" data-unit-actions>
+                    <button type="button" class="btn btn-light btn-compact" data-block-unit="${u.id}" data-unit-name="${esc(
+              u.property_name + ' · ' + u.name
+            )}">Bloquear unidade</button>
                     <a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a>
                   </div>
                 </td>
               </tr>`;
           })
           .join('')
-      : '<tr><td colspan="6" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
+      : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
 
     const propertiesRevenueTable = propertyRevenueRows.length
       ? propertyRevenueRows
@@ -3392,44 +3375,12 @@ module.exports = function registerBackoffice(app, context) {
         notifications,
         pageClass: 'page-backoffice',
         body: html`
-          <div class="bo-shell" data-bo-shell data-sidebar-collapsed="0" data-sidebar-mode="desktop" data-sidebar-open="0">
-            <aside
-              class="bo-sidebar"
-              id="bo-sidebar"
-              data-bo-sidebar
-              data-sidebar
-              role="complementary"
-              aria-label="Menu principal do backoffice"
-            >
-              <div class="bo-sidebar__header">
-                <div class="bo-sidebar__title">Menu principal</div>
-                <button
-                  type="button"
-                  class="bo-sidebar__collapse"
-                  data-sidebar-collapse
-                  aria-controls="bo-sidebar-nav"
-                  aria-expanded="true"
-                >
-                  <span class="sr-only">Alternar largura do menu</span>
-                  <i data-lucide="chevron-left" aria-hidden="true"></i>
-                </button>
-              </div>
-              <nav class="bo-nav" id="bo-sidebar-nav" data-bo-nav role="navigation" aria-label="Menu principal">
-                ${navButtonsHtml}
-              </nav>
+          <div class="bo-shell">
+            <aside class="bo-sidebar">
+              <div class="bo-sidebar__title">Menu principal</div>
+              <div class="bo-nav">${navButtonsHtml}</div>
             </aside>
-            <div class="bo-sidebar-overlay" data-sidebar-overlay hidden></div>
             <div class="bo-main">
-              <button
-                type="button"
-                class="bo-sidebar-trigger"
-                data-sidebar-trigger
-                aria-controls="bo-sidebar"
-                aria-expanded="false"
-              >
-                <span class="bo-sidebar-trigger__icon" aria-hidden="true"><i data-lucide="menu"></i></span>
-                <span class="bo-sidebar-trigger__label">Menu</span>
-              </button>
               <header class="bo-header">
                 <h1>Gestor Operacional</h1>
                 <p>Todos os dados essenciais de gestão em formato compacto.</p>
@@ -3535,35 +3486,15 @@ module.exports = function registerBackoffice(app, context) {
 
                 <div class="bo-card">
                   <h2>Unidades</h2>
-                  <div class="bo-table responsive-table" data-unit-selection>
+                  <div class="bo-table responsive-table">
                     <table class="w-full text-sm">
                       <thead>
                         <tr class="text-left text-slate-500">
-                          <th scope="col" class="bo-table__select">
-                            <label class="sr-only" for="unit-select-all">Selecionar todas</label>
-                            <input
-                              type="checkbox"
-                              id="unit-select-all"
-                              data-block-select-all
-                              aria-label="Selecionar todas as unidades"
-                            />
-                          </th>
-                          <th scope="col">Propriedade</th>
-                          <th scope="col">Unidade</th>
-                          <th scope="col">Cap.</th>
-                          <th scope="col">Base €/noite</th>
-                          <th scope="col"></th>
+                          <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
                         </tr>
                       </thead>
                       <tbody>${unitsTableRows}</tbody>
                     </table>
-                  </div>
-                  <div class="bo-block-toolbar" data-block-toolbar>
-                    <div class="bo-block-toolbar__info">
-                      <span data-block-summary role="status" aria-live="polite">Seleciona unidades para bloquear.</span>
-                      <button type="button" class="bo-block-clear" data-block-clear hidden>Limpar seleção</button>
-                    </div>
-                    <button type="button" class="btn btn-primary" data-block-open disabled>Bloquear unidades</button>
                   </div>
                   <hr class="my-4" />
                   <h3 class="bo-section-title">Adicionar unidade</h3>
@@ -3965,10 +3896,6 @@ module.exports = function registerBackoffice(app, context) {
                 <button type="button" class="bo-modal__close" data-block-dismiss aria-label="Fechar">×</button>
               </header>
               <form class="bo-modal__body space-y-3" data-block-form novalidate>
-                <div class="bo-block-selection" data-block-selection hidden>
-                  <p class="bo-block-selection__hint" data-block-selection-hint></p>
-                  <ul class="bo-block-selection__list" data-block-selection-list></ul>
-                </div>
                 <p class="text-sm text-slate-600">Seleciona o intervalo e descreve o motivo visível para a equipa.</p>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label class="form-field" data-field>
@@ -4002,7 +3929,6 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
-          <script>${sidebarNavigationScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
