@@ -4382,7 +4382,44 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
     iconWrapClass: 'inline-flex items-center justify-center text-emerald-700'
   });
   const bookings = db.prepare('SELECT * FROM bookings WHERE unit_id = ? ORDER BY checkin').all(u.id);
-  const blocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
+  const legacyBlocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
+  const modernBlocks = db
+    .prepare('SELECT id, start_date, end_date, reason FROM unit_blocks WHERE unit_id = ? ORDER BY start_date')
+    .all(u.id);
+  const blockEntries = modernBlocks
+    .map(block => {
+      const startDate = dayjs(block.start_date);
+      const endDate = dayjs(block.end_date);
+      return {
+        id: block.id,
+        start: block.start_date,
+        endExclusive: block.end_date,
+        startLabel: startDate.isValid() ? startDate.format('DD/MM/YYYY') : block.start_date,
+        endLabel: endDate.isValid()
+          ? endDate.subtract(1, 'day').format('DD/MM/YYYY')
+          : block.end_date,
+        reason: block.reason || '',
+        source: 'modern'
+      };
+    })
+    .concat(
+      legacyBlocks.map(block => {
+        const startDate = dayjs(block.start_date);
+        const endDate = dayjs(block.end_date);
+        return {
+          id: block.id,
+          start: block.start_date,
+          endExclusive: endDate.isValid()
+            ? endDate.add(1, 'day').format('YYYY-MM-DD')
+            : block.end_date,
+          startLabel: startDate.isValid() ? startDate.format('DD/MM/YYYY') : block.start_date,
+          endLabel: endDate.isValid() ? endDate.format('DD/MM/YYYY') : block.end_date,
+          reason: '',
+          source: 'legacy'
+        };
+      })
+    )
+    .sort((a, b) => a.start.localeCompare(b.start));
   const rates = db.prepare('SELECT * FROM rates WHERE unit_id = ? ORDER BY start_date').all(u.id);
   const images = db.prepare(
     'SELECT * FROM unit_images WHERE unit_id = ? ORDER BY is_primary DESC, position, id'
@@ -4466,14 +4503,23 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
             </form>
           </div>
 
-          ${blocks.length ? `
+          ${blockEntries.length ? `
             <div class="mt-6">
               <h3 class="font-semibold mb-2">Bloqueios ativos</h3>
               <ul class="space-y-2">
-                ${blocks.map(block => `
+                ${blockEntries.map(block => `
                   <li class="flex items-center justify-between text-sm">
-                    <span>${dayjs(block.start_date).format('DD/MM/YYYY')} &rarr; ${dayjs(block.end_date).format('DD/MM/YYYY')}</span>
-                    <form method="post" action="/admin/blocks/${block.id}/delete" onsubmit="return confirm('Desbloquear estas datas?');">
+                    <span>
+                      ${esc(block.startLabel)} &rarr; ${esc(block.endLabel)}
+                      ${block.reason
+                        ? `<span class="ml-2 text-xs text-slate-500" title="${esc(block.reason)}">${esc(block.reason)}</span>`
+                        : ''}
+                    </span>
+                    <form method="post" action="${
+                      block.source === 'modern'
+                        ? `/admin/unit-blocks/${block.id}/delete`
+                        : `/admin/blocks/${block.id}/delete`
+                    }" onsubmit="return confirm('Desbloquear estas datas?');">
                       <button class="text-rose-600">Desbloquear</button>
                     </form>
                   </li>
@@ -4629,6 +4675,28 @@ app.post('/admin/blocks/:blockId/delete', requireLogin, requirePermission('calen
     start_date: block.start_date,
     end_date: block.end_date
   }, null);
+  res.redirect(`/admin/units/${block.unit_id}`);
+});
+
+app.post('/admin/unit-blocks/:blockId/delete', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
+  const blockId = Number(req.params.blockId);
+  const block = db
+    .prepare('SELECT id, unit_id, start_date, end_date, reason FROM unit_blocks WHERE id = ?')
+    .get(blockId);
+  if (!block) {
+    if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
+    return res.status(404).send('Bloqueio não encontrado');
+  }
+  db.prepare('DELETE FROM unit_blocks WHERE id = ?').run(blockId);
+  if (req.user && req.user.id) {
+    logActivity(req.user.id, 'unit_block_deleted', 'unit', block.unit_id, {
+      blockId,
+      start: block.start_date,
+      end: block.end_date,
+      hadReason: !!(block.reason && String(block.reason).trim())
+    });
+  }
+  if (wantsJson(req)) return res.json({ ok: true, unit_id: block.unit_id });
   res.redirect(`/admin/units/${block.unit_id}`);
 });
 
