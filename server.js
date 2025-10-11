@@ -1606,6 +1606,138 @@ const channelIntegrations = createChannelIntegrationService({
 });
 const telemetry = createTelemetry({ logger: console });
 
+function extractWebhookSecret(req) {
+  const headerKeys = [
+    'x-ota-signature',
+    'x-ota-secret',
+    'x-hook-signature',
+    'x-hook-secret',
+    'x-channel-signature',
+    'x-channel-secret'
+  ];
+  for (const key of headerKeys) {
+    const value = req.headers && req.headers[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  const authHeader = req.headers && req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.trim()) {
+    const trimmed = authHeader.trim();
+    if (trimmed.toLowerCase().startsWith('bearer ')) {
+      return trimmed.slice(7).trim();
+    }
+    return trimmed;
+  }
+  if (req.body && typeof req.body === 'object') {
+    for (const key of ['signature', 'secret', 'token']) {
+      const value = req.body[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+  }
+  return null;
+}
+
+function sanitizeWebhookPayload(input, depth = 0) {
+  if (input == null) return input;
+  if (Array.isArray(input)) {
+    return input.map(item => sanitizeWebhookPayload(item, depth + 1));
+  }
+  if (typeof input !== 'object') return input;
+  const sanitized = {};
+  const forbidden = ['signature', 'secret', 'token', 'auth', 'authorization'];
+  for (const [key, value] of Object.entries(input)) {
+    if (depth === 0 && forbidden.includes(String(key).toLowerCase())) {
+      continue;
+    }
+    sanitized[key] = sanitizeWebhookPayload(value, depth + 1);
+  }
+  return sanitized;
+}
+
+app.post('/api/webhooks/ota/:channelKey', async (req, res) => {
+  const channelKey = String(req.params.channelKey || '').trim();
+  if (!channelKey) {
+    return res.status(404).json({ ok: false, error: 'Canal desconhecido' });
+  }
+
+  const integration = channelIntegrations.getIntegration(channelKey);
+  if (!integration) {
+    return res.status(404).json({ ok: false, error: 'Canal desconhecido' });
+  }
+
+  const secretCandidates = [];
+  const credentials = integration.credentials || {};
+  const settings = integration.settings || {};
+  const envKey = `OTA_${channelKey.toUpperCase()}_WEBHOOK_SECRET`;
+  [
+    credentials.webhookSecret,
+    credentials.webhookToken,
+    credentials.token,
+    settings.webhookSecret,
+    settings.webhookToken,
+    process.env[envKey],
+    process.env.OTA_WEBHOOK_SECRET
+  ]
+    .filter(value => typeof value === 'string' && value.trim())
+    .forEach(value => secretCandidates.push(value.trim()));
+
+  if (secretCandidates.length) {
+    const provided = extractWebhookSecret(req);
+    if (!provided || !secretCandidates.includes(provided)) {
+      telemetry.emit('ota.webhook', {
+        success: false,
+        meta: { channelKey, reason: 'invalid-signature' }
+      });
+      return res.status(401).json({ ok: false, error: 'Assinatura inválida' });
+    }
+  }
+
+  const payload = sanitizeWebhookPayload(req.body || {});
+  const label =
+    (typeof req.headers['x-ota-event'] === 'string' && req.headers['x-ota-event']) ||
+    (payload && typeof payload === 'object' && (payload.event || payload.type)) ||
+    null;
+
+  try {
+    const result = await channelIntegrations.ingestWebhookPayload({
+      channelKey,
+      payload,
+      source: 'webhook',
+      uploadedBy: null,
+      label: label || undefined
+    });
+    const summary = {
+      inserted: result.summary?.insertedCount || 0,
+      duplicates: result.summary?.duplicateCount || 0,
+      conflicts: result.summary?.conflictCount || 0,
+      unmatched: result.summary?.unmatchedCount || 0,
+      errors: result.summary?.errorCount || 0
+    };
+    telemetry.emit('ota.webhook', {
+      success: true,
+      meta: { channelKey, status: result.status, ...summary }
+    });
+    if (result.status !== 'ignored') {
+      logActivity(null, 'channel.webhook.ingest', 'channel', channelKey, summary);
+    }
+    const responseBody = { ok: true, status: result.status, summary };
+    if (result.status === 'ignored') {
+      return res.status(202).json(responseBody);
+    }
+    return res.json(responseBody);
+  } catch (err) {
+    console.error('Webhook OTA falhou:', err.message);
+    telemetry.emit('ota.webhook', {
+      success: false,
+      meta: { channelKey, error: err.message || String(err) }
+    });
+    return res.status(500).json({ ok: false, error: 'Falha ao processar webhook' });
+  }
+});
+
 const automationActionDrivers = {
   email: emailAction,
   notify: notifyAction,

@@ -574,8 +574,12 @@ function createChannelIntegrationService({
   function normalizeRecord(record, channelKey, definition, dayjs) {
     const checkin = normalizeDate(dayjs, record.checkin || record.arrival || record.start_date);
     const checkout = normalizeDate(dayjs, record.checkout || record.departure || record.end_date);
+    const rawPayload =
+      record && typeof record === 'object'
+        ? record.raw || record.rawRow || record
+        : record;
     return {
-      raw: record,
+      raw: rawPayload,
       channelKey,
       externalRef: normalizeString(record.externalRef || record.reference || record.booking_reference),
       guestName: normalizeWhitespace(record.guestName || record.guest || record.name),
@@ -635,6 +639,488 @@ function createChannelIntegrationService({
       definition,
       dayjs
     );
+  }
+
+  function normalizeLookupKey(key) {
+    return String(key == null ? '' : key)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  function accessNormalizedProperty(obj, path) {
+    if (!obj || typeof obj !== 'object') return undefined;
+    const segments = String(path || '')
+      .split('.')
+      .map(seg => seg.trim())
+      .filter(Boolean);
+    let current = obj;
+    for (const segment of segments) {
+      if (current == null) return undefined;
+      if (Array.isArray(current)) {
+        const index = Number.parseInt(segment, 10);
+        if (Number.isNaN(index) || index < 0 || index >= current.length) {
+          return undefined;
+        }
+        current = current[index];
+        continue;
+      }
+      if (typeof current !== 'object') {
+        return undefined;
+      }
+      if (Object.prototype.hasOwnProperty.call(current, segment)) {
+        current = current[segment];
+        continue;
+      }
+      const normalizedSegment = normalizeLookupKey(segment);
+      let matched;
+      for (const key of Object.keys(current)) {
+        if (normalizeLookupKey(key) === normalizedSegment) {
+          matched = current[key];
+          break;
+        }
+      }
+      if (matched === undefined) {
+        return undefined;
+      }
+      current = matched;
+    }
+    return current;
+  }
+
+  function deepSearchForKey(obj, normalizedKeys) {
+    if (!obj || typeof obj !== 'object') return undefined;
+    const queue = [obj];
+    const visited = new Set();
+    while (queue.length) {
+      const current = queue.shift();
+      if (!current || typeof current !== 'object') continue;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const [key, value] of Object.entries(current)) {
+        const normalized = normalizeLookupKey(key);
+        if (normalizedKeys.includes(normalized) && value != null && value !== '') {
+          return value;
+        }
+        if (typeof value === 'object') {
+          queue.push(value);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function findCandidateValueFromSources(sources, keys) {
+    if (!Array.isArray(keys) || !keys.length) return undefined;
+    const normalizedKeys = keys.map(normalizeLookupKey);
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') continue;
+      for (const key of keys) {
+        const value = accessNormalizedProperty(source, key);
+        if (value !== undefined && value !== null && value !== '') {
+          return value;
+        }
+      }
+      const fallback = deepSearchForKey(source, normalizedKeys);
+      if (fallback !== undefined && fallback !== null && fallback !== '') {
+        return fallback;
+      }
+    }
+    return undefined;
+  }
+
+  function unwrapWebhookObject(entry) {
+    if (!entry || typeof entry !== 'object') return entry;
+    const visited = new Set();
+    let current = entry;
+    while (current && typeof current === 'object' && !visited.has(current)) {
+      visited.add(current);
+      if (current.reservation && typeof current.reservation === 'object') {
+        current = current.reservation;
+        continue;
+      }
+      if (current.booking && typeof current.booking === 'object') {
+        current = current.booking;
+        continue;
+      }
+      if (current.payload && typeof current.payload === 'object') {
+        current = current.payload;
+        continue;
+      }
+      if (current.data && typeof current.data === 'object') {
+        current = current.data;
+        continue;
+      }
+      if (current.object && typeof current.object === 'object') {
+        current = current.object;
+        continue;
+      }
+      if (current.event && typeof current.event === 'object') {
+        current = current.event;
+        continue;
+      }
+      if (current.notification && typeof current.notification === 'object') {
+        current = current.notification;
+        continue;
+      }
+      if (current.message && typeof current.message === 'object') {
+        current = current.message;
+        continue;
+      }
+      break;
+    }
+    return current;
+  }
+
+  function coerceNameFromObject(value) {
+    if (!value || typeof value !== 'object') return '';
+    const direct = findCandidateValueFromSources([value], ['full_name', 'fullname', 'name']);
+    if (direct) return String(direct);
+    const first = findCandidateValueFromSources([value], ['first_name', 'firstname', 'given_name', 'first']);
+    const middle = findCandidateValueFromSources([value], ['middle_name', 'middlename', 'middle']);
+    const last = findCandidateValueFromSources([value], ['last_name', 'lastname', 'family_name', 'surname', 'last']);
+    return [first, middle, last]
+      .filter(part => part != null && part !== '')
+      .map(part => String(part))
+      .join(' ')
+      .trim();
+  }
+
+  function coerceEmailValue(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim().toLowerCase();
+    if (typeof value === 'object') {
+      const found = findCandidateValueFromSources([value], ['email', 'address', 'value']);
+      return found ? String(found).trim().toLowerCase() : '';
+    }
+    return '';
+  }
+
+  function coercePhoneValue(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'object') {
+      const country = findCandidateValueFromSources([value], ['country_code', 'countryCode', 'dial_code']);
+      const number = findCandidateValueFromSources([value], ['number', 'phone', 'value']);
+      return [country, number]
+        .filter(part => part != null && part !== '')
+        .map(part => String(part).trim())
+        .join(' ')
+        .trim();
+    }
+    return '';
+  }
+
+  function coerceDateValue(dayjs, value) {
+    if (!value) return null;
+    if (value instanceof Date) return dayjs(value).format('YYYY-MM-DD');
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const timestamp = value > 1e12 ? value : value * 1000;
+      return dayjs(timestamp).format('YYYY-MM-DD');
+    }
+    if (typeof value === 'string') return value;
+    return null;
+  }
+
+  function collectWebhookEntries(payload, bucket) {
+    if (Array.isArray(payload)) {
+      payload.forEach(item => collectWebhookEntries(item, bucket));
+      return;
+    }
+    if (!payload || typeof payload !== 'object') return;
+    const arrays = [
+      payload.reservations,
+      payload.bookings,
+      payload.events,
+      payload.items,
+      payload.records,
+      payload.notifications,
+      payload.payloads
+    ];
+    let nested = false;
+    for (const arr of arrays) {
+      if (Array.isArray(arr)) {
+        nested = true;
+        arr.forEach(item => collectWebhookEntries(item, bucket));
+      }
+    }
+    if (payload.data && typeof payload.data === 'object') {
+      nested = true;
+      collectWebhookEntries(payload.data, bucket);
+    }
+    if (!nested) {
+      bucket.push(payload);
+    }
+  }
+
+  function parseWebhookRecords({ channelKey, payload, dayjs }) {
+    const definition = getChannelDefinition(channelKey);
+    const entries = [];
+    collectWebhookEntries(payload, entries);
+    if (!entries.length && payload && typeof payload === 'object') {
+      entries.push(payload);
+    }
+
+    const records = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const base = unwrapWebhookObject(entry);
+      const sources = [];
+      if (base && base !== entry) sources.push(base);
+      sources.push(entry);
+
+      let guestName = '';
+      const guestNameRaw = findCandidateValueFromSources(sources, [
+        'guest.name',
+        'guest.full_name',
+        'guestName',
+        'guest_full_name',
+        'lead_guest',
+        'leadGuest',
+        'customer.name',
+        'contact.name',
+        'traveller.name',
+        'guest.first_name'
+      ]);
+      if (typeof guestNameRaw === 'object') {
+        guestName = coerceNameFromObject(guestNameRaw);
+      } else if (guestNameRaw != null) {
+        guestName = String(guestNameRaw);
+      }
+      if (!guestName) {
+        const guestObject = findCandidateValueFromSources(sources, ['guest', 'leadGuest', 'customer', 'contact']);
+        guestName = coerceNameFromObject(guestObject);
+      }
+
+      const guestEmail = coerceEmailValue(
+        findCandidateValueFromSources(sources, [
+          'guest.email',
+          'guestEmail',
+          'guest.contact.email',
+          'customer.email',
+          'contact.email',
+          'leadGuest.email'
+        ])
+      );
+      const guestPhone = coercePhoneValue(
+        findCandidateValueFromSources(sources, [
+          'guest.phone',
+          'guest.phone_number',
+          'guest.phoneNumber',
+          'guest.contact.phone',
+          'contact.phone',
+          'customer.phone',
+          'phone'
+        ])
+      );
+
+      let propertyName = findCandidateValueFromSources(sources, [
+        'property.name',
+        'property',
+        'hotel.name',
+        'hotel',
+        'listing.property',
+        'stay.property'
+      ]);
+      if (propertyName && typeof propertyName === 'object') {
+        propertyName =
+          findCandidateValueFromSources([propertyName], ['name', 'label', 'title']) || '';
+      }
+      propertyName = propertyName != null ? String(propertyName) : '';
+
+      let unitName = findCandidateValueFromSources(sources, [
+        'unit.name',
+        'unit',
+        'room.name',
+        'room',
+        'accommodation.name',
+        'listing.name',
+        'inventory.name',
+        'accommodation'
+      ]);
+      if (unitName && typeof unitName === 'object') {
+        unitName = findCandidateValueFromSources([unitName], ['name', 'label', 'title']) || '';
+      }
+      unitName = unitName != null ? String(unitName) : '';
+
+      const checkinRaw = findCandidateValueFromSources(sources, [
+        'stay.check_in',
+        'stay.checkIn',
+        'stay.arrival',
+        'stay.start',
+        'check_in',
+        'checkin',
+        'arrival',
+        'start_date',
+        'start',
+        'dates.checkin',
+        'dates.arrival'
+      ]);
+      const checkoutRaw = findCandidateValueFromSources(sources, [
+        'stay.check_out',
+        'stay.checkOut',
+        'stay.departure',
+        'stay.end',
+        'check_out',
+        'checkout',
+        'departure',
+        'end_date',
+        'end',
+        'dates.checkout',
+        'dates.departure'
+      ]);
+      const checkin = coerceDateValue(dayjs, checkinRaw);
+      const checkout = coerceDateValue(dayjs, checkoutRaw);
+
+      const adultsRaw = findCandidateValueFromSources(sources, [
+        'guests.adults',
+        'occupancy.adults',
+        'party.adults',
+        'adults',
+        'pax.adults'
+      ]);
+      const childrenRaw = findCandidateValueFromSources(sources, [
+        'guests.children',
+        'occupancy.children',
+        'party.children',
+        'children',
+        'pax.children'
+      ]);
+      const adults = Number.isFinite(Number(adultsRaw))
+        ? Number.parseInt(adultsRaw, 10)
+        : parseInteger(adultsRaw, 0);
+      const children = Number.isFinite(Number(childrenRaw))
+        ? Number.parseInt(childrenRaw, 10)
+        : parseInteger(childrenRaw, 0);
+
+      let externalRef = findCandidateValueFromSources(sources, [
+        'reference',
+        'reference_code',
+        'external_id',
+        'externalId',
+        'id',
+        'code',
+        'confirmation_number',
+        'booking_number',
+        'reservation_number',
+        'reservation_code'
+      ]);
+      if (externalRef && typeof externalRef === 'object') {
+        externalRef =
+          findCandidateValueFromSources([externalRef], ['id', 'code', 'reference']) || '';
+      }
+      externalRef = externalRef != null ? String(externalRef) : '';
+
+      let status = findCandidateValueFromSources(sources, [
+        'status',
+        'state',
+        'reservation_status',
+        'booking_status',
+        'bookingStatus'
+      ]);
+      if (!status) {
+        const eventHint = findCandidateValueFromSources([entry], ['event', 'event_type', 'type', 'action']);
+        if (eventHint) status = eventHint;
+      }
+      status = status != null ? String(status).trim() : '';
+      if (status) {
+        const normalizedStatus = status.toLowerCase();
+        if (normalizedStatus.includes('cancel')) {
+          status = 'CANCELLED';
+        } else if (normalizedStatus.includes('pend')) {
+          status = 'PENDING';
+        } else if (normalizedStatus.includes('confirm') || normalizedStatus.includes('book')) {
+          status = 'CONFIRMED';
+        } else if (normalizedStatus === 'booked') {
+          status = 'CONFIRMED';
+        } else if (normalizedStatus === 'cancelled') {
+          status = 'CANCELLED';
+        } else if (normalizedStatus === 'canceled') {
+          status = 'CANCELLED';
+        } else {
+          status = status.toUpperCase();
+        }
+      } else {
+        status = undefined;
+      }
+
+      let notes = findCandidateValueFromSources(sources, [
+        'notes',
+        'comments',
+        'message',
+        'remarks',
+        'special_requests',
+        'specialRequests'
+      ]);
+      if (notes && typeof notes === 'object') {
+        notes = findCandidateValueFromSources([notes], ['text', 'body', 'value']);
+      }
+      notes = notes != null ? String(notes) : '';
+
+      let total = findCandidateValueFromSources(sources, [
+        'total.amount',
+        'total_price',
+        'pricing.total',
+        'amount',
+        'gross_amount',
+        'payment.total',
+        'rate.total',
+        'price.total',
+        'price.amount',
+        'money.total',
+        'payout.total',
+        'financials.total'
+      ]);
+      let currency = findCandidateValueFromSources(sources, [
+        'total.currency',
+        'pricing.currency',
+        'currency',
+        'rate.currency',
+        'money.currency',
+        'financials.currency'
+      ]);
+      if (total && typeof total === 'object') {
+        currency = currency || findCandidateValueFromSources([total], ['currency', 'code', 'currency_code']);
+        total = findCandidateValueFromSources([total], ['amount', 'value', 'total', 'gross', 'net']);
+      }
+      let totalCents = 0;
+      const fallbackCurrency = currency || definition?.defaultCurrency || 'EUR';
+      if (typeof total === 'number' && Number.isFinite(total)) {
+        totalCents = Math.round(total * 100);
+      } else if (typeof total === 'string') {
+        const parsed = parseCurrencyValue(total, fallbackCurrency);
+        totalCents = parsed.cents;
+        currency = parsed.currency;
+      }
+      currency = currency || fallbackCurrency;
+
+      const normalized = normalizeRecord(
+        {
+          raw: entry,
+          propertyName,
+          unitName,
+          guestName,
+          guestEmail,
+          guestPhone,
+          checkin,
+          checkout,
+          adults,
+          children,
+          totalCents,
+          currency,
+          status,
+          notes,
+          externalRef
+        },
+        channelKey,
+        definition,
+        dayjs
+      );
+      if (normalized.checkin && normalized.checkout && normalized.guestName) {
+        records.push(normalized);
+      }
+    }
+
+    return records;
   }
 
   function parseIcsEvents(events, channelKey, definition, dayjs) {
@@ -915,6 +1401,95 @@ function createChannelIntegrationService({
     return { ...outcome, inserted, duplicates, conflicts, unmatched, errors };
   }
 
+  function buildEmptySummary(channelKey) {
+    return {
+      channelKey,
+      totalRecords: 0,
+      insertedCount: 0,
+      duplicateCount: 0,
+      conflictCount: 0,
+      unmatchedCount: 0,
+      errorCount: 0,
+      sample: {
+        inserted: [],
+        duplicates: [],
+        conflicts: [],
+        unmatched: [],
+        errors: []
+      }
+    };
+  }
+
+  async function ingestWebhookPayload({
+    channelKey,
+    payload,
+    uploadedBy,
+    source = 'webhook',
+    label
+  }) {
+    const integration = getIntegration(channelKey);
+    if (!integration) throw new Error('Canal desconhecido');
+    const settings = integration.settings || {};
+    const targetStatus = settings.defaultStatus === 'PENDING' ? 'PENDING' : 'CONFIRMED';
+    const records = parseWebhookRecords({ channelKey, payload, dayjs });
+    if (!records.length) {
+      const summary = buildEmptySummary(channelKey);
+      db.prepare(
+        `UPDATE channel_integrations
+            SET last_synced_at = datetime('now'),
+                last_status = 'ignored',
+                last_error = NULL,
+                last_summary_json = ?,
+                updated_at = datetime('now'),
+                updated_by = ?
+          WHERE channel_key = ?`
+      ).run(JSON.stringify(summary), uploadedBy || null, channelKey);
+      return {
+        batchId: null,
+        summary,
+        status: 'ignored',
+        inserted: [],
+        duplicates: [],
+        conflicts: [],
+        unmatched: [],
+        errors: []
+      };
+    }
+    try {
+      const result = await processRecords({
+        records,
+        channelKey,
+        source,
+        fileName: null,
+        originalName: label || source,
+        uploadedBy,
+        targetStatus
+      });
+      db.prepare(
+        `UPDATE channel_integrations
+            SET last_synced_at = datetime('now'),
+                last_status = ?,
+                last_error = NULL,
+                last_summary_json = ?,
+                updated_at = datetime('now'),
+                updated_by = ?
+          WHERE channel_key = ?`
+      ).run(result.status, JSON.stringify(result.summary), uploadedBy || null, channelKey);
+      return result;
+    } catch (err) {
+      db.prepare(
+        `UPDATE channel_integrations
+            SET last_synced_at = datetime('now'),
+                last_status = 'failed',
+                last_error = ?,
+                updated_at = datetime('now'),
+                updated_by = ?
+          WHERE channel_key = ?`
+      ).run(err.message, uploadedBy || null, channelKey);
+      throw err;
+    }
+  }
+
   async function importFromFile({ channelKey, filePath, originalName, uploadedBy, targetStatus }) {
     const buffer = await fs.promises.readFile(filePath);
     const format = determineFormatFromName(originalName || filePath);
@@ -1011,6 +1586,7 @@ function createChannelIntegrationService({
     getIntegration,
     saveIntegrationSettings,
     listRecentImports,
+    ingestWebhookPayload,
     importFromFile,
     autoSyncChannel,
     autoSyncAll

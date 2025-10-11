@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const dayjs = require('dayjs');
+const ExcelJS = require('exceljs');
 
 const { createDatabase } = require('../src/infra/database');
 const { createSessionService } = require('../src/services/session');
@@ -11,6 +12,7 @@ const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
 const { ConflictError } = require('../src/services/errors');
+const { createChannelIntegrationService } = require('../src/services/channel-integrations');
 
 function createMockRequest({ ip = '127.0.0.1', userAgent = 'jest/agent', body = {}, headers = {} } = {}) {
   return {
@@ -213,6 +215,62 @@ function testReportingService() {
   assert.equal(pdf.slice(0, 4).toString(), '%PDF', 'PDF gerado deve começar com assinatura PDF');
 }
 
+async function testOtaWebhookIngestion() {
+  const db = createDatabase(':memory:');
+  seedPropertyAndUnit(db);
+  const slugify = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+  const service = createChannelIntegrationService({
+    db,
+    dayjs,
+    slugify,
+    ExcelJS,
+    ensureDir: () => Promise.resolve(),
+    uploadsDir: '/tmp'
+  });
+
+  const payload = {
+    event: 'reservation.created',
+    reservation: {
+      id: 'OTA-123',
+      guest: {
+        first_name: 'Maria',
+        last_name: 'Silva',
+        email: 'maria@example.com',
+        phone: '+351999999'
+      },
+      stay: {
+        check_in: '2025-09-01',
+        check_out: '2025-09-04'
+      },
+      unit: { name: 'Douro Suite' },
+      property: { name: 'Casas de Pousadouro' },
+      pricing: { total: 345.67, currency: 'EUR' },
+      guests: { adults: 2, children: 1 },
+      notes: 'Chegada tardia'
+    }
+  };
+
+  const result = await service.ingestWebhookPayload({ channelKey: 'booking_com', payload });
+  assert.equal(result.summary.insertedCount, 1, 'webhook deve inserir reserva');
+
+  const stored = db
+    .prepare('SELECT guest_name, guest_email, status, external_ref FROM bookings WHERE source_channel = ?')
+    .get('booking_com');
+  assert.ok(stored, 'reserva deve existir na base de dados');
+  assert.equal(stored.guest_name.includes('Maria'), true, 'nome deve ser atribuído');
+  assert.equal(stored.status, 'CONFIRMED', 'status padrão deve ser confirmado');
+  assert.equal(stored.external_ref, 'OTA-123', 'referência externa deve ser guardada');
+
+  const ignored = await service.ingestWebhookPayload({ channelKey: 'booking_com', payload: { event: 'ping' } });
+  assert.equal(ignored.status, 'ignored', 'payload sem reservas deve ser ignorado');
+}
+
 function testChatbotParser() {
   const availabilityQuery = parseMessage(dayjs, '2 adultos 10 a 13 novembro');
   assert.equal(availabilityQuery.intent, 'availability', 'intenção deve mudar para disponibilidade quando dados existem');
@@ -233,7 +291,7 @@ function testChatbotParser() {
   assert.equal(withPreposition.checkin.month(), 11, 'mês de dezembro deve ser reconhecido');
 }
 
-function main() {
+async function main() {
   testSessionService();
   testCsrfProtection();
   testPricingService();
@@ -241,14 +299,13 @@ function main() {
   testUnitBlockService();
   testReviewService();
   testReportingService();
+  await testOtaWebhookIngestion();
   testChatbotParser();
   console.log('Todos os testes passaram.');
 }
 
-try {
-  main();
-} catch (err) {
+main().catch(err => {
   console.error(err);
   process.exit(1);
-}
+});
 
