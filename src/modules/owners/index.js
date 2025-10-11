@@ -409,19 +409,19 @@ module.exports = function registerOwnersPortal(app, context) {
                 </thead>
                 <tbody>
                   ${upcomingPreview
-                    .map(item => {
+                  .map(item => {
                       return `<tr>
-                        <td>${esc(item.checkinLabel)}</td>
-                        <td>${esc(item.propertyName)}</td>
-                        <td>${esc(item.unitName)}</td>
-                        <td>${esc(item.guestName || '—')}</td>
-                        <td>${integerFormatter.format(item.nights)}</td>
-                        <td>${esc(item.channelLabel)}</td>
-                        <td>€ ${eur(item.totalCents)}</td>
-                        <td>${buildStatusPill(item.status)}</td>
+                        <td data-label="Check-in">${esc(item.checkinLabel)}</td>
+                        <td data-label="Propriedade">${esc(item.propertyName)}</td>
+                        <td data-label="Unidade">${esc(item.unitName)}</td>
+                        <td data-label="Hóspede">${esc(item.guestName || '—')}</td>
+                        <td data-label="Noites">${integerFormatter.format(item.nights)}</td>
+                        <td data-label="Canal">${esc(item.channelLabel)}</td>
+                        <td data-label="Total">€ ${eur(item.totalCents)}</td>
+                        <td data-label="Estado">${buildStatusPill(item.status)}</td>
                       </tr>`;
-                    })
-                    .join('')}
+                  })
+                  .join('')}
                 </tbody>
               </table>
             </div>
@@ -492,6 +492,29 @@ module.exports = function registerOwnersPortal(app, context) {
         .page-backoffice.page-owners .owners-channel-card li{display:flex;justify-content:space-between;gap:12px;font-size:.85rem;color:#334155;}
         .page-backoffice.page-owners .owners-channel-card li span:last-child{font-weight:600;color:#9a3412;}
         .page-backoffice.page-owners .bo-section-title{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#b45309;margin:0 0 8px;font-weight:700;}
+        @media (max-width:1280px){.page-backoffice.page-owners .owners-main{gap:20px;}.page-backoffice.page-owners .owners-property__stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}}
+        @media (max-width:1024px){.page-backoffice.page-owners .owners-filter{grid-template-columns:1fr;}.page-backoffice.page-owners .owners-filter__actions{justify-content:flex-start;}.page-backoffice.page-owners .owners-property__content{grid-template-columns:1fr;}.page-backoffice.page-owners .owners-property__meta{gap:8px;}}
+        @media (max-width:768px){
+          .page-backoffice.page-owners .owners-main{gap:18px;}
+          .page-backoffice.page-owners .bo-header{padding:22px;}
+          .page-backoffice.page-owners .owners-alert{padding:18px;}
+          .page-backoffice.page-owners .owners-property{gap:16px;}
+          .page-backoffice.page-owners .owners-table{overflow:visible;}
+          .page-backoffice.page-owners .owners-table table{min-width:0;}
+          .page-backoffice.page-owners .owners-table thead{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);border:0;}
+          .page-backoffice.page-owners .owners-table tbody{display:grid;gap:16px;}
+          .page-backoffice.page-owners .owners-table tbody tr{display:grid;gap:12px;padding:16px;border:1px solid rgba(148,163,184,.28);border-radius:18px;background:#fff;box-shadow:0 8px 18px rgba(15,23,42,.08);}
+          .page-backoffice.page-owners .owners-table tbody tr:nth-child(even){background:#fff;}
+          .page-backoffice.page-owners .owners-table td{padding:0;border:none;display:flex;flex-direction:column;gap:4px;font-size:.9rem;color:#334155;}
+          .page-backoffice.page-owners .owners-table td::before{content:attr(data-label);font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#b45309;}
+        }
+        @media (max-width:640px){.page-backoffice.page-owners .owners-filter__actions{flex-direction:column;align-items:stretch;}.page-backoffice.page-owners .owners-filter__actions .btn{width:100%;}}
+        @media (max-width:480px){
+          .page-backoffice.page-owners .bo-header h1{font-size:1.5rem;}
+          .page-backoffice.page-owners .owners-property__meta{flex-direction:column;align-items:flex-start;}
+          .page-backoffice.page-owners .owners-property__stats{grid-template-columns:1fr;}
+          .page-backoffice.page-owners .owners-property__stat{padding:12px;}
+        }
       </style>
     `;
 

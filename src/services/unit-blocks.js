@@ -42,7 +42,7 @@ function createUnitBlockService({ db, dayjs }) {
   const blocksOverlapStmt = db.prepare(
     `SELECT COUNT(1) as total
      FROM unit_blocks
-     WHERE unit_id = ?
+      WHERE unit_id = ?
        AND end_date > ?
        AND start_date < ?`
   );
@@ -59,6 +59,22 @@ function createUnitBlockService({ db, dayjs }) {
     `INSERT INTO unit_blocks (unit_id, start_date, end_date, reason, created_by)
      VALUES (?, ?, ?, ?, ?)`
   );
+
+  const selectUnitInfoStmt = db.prepare(
+    `SELECT u.id, u.name, p.name AS property_name
+       FROM units u
+       LEFT JOIN properties p ON p.id = u.property_id
+      WHERE u.id = ?`
+  );
+
+  function formatUnitLabel(unitId) {
+    const info = selectUnitInfoStmt.get(unitId);
+    if (!info) return `Unidade #${unitId}`;
+    const parts = [];
+    if (info.property_name) parts.push(info.property_name);
+    if (info.name) parts.push(info.name);
+    return parts.length ? parts.join(' · ') : `Unidade #${unitId}`;
+  }
 
   function createBlock({ unitId, startDate, endDateExclusive, reason, userId }) {
     const { total: bookingsConflict } = bookingsOverlapStmt.get(unitId, endDateExclusive, startDate);
@@ -84,9 +100,37 @@ function createUnitBlockService({ db, dayjs }) {
     };
   }
 
+  const createBlocksTransaction = db.transaction((unitIds, startDate, endDateExclusive, reason, userId) => {
+    return unitIds.map(unitId => {
+      try {
+        return createBlock({ unitId, startDate, endDateExclusive, reason, userId });
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          const label = formatUnitLabel(unitId);
+          throw new ConflictError(`${label}: ${err.message}`);
+        }
+        throw err;
+      }
+    });
+  });
+
+  function createBlocksForUnits({ unitIds, startDate, endDateExclusive, reason, userId }) {
+    const normalizedIds = Array.isArray(unitIds)
+      ? unitIds
+          .map(id => Number(id))
+          .filter(id => Number.isInteger(id) && id > 0)
+      : [];
+    if (!normalizedIds.length) {
+      throw new ValidationError('Seleciona pelo menos uma unidade.');
+    }
+    const uniqueIds = Array.from(new Set(normalizedIds));
+    return createBlocksTransaction(uniqueIds, startDate, endDateExclusive, reason, userId);
+  }
+
   return {
     normalizeBlockPayload: (payload) => normalizeBlockPayload(payload, dayjs),
-    createBlock
+    createBlock,
+    createBlocks: createBlocksForUnits
   };
 }
 
