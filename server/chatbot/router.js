@@ -11,7 +11,6 @@ function createChatbotRouter(context) {
     esc,
     html,
     csrfProtection,
-    secureCookies,
   } = context;
 
   if (!chatbotService) {
@@ -37,11 +36,9 @@ function createChatbotRouter(context) {
     if (!session) {
       session = chatbotService.createSession({ intent: 'availability' }, null);
       res.cookie('cb_sid', session.id, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: !!secureCookies,
+        httpOnly: false,
+        sameSite: 'Lax',
         maxAge: 1000 * 60 * 60 * 48,
-        path: '/',
       });
     }
     return session;

@@ -9,11 +9,10 @@ function createCsrfProtection(options = {}) {
   const formField = options.formField || DEFAULT_FORM_FIELD;
   const headerName = options.headerName || DEFAULT_HEADER;
   const cookieOptions = {
-    httpOnly: true,
+    httpOnly: false,
     sameSite: 'strict',
     secure: !!options.secureCookies,
     path: '/',
-    maxAge: 24 * 60 * 60 * 1000,
   };
 
   function generateToken() {

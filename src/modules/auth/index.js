@@ -17,8 +17,7 @@ module.exports = function registerAuthRoutes(app, context) {
     resolveBrandingForRequest,
     isSafeRedirectTarget,
     csrfProtection,
-    secureCookies,
-    sessionCookieOptions
+    secureCookies
   } = context;
 
   app.get('/login', (req, res) => {
@@ -68,14 +67,7 @@ module.exports = function registerAuthRoutes(app, context) {
     const userContext = buildUserContext({ user_id: user.id, username: user.username, role: normalizedRole });
 
     const token = createSession(user.id, req);
-    const cookieOptions = sessionCookieOptions || {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: secureCookies,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    };
-    res.cookie('adm', token, cookieOptions);
+    res.cookie('adm', token, { httpOnly: true, sameSite: 'lax', secure: secureCookies });
     logSessionEvent(user.id, 'login', req);
     logActivity(user.id, 'auth:login', null, null, {});
 
@@ -104,13 +96,7 @@ module.exports = function registerAuthRoutes(app, context) {
       logActivity(sess.user_id, 'auth:logout', null, null, {});
     }
     destroySession(req.cookies.adm);
-    const cookieOptions = sessionCookieOptions || {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: secureCookies,
-      path: '/',
-    };
-    res.clearCookie('adm', cookieOptions);
+    res.clearCookie('adm');
     csrfProtection.rotateToken(req, res);
     res.redirect('/');
   });
