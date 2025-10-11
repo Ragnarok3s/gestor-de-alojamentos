@@ -1,0 +1,90 @@
+name: security-ci
+
+on:
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  sast-deps:
+    name: SAST & Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Install detect-secrets
+        run: pip install --upgrade pip detect-secrets
+      - name: Run Semgrep (OWASP Top 10)
+        run: npm run security:semgrep
+      - name: npm audit
+        run: npm audit --audit-level=moderate
+      - name: Detect secrets
+        run: npm run security:secrets
+      - name: Safe nmap scan
+        run: npm run security:nmap | tee nmap.txt
+      - name: Upload nmap artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmap-scan
+          path: nmap.txt
+
+  zap-baseline:
+    name: OWASP ZAP Baseline
+    runs-on: ubuntu-latest
+    needs: sast-deps
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ZAP baseline
+        run: npm run security:zap | tee zap-baseline.log
+      - name: Parse ZAP report
+        run: npm run security:parse-zap | tee zap-summary.md
+      - name: Fail on high severity alerts
+        run: jq -e '.site[0].alerts[] | select(.riskdesc|test("High"))' zap-report.json >/dev/null && { echo "ZAP High alerts"; exit 1; } || echo "No High alerts"
+      - name: Upload ZAP artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline
+          path: |
+            zap-report.json
+            zap-baseline.log
+            zap-summary.md
+
+  rbac-check:
+    name: RBAC Enforcement
+    runs-on: ubuntu-latest
+    needs: sast-deps
+    env:
+      API_BASE: ${{ secrets.API_BASE }}
+      SEC_BASE_URL: ${{ secrets.SEC_BASE_URL }}
+      SEC_USER_EMAIL: ${{ secrets.SEC_USER_EMAIL }}
+      SEC_USER_PASS: ${{ secrets.SEC_USER_PASS }}
+      SEC_MANAGER_EMAIL: ${{ secrets.SEC_MANAGER_EMAIL }}
+      SEC_MANAGER_PASS: ${{ secrets.SEC_MANAGER_PASS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Install detect-secrets (for parity)
+        run: pip install --upgrade pip detect-secrets
+      - name: Run RBAC regression
+        run: npm run security:rbac | tee rbac-report.md
+      - name: Upload RBAC artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rbac-report
+          path: rbac-report.md

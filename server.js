@@ -19,6 +19,12 @@ dayjs.locale('pt');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const {
+  applySecurityHeaders,
+  createCorsMiddleware,
+  createRateLimiter,
+  normalizeOrigins
+} = require('./src/security/hardening');
 
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
@@ -45,11 +51,66 @@ const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
 
 const app = express();
+app.set('trust proxy', 1);
+
+function parseList(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function isTruthy(value) {
+  if (value == null) return false;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+const secureCookies =
+  !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
+const sessionCookieOptions = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: secureCookies,
+  path: '/',
+  maxAge: 7 * 24 * 60 * 60 * 1000
+};
+
+const connectSrcExtras = parseList(process.env.CSP_CONNECT_SRC);
+const scriptSrcExtras = parseList(process.env.CSP_SCRIPT_SRC);
+const imgSrcExtras = parseList(process.env.CSP_IMG_SRC);
+const styleSrcExtras = parseList(process.env.CSP_STYLE_SRC);
+const shouldEnableHsts = secureCookies && (process.env.NODE_ENV === 'production' || isTruthy(process.env.FORCE_SECURE_COOKIE));
+
+applySecurityHeaders(app, {
+  enableHsts: shouldEnableHsts,
+  connectSrc: connectSrcExtras,
+  scriptSrc: scriptSrcExtras,
+  imgSrc: imgSrcExtras,
+  styleSrc: styleSrcExtras
+});
+const allowedOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
+const corsMiddleware = createCorsMiddleware({ allowedOrigins });
+app.use(corsMiddleware);
+
+const requestRateLimiter = createRateLimiter({
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  max: Number(process.env.RATE_LIMIT_MAX || 300)
+});
+const sensitivePrefixes = [
+  '/login',
+  '/logout',
+  '/auth',
+  '/admin',
+  '/admin/api',
+  '/api/admin',
+  '/api/auth',
+  '/api/payments'
+];
+app.use(sensitivePrefixes, requestRateLimiter);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
-const secureCookies =
-  !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
 const csrfProtection = createCsrfProtection({ secureCookies });
 app.use(csrfProtection.middleware);
 
@@ -1530,10 +1591,16 @@ function rememberActiveBrandingProperty(res, propertyId) {
   if (propertyId) {
     res.cookie('active_branding_property', String(propertyId), {
       maxAge: 30 * 24 * 60 * 60 * 1000,
-      sameSite: 'lax'
+      sameSite: 'lax',
+      secure: secureCookies,
+      httpOnly: false
     });
   } else {
-    res.clearCookie('active_branding_property');
+    res.clearCookie('active_branding_property', {
+      path: '/',
+      sameSite: 'lax',
+      secure: secureCookies
+    });
   }
 }
 
@@ -3114,6 +3181,7 @@ const context = {
   mailer,
   bookingEmailer,
   secureCookies,
+  sessionCookieOptions,
   csrfProtection,
   requireLogin,
   userHasBackofficeAccess,

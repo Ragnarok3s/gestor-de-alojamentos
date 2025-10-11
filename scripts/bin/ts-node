@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+const path = require('node:path');
+const runner = path.resolve(process.cwd(), 'scripts/ts-runner.js');
+require(runner);
