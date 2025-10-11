@@ -5,7 +5,16 @@
   "main": "server.js",
   "scripts": {
     "test": "node tests/run-tests.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "presecurity:parse-zap": "node scripts/setup-ts-node.js",
+    "security:semgrep": "npx semgrep --config p/owasp-top-ten --error",
+    "security:secrets": "detect-secrets scan | tee /dev/stderr",
+    "security:zap": "docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t https://staging.minha-app.com -I -J zap-report.json || true",
+    "security:headers": "curl -s -D- -o /dev/null https://staging.minha-app.com | grep -Ei 'content-security-policy|strict-transport-security|x-frame-options|x-content-type-options|referrer-policy|permissions-policy' || true",
+    "security:nmap": "nmap -sC -sV staging.minha-app.com || true",
+    "security:parse-zap": "ts-node scripts/parse-zap.ts",
+    "presecurity:rbac": "node scripts/setup-ts-node.js",
+    "security:rbac": "ts-node scripts/rbac-check.ts"
   },
   "keywords": [],
   "author": "",
