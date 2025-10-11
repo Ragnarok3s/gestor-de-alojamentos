@@ -26,6 +26,7 @@
     var collapseButton = sidebar.querySelector('[data-sidebar-collapse]');
     var trigger = document.querySelector('[data-sidebar-trigger]');
     var overlay = document.querySelector('[data-sidebar-overlay]');
+    var navLabels = Array.prototype.slice.call(sidebar.querySelectorAll('.bo-tab__label'));
     var focusReturnTarget = null;
 
     var MODE_DESKTOP = 'desktop';
@@ -46,6 +47,18 @@
     }
     var preferredCollapsed = storedPreference === '1';
 
+    function syncLabelVisibility() {
+      var hideLabels = shell.getAttribute('data-sidebar-collapsed') === '1' || currentMode === MODE_COMPACT || currentMode === MODE_MOBILE;
+      navLabels.forEach(function (label) {
+        if (!label) return;
+        if (hideLabels) {
+          label.setAttribute('aria-hidden', 'true');
+        } else {
+          label.removeAttribute('aria-hidden');
+        }
+      });
+    }
+
     function setCollapsed(flag, options) {
       if (!options) options = {};
       if (currentMode === MODE_MOBILE) flag = false;
@@ -54,6 +67,7 @@
       if (collapseButton) {
         collapseButton.setAttribute('aria-expanded', flag ? 'false' : 'true');
       }
+      syncLabelVisibility();
       if (currentMode === MODE_DESKTOP && !options.skipStore) {
         preferredCollapsed = flag;
         try {
@@ -84,6 +98,7 @@
           setCollapsed(preferredCollapsed, { skipStore: true });
         }
       }
+      syncLabelVisibility();
     }
 
     function openSidebar() {
@@ -193,5 +208,6 @@
     listen(desktopMedia, handleMediaChange);
 
     handleMediaChange();
+    syncLabelVisibility();
   });
 })();

@@ -14,9 +14,10 @@
 - `TESTS.md`
 
 ## Antes / Depois (resumo)
-- **Sidenav backoffice**: antes o layout tinha alinhamentos quebrados e não respeitava breakpoints. Agora o sidebar usa CSS responsivo com estados desktop/compact/mobile, tooltips acessíveis, controlo de foco e preferências persistidas.
+- **Sidenav backoffice**: antes o layout tinha alinhamentos quebrados e não respeitava breakpoints. Agora o sidebar usa CSS responsivo com estados desktop/compact/mobile, tooltips acessíveis, controlo de foco, preferência persistida e no modo recolhido expõe apenas ícones + botão de expandir.
 - **Bloqueio de unidades**: fluxo estava disperso e operava unidade a unidade. Foi centralizado na tabela de unidades com seleção múltipla, sumário vivo, modal reescrito, validações consistentes e badges instantâneos.
 - **Mapa de reservas**: drag & drop falhava por colisões de IDs e não bloqueava destinos inválidos. Atualizámos os bindings, mensagens de erro (bloqueios, datas passadas) e feedback visual/toast.
+- **Channel Manager**: cards e grelhas estavam desalinhados nas laterais. A secção foi harmonizada com cartões dedicados, cabeçalhos equilibrados e grelhas com espaçamentos consistentes em todas as colunas.
 - **Área do proprietário**: layout não escalava para tablet/mobile. Agora aplica breakpoints oficiais, tabelas em formato stacked, formulários a uma coluna e grelhas com 3→2→1 colunas.
 - **Testes**: Playwright cobre os fluxos críticos (sidenav, bloqueio em lote, DnD válido/ inválido, responsividade owners). Unit-service mantém validações e rollback atómico.
 

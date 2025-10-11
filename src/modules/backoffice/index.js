@@ -2218,7 +2218,7 @@ module.exports = function registerBackoffice(app, context) {
             const summary = channel.last_summary || null;
             const summaryBadges = summary
               ? `
-                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
+                <div class="bo-channel-card__chips">
                   <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
                   ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
                   ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
@@ -2313,22 +2313,22 @@ module.exports = function registerBackoffice(app, context) {
                 </div>`
               : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
             return `
-              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
-                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
-                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
-                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
-                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
+              <article class="bo-channel-card">
+                <header class="bo-channel-card__header">
+                  <div class="bo-channel-card__intro">
+                    <h3 class="bo-channel-card__title">${esc(channel.name)}</h3>
+                    ${channel.description ? `<p class="bo-channel-card__summary">${esc(channel.description)}</p>` : ''}
+                    <p class="bo-channel-card__sync">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
+                    ${channel.last_error ? `<p class="text-xs text-rose-600">${esc(channel.last_error)}</p>` : ''}
                     ${summaryBadges}
                   </div>
-                  <div class="flex flex-wrap gap-2">
+                  <div class="bo-channel-card__badges">
                     <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
                     ${manualBadge}
                     ${attentionBadge}
                   </div>
                 </header>
-                <div class="bo-channel-card-grid grid gap-4 lg:grid-cols-2">
+                <div class="bo-channel-card__grid">
                   ${autoForm}
                   ${infoPanel}
                 </div>
