@@ -6,6 +6,11 @@ const { createSessionService } = require('../src/services/session');
 const { createCsrfProtection } = require('../src/security/csrf');
 const { suggestPrice } = require('../server/services/pricing');
 const { parseMessage } = require('../server/chatbot/parser');
+const { createRateManagementService } = require('../src/services/rate-management');
+const { createUnitBlockService } = require('../src/services/unit-blocks');
+const { createReviewService } = require('../src/services/review-center');
+const { createReportingService } = require('../src/services/reporting');
+const { ConflictError } = require('../src/services/errors');
 
 function createMockRequest({ ip = '127.0.0.1', userAgent = 'jest/agent', body = {}, headers = {} } = {}) {
   return {
@@ -109,6 +114,105 @@ function testPricingService() {
   assert.ok(clamped >= 150, 'clamp mínimo deve aplicar-se com valores altos');
 }
 
+function seedPropertyAndUnit(db) {
+  const propertyId = db.prepare('INSERT INTO properties(name) VALUES (?)').run('Casas de Pousadouro').lastInsertRowid;
+  const unitId = db.prepare(
+    'INSERT INTO units(property_id, name, capacity, base_price_cents) VALUES (?,?,?,?)'
+  ).run(propertyId, 'Douro Suite', 2, 12000).lastInsertRowid;
+  return { propertyId, unitId };
+}
+
+function testRateManagementService() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  const service = createRateManagementService({ db, dayjs });
+  const payload = service.normalizeBulkPayload({
+    unitIds: [unitId],
+    dateRange: { start: '2025-03-14', end: '2025-03-16' },
+    price: 155.5
+  });
+  assert.equal(payload.nights, 3, 'deve calcular número de noites no intervalo');
+  assert.equal(payload.priceCents, 15550, 'deve converter preço para cêntimos');
+  const rateIds = service.applyBulkUpdate(payload);
+  assert.equal(rateIds.length, 1, 'deve criar registo de tarifa por unidade');
+  const stored = db.prepare('SELECT weekday_price_cents, end_date FROM rates WHERE id = ?').get(rateIds[0]);
+  assert.equal(stored.weekday_price_cents, 15550, 'preço deve ser persistido em cêntimos');
+  assert.equal(stored.end_date, '2025-03-17', 'data final exclusiva deve ser respeitada');
+  const removed = service.undoBulkUpdate(rateIds);
+  assert.equal(removed, 1, 'undo deve remover tarifas aplicadas');
+}
+
+function testUnitBlockService() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  const service = createUnitBlockService({ db, dayjs });
+  const payload = service.normalizeBlockPayload({
+    start: '2025-04-01',
+    end: '2025-04-03',
+    reason: 'Manutenção preventiva'
+  });
+  assert.equal(payload.nights, 3, 'bloqueio deve contar noites incluídas');
+  const block = service.createBlock({
+    unitId,
+    startDate: payload.startDate,
+    endDateExclusive: payload.endDateExclusive,
+    reason: payload.reason,
+    userId: null
+  });
+  assert.ok(block.id, 'bloqueio deve devolver id');
+  assert.equal(block.reason, 'Manutenção preventiva');
+
+  db.prepare(
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
+  ).run(unitId, 'Ana', 'ana@example.com', '2025-04-05', '2025-04-08', 48000, 'CONFIRMED');
+
+  assert.throws(() => {
+    service.createBlock({
+      unitId,
+      startDate: '2025-04-06',
+      endDateExclusive: '2025-04-09',
+      reason: 'Fechado',
+      userId: null
+    });
+  }, ConflictError, 'não deve permitir bloquear intervalo com reservas');
+}
+
+function testReviewService() {
+  const db = createDatabase(':memory:');
+  const { propertyId, unitId } = seedPropertyAndUnit(db);
+  const service = createReviewService({ db, dayjs });
+  const reviewId = db
+    .prepare(
+      'INSERT INTO reviews(property_id, unit_id, guest_name, rating, body, title, source) VALUES (?,?,?,?,?,?,?)'
+    )
+    .run(propertyId, unitId, 'Miguel', 2, 'A vista era bonita mas havia ruído.', 'Experiência mista', 'direct')
+    .lastInsertRowid;
+
+  const list = service.listReviews({ onlyNegative: true });
+  assert.equal(list.length, 1, 'lista negativa deve conter avaliação criada');
+  const updated = service.respondToReview(reviewId, 'Obrigado pelo feedback, já corrigimos o ruído.', null);
+  assert.ok(updated.responded_at, 'resposta deve registar timestamp');
+  assert.equal(updated.response_text.startsWith('Obrigado'), true, 'texto de resposta deve ser guardado');
+}
+
+function testReportingService() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  db.prepare(
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
+  ).run(unitId, 'João', 'joao@example.com', '2025-05-10', '2025-05-13', 30000, 'CONFIRMED');
+
+  const service = createReportingService({ db, dayjs });
+  const snapshot = service.computeWeeklySnapshot({ from: '2025-05-10', to: '2025-05-12' });
+  assert.equal(snapshot.kpis.occupancy, 1, 'ocupação deve ser 100% com noites preenchidas');
+  assert.equal(snapshot.kpis.adr, 100, 'ADR deve refletir receita média');
+  assert.equal(snapshot.kpis.revpar, 100, 'RevPAR deve coincidir com ADR numa unidade única ocupada');
+  const csv = service.toCsv(snapshot);
+  assert.ok(csv.includes('Ocupação (%)'), 'CSV deve conter cabeçalhos');
+  const pdf = service.toPdf(snapshot);
+  assert.equal(pdf.slice(0, 4).toString(), '%PDF', 'PDF gerado deve começar com assinatura PDF');
+}
+
 function testChatbotParser() {
   const availabilityQuery = parseMessage(dayjs, '2 adultos 10 a 13 novembro');
   assert.equal(availabilityQuery.intent, 'availability', 'intenção deve mudar para disponibilidade quando dados existem');
@@ -133,6 +237,10 @@ function main() {
   testSessionService();
   testCsrfProtection();
   testPricingService();
+  testRateManagementService();
+  testUnitBlockService();
+  testReviewService();
+  testReportingService();
   testChatbotParser();
   console.log('Todos os testes passaram.');
 }
