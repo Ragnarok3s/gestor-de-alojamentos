@@ -2934,7 +2934,9 @@ module.exports = function registerBackoffice(app, context) {
             <div class="lg:col-span-2 flex flex-wrap items-center gap-2">
               <button type="button" class="btn btn-light" data-weekly-export-action="csv">Exportar CSV</button>
               <button type="button" class="btn btn-light" data-weekly-export-action="pdf">Exportar PDF</button>
-              <span class="text-xs text-slate-500" data-weekly-status role="status" aria-live="polite" tabindex="-1"></span>
+              <span class="text-xs text-slate-500" data-weekly-status role="status" aria-live="polite" tabindex="-1">
+                Seleciona o intervalo semanal e escolhe o formato para exportar.
+              </span>
             </div>
           </div>
         </div>
@@ -3393,7 +3395,12 @@ module.exports = function registerBackoffice(app, context) {
                       <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
                       <p class="text-sm text-slate-600">Aplica tarifas por intervalo com filtros por unidade, tipologia e fins-de-semana.</p>
                     </div>
-                    <div class="text-xs text-slate-500" data-rate-feedback role="status"></div>
+                    <div
+                      class="text-xs text-slate-500"
+                      data-rate-feedback
+                      role="status"
+                      aria-live="polite"
+                    >Seleciona datas e unidades para pré-visualizar o impacto.</div>
                   </div>
                   <form class="grid gap-3 md:grid-cols-5" data-rates-form novalidate>
                     <label class="form-field" data-field>
@@ -3743,7 +3750,9 @@ module.exports = function registerBackoffice(app, context) {
                       <div class="h-3 bg-slate-200 rounded w-3/4"></div>
                     </div>
                   </div>
-                  <p class="text-sm text-slate-500" data-reviews-empty hidden>Sem novas avaliações esta semana.</p>
+                  <p class="text-sm text-slate-500" data-reviews-empty hidden role="status" aria-live="polite">
+                    Sem novas avaliações esta semana.
+                  </p>
                 </div>
                 <div class="bo-card space-y-3" data-review-composer hidden>
                   <header>

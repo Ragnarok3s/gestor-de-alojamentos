@@ -11,7 +11,7 @@
     if (document.getElementById('ux-enhancements-styles')) return;
     var style = document.createElement('style');
     style.id = 'ux-enhancements-styles';
-    style.textContent = "\n      .bo-toast-stack { position: fixed; top: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; z-index: 60; max-width: 22rem; }\n      @media (max-width: 768px) { .bo-toast-stack { left: 50%; right: auto; transform: translateX(-50%); width: calc(100% - 2rem); } }\n      .bo-toast { background: #0f172a; color: #f8fafc; padding: 0.9rem 1rem; border-radius: 0.75rem; box-shadow: 0 15px 30px rgba(15, 23, 42, 0.25); display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; outline: none; }\n      .bo-toast--success { background: #047857; }\n      .bo-toast--error { background: #b91c1c; }\n      .bo-toast__message { flex: 1 1 auto; }\n      .bo-toast__action { background: rgba(248, 250, 252, 0.18); color: inherit; border: none; border-radius: 999px; padding: 0.25rem 0.75rem; font-weight: 600; cursor: pointer; }\n      .bo-modal { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }\n      .bo-modal.hidden { display: none; }\n      .bo-modal__backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.45); }\n      .bo-modal__content { position: relative; z-index: 1; background: #fff; border-radius: 1rem; padding: 1.5rem; width: min(36rem, 100%); max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 45px rgba(15, 23, 42, 0.35); }\n      .bo-modal__header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }\n      .bo-modal__close { border: none; background: rgba(15, 23, 42, 0.08); border-radius: 999px; width: 2rem; height: 2rem; font-size: 1.15rem; line-height: 1; cursor: pointer; color: #0f172a; }\n      .bo-status-badge { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 999px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.55rem; margin-left: 0.4rem; vertical-align: middle; }\n      .bo-status-badge--warning { background: rgba(250, 204, 21, 0.18); color: #92400e; border: 1px solid rgba(217, 119, 6, 0.35); }\n      .animate-pulse { animation: ux-pulse 1.4s ease-in-out infinite; }\n      @keyframes ux-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }\n    ";
+    style.textContent = "\n      .bo-toast-stack { position: fixed; top: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; z-index: 60; max-width: 22rem; }\n      @media (max-width: 768px) { .bo-toast-stack { left: 50%; right: auto; transform: translateX(-50%); width: calc(100% - 2rem); } }\n      .bo-toast { background: #0f172a; color: #f8fafc; padding: 0.9rem 1rem; border-radius: 0.75rem; box-shadow: 0 15px 30px rgba(15, 23, 42, 0.25); display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; outline: none; }\n      .bo-toast--success { background: #047857; }\n      .bo-toast--error { background: #b91c1c; }\n      .bo-toast--info { background: #0369a1; }\n      .bo-toast__message { flex: 1 1 auto; }\n      .bo-toast__action { background: rgba(248, 250, 252, 0.18); color: inherit; border: none; border-radius: 999px; padding: 0.25rem 0.75rem; font-weight: 600; cursor: pointer; }\n      .bo-modal { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }\n      .bo-modal.hidden { display: none; }\n      .bo-modal__backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.45); }\n      .bo-modal__content { position: relative; z-index: 1; background: #fff; border-radius: 1rem; padding: 1.5rem; width: min(36rem, 100%); max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 45px rgba(15, 23, 42, 0.35); }\n      .bo-modal__header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }\n      .bo-modal__close { border: none; background: rgba(15, 23, 42, 0.08); border-radius: 999px; width: 2rem; height: 2rem; font-size: 1.15rem; line-height: 1; cursor: pointer; color: #0f172a; }\n      .bo-status-badge { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 999px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.55rem; margin-left: 0.4rem; vertical-align: middle; }\n      .bo-status-badge--warning { background: rgba(250, 204, 21, 0.18); color: #92400e; border: 1px solid rgba(217, 119, 6, 0.35); }\n      .animate-pulse { animation: ux-pulse 1.4s ease-in-out infinite; }\n      @keyframes ux-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }\n    ";
     document.head.appendChild(style);
   }
 
@@ -42,7 +42,8 @@
       var type = options.type || 'info';
       var toast = document.createElement('div');
       toast.className = 'bo-toast bo-toast--' + (type === 'error' ? 'error' : type === 'success' ? 'success' : 'info');
-      toast.setAttribute('role', 'status');
+      toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+      toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
       toast.setAttribute('tabindex', '-1');
       var message = document.createElement('div');
       message.className = 'bo-toast__message';
@@ -158,6 +159,10 @@
     var summaryEl = card.querySelector('[data-rate-summary]');
     var loadingEl = card.querySelector('[data-rate-loading]');
     var feedbackEl = card.querySelector('[data-rate-feedback]');
+    var feedbackDefault = 'Seleciona datas e unidades para pré-visualizar o impacto.';
+    if (feedbackEl && !feedbackEl.textContent) {
+      feedbackEl.textContent = feedbackDefault;
+    }
     if (!form || !startInput || !endInput || !priceInput || !unitSelect || !typeSelect) return;
 
     var units = Array.isArray(config && config.units) ? config.units.slice() : [];
@@ -196,6 +201,7 @@
         previewBody.innerHTML = '<tr><td colspan="3" class="text-sm text-center text-slate-500">Seleciona um intervalo para visualizar o impacto.</td></tr>';
         if (previewWrapper) previewWrapper.hidden = true;
         if (summaryEl) summaryEl.textContent = '';
+        if (feedbackEl) feedbackEl.textContent = feedbackDefault;
         return;
       }
       var nightBadges = nights
@@ -251,7 +257,7 @@
 
     function applyBulkUpdate() {
       clearFieldErrors(form);
-      if (feedbackEl) feedbackEl.textContent = '';
+      if (feedbackEl) feedbackEl.textContent = feedbackDefault;
       var start = startInput.value;
       var end = endInput.value;
       var priceValue = Number(priceInput.value);
@@ -400,6 +406,7 @@
     var countEl = modal.querySelector('[data-block-count]');
     var loadingEl = modal.querySelector('[data-block-loading]');
     var submitButton = modal.querySelector('[data-block-submit]');
+    var lastTrigger = null;
     if (!form || !startInput || !endInput || !reasonInput) return;
 
     function updateCount() {
@@ -415,6 +422,19 @@
       modal.classList.add('hidden');
       modal.setAttribute('aria-hidden', 'true');
       document.body.style.overflow = '';
+      modal.dataset.unitId = '';
+      modal.dataset.unitName = '';
+      var trigger = lastTrigger;
+      lastTrigger = null;
+      if (trigger && typeof trigger.focus === 'function') {
+        setTimeout(function () {
+          if (document.body.contains(trigger)) {
+            try {
+              trigger.focus();
+            } catch (err) {}
+          }
+        }, 80);
+      }
     }
 
     function openModal(button) {
@@ -427,6 +447,7 @@
       updateCount();
       modal.dataset.unitId = button.dataset.blockUnit;
       modal.dataset.unitName = button.dataset.unitName || '';
+      lastTrigger = button;
       if (titleEl) {
         var base = 'Bloquear unidade';
         if (modal.dataset.unitName) base += ' – ' + modal.dataset.unitName;
