@@ -866,6 +866,23 @@
       return valid;
     }
 
+    function extractFilename(disposition, fallback) {
+      if (!disposition) return fallback;
+      var matchStar = disposition.match(/filename\*\s*=\s*(?:UTF-8''|"UTF-8''|')(.*?)(?:"|;|$)/i);
+      if (matchStar && matchStar[1]) {
+        try {
+          return decodeURIComponent(matchStar[1].replace(/"/g, ''));
+        } catch (err) {
+          console.warn('Falha ao decodificar filename*:', err);
+        }
+      }
+      var match = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+      if (match && match[1]) {
+        return match[1];
+      }
+      return fallback;
+    }
+
     function download(format) {
       if (!validateRange()) return;
       var upperFormat = format.toUpperCase();
@@ -881,13 +898,28 @@
       fetch(url)
         .then(function (resp) {
           if (!resp.ok) return resp.json().then(function (payload) { throw payload; });
-          return resp.blob();
+          var disposition = resp.headers.get('Content-Disposition') || resp.headers.get('content-disposition');
+          if (format === 'csv') {
+            return resp.text().then(function (text) {
+              var BOM = '\uFEFF';
+              var safeText = text.charAt(0) === '\uFEFF' ? text : BOM + text;
+              var blob = new Blob([safeText], { type: 'text/csv;charset=utf-8' });
+              return { blob: blob, disposition: disposition };
+            });
+          }
+          return resp.blob().then(function (blob) {
+            return { blob: blob, disposition: disposition };
+          });
         })
-        .then(function (blob) {
+        .then(function (payload) {
+          var blob = payload.blob;
+          var disposition = payload.disposition;
+          var fallbackName = 'relatorio-semanal-' + fromInput.value + '-' + toInput.value + '.' + format;
+          var filename = extractFilename(disposition, fallbackName);
           var downloadUrl = URL.createObjectURL(blob);
           var link = document.createElement('a');
           link.href = downloadUrl;
-          link.download = 'relatorio-semanal-' + fromInput.value + '-' + toInput.value + '.' + format;
+          link.download = filename;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);

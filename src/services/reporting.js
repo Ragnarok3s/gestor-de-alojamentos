@@ -1,3 +1,4 @@
+const iconv = require('iconv-lite');
 const { ValidationError } = require('./errors');
 
 function parseDateStrict(value, dayjs) {
@@ -124,10 +125,14 @@ function createReportingService({ db, dayjs }) {
     ];
 
     const escapePdfText = (text) => String(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-    const textOps = lines.map((line, index) => {
+    const textBuffers = lines.map((line, index) => {
       const y = 780 - index * 24;
-      return `BT /F1 12 Tf 50 ${y} Td (${escapePdfText(line)}) Tj ET`;
-    }).join('\n');
+      const prefix = Buffer.from(`BT /F1 12 Tf 50 ${y} Td (`, 'ascii');
+      const encoded = iconv.encode(escapePdfText(line), 'win1252');
+      const suffix = Buffer.from(') Tj ET\n', 'ascii');
+      return Buffer.concat([prefix, encoded, suffix]);
+    });
+    const textOps = Buffer.concat(textBuffers);
 
     const header = Buffer.from('%PDF-1.4\n', 'utf8');
     const objects = [];
@@ -135,8 +140,17 @@ function createReportingService({ db, dayjs }) {
     let currentOffset = header.length;
 
     const addObject = (index, content) => {
-      const obj = `${index} 0 obj\n${content}\nendobj\n`;
-      const buffer = Buffer.from(obj, 'utf8');
+      let buffer;
+      if (Buffer.isBuffer(content)) {
+        buffer = Buffer.concat([
+          Buffer.from(`${index} 0 obj\n`, 'ascii'),
+          content,
+          Buffer.from('\nendobj\n', 'ascii')
+        ]);
+      } else {
+        const obj = `${index} 0 obj\n${content}\nendobj\n`;
+        buffer = Buffer.from(obj, 'utf8');
+      }
       offsets[index] = currentOffset;
       objects.push(buffer);
       currentOffset += buffer.length;
@@ -145,9 +159,14 @@ function createReportingService({ db, dayjs }) {
     addObject(1, '<< /Type /Catalog /Pages 2 0 R >>');
     addObject(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
     addObject(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>');
-    const streamLength = Buffer.byteLength(textOps, 'utf8');
-    addObject(4, `<< /Length ${streamLength} >>\nstream\n${textOps}\nendstream`);
-    addObject(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    const streamLength = textOps.length;
+    const streamContent = Buffer.concat([
+      Buffer.from(`<< /Length ${streamLength} >>\nstream\n`, 'ascii'),
+      textOps,
+      Buffer.from('endstream\n', 'ascii')
+    ]);
+    addObject(4, streamContent);
+    addObject(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
 
     const bodyBuffer = Buffer.concat(objects);
     const xrefStart = header.length + bodyBuffer.length;

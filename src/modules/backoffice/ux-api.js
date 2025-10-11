@@ -150,21 +150,17 @@ module.exports = function registerUxApi(app, context) {
 
       if (format === 'csv') {
         const csv = reportingService.toCsv(snapshot);
+        const filename = `weekly_${snapshot.range.from}_${snapshot.range.to}.csv`;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader(
-          'Content-Disposition',
-          `attachment; filename="relatorio-semanal-${snapshot.range.from}-${snapshot.range.to}.csv"`
-        );
-        return res.send(csv);
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        return res.send(`\uFEFF${csv}`);
       }
 
       if (format === 'pdf') {
         const pdf = reportingService.toPdf(snapshot);
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader(
-          'Content-Disposition',
-          `attachment; filename="relatorio-semanal-${snapshot.range.from}-${snapshot.range.to}.pdf"`
-        );
+        const filename = `weekly_${snapshot.range.from}_${snapshot.range.to}.pdf`;
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
         return res.send(pdf);
       }
 
