@@ -375,6 +375,19 @@
     });
   }
 
+  function formatDateRangeLabel(start, endExclusive) {
+    var startDate = new Date(start + 'T00:00:00');
+    var endDate = new Date(endExclusive + 'T00:00:00');
+    if (!Number.isFinite(startDate.getTime())) return start;
+    if (!Number.isFinite(endDate.getTime())) return startDate.toLocaleDateString('pt-PT');
+    endDate.setDate(endDate.getDate() - 1);
+    return (
+      startDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' }) +
+      '–' +
+      endDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' })
+    );
+  }
+
   function setupBlockModal(config, toast) {
     var modal = document.querySelector('[data-block-modal]');
     if (!modal) return;
@@ -386,6 +399,7 @@
     var conflictEl = modal.querySelector('[data-block-conflict]');
     var countEl = modal.querySelector('[data-block-count]');
     var loadingEl = modal.querySelector('[data-block-loading]');
+    var submitButton = modal.querySelector('[data-block-submit]');
     if (!form || !startInput || !endInput || !reasonInput) return;
 
     function updateCount() {
@@ -405,7 +419,10 @@
 
     function openModal(button) {
       clearFieldErrors(form);
-      conflictEl && (conflictEl.hidden = true);
+      if (conflictEl) {
+        conflictEl.hidden = true;
+        conflictEl.removeAttribute('tabindex');
+      }
       form.reset();
       updateCount();
       modal.dataset.unitId = button.dataset.blockUnit;
@@ -430,19 +447,21 @@
 
     function setBusy(flag) {
       form.setAttribute('aria-busy', flag ? 'true' : 'false');
+      if (submitButton) submitButton.disabled = !!flag;
       if (loadingEl) loadingEl.hidden = !flag;
     }
 
-    function updateBadges(unitId, start, end, reason) {
-      var badge = document.querySelector('[data-block-badge="' + unitId + '"]');
-      if (!badge) return;
-      badge.hidden = false;
-      badge.classList.remove('hidden');
-      var startLabel = new Date(start + 'T00:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
-      var endDate = new Date(end + 'T00:00:00');
-      endDate.setDate(endDate.getDate() - 1);
-      var endLabel = endDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
-      badge.title = 'Bloqueado ' + startLabel + '–' + endLabel + (reason ? ' · ' + reason : '');
+    function updateBadges(unitId, start, endExclusive, reason) {
+      var badges = document.querySelectorAll('[data-block-badge="' + unitId + '"]');
+      if (!badges.length) return;
+      var rangeLabel = formatDateRangeLabel(start, endExclusive);
+      badges.forEach(function (badge) {
+        badge.hidden = false;
+        badge.classList.remove('hidden');
+        badge.textContent = 'Bloqueado';
+        badge.setAttribute('aria-label', 'Bloqueado ' + rangeLabel + (reason ? ' · ' + reason : ''));
+        badge.title = 'Bloqueado ' + rangeLabel + (reason ? ' · ' + reason : '');
+      });
     }
 
     function submitBlock(event) {
@@ -473,6 +492,18 @@
       }
       if (!valid) return;
 
+      var unitLabel = modal.dataset.unitName || 'unidade';
+      var confirmEndExclusive = end;
+      var endForConfirm = new Date(end + 'T00:00:00');
+      if (Number.isFinite(endForConfirm.getTime())) {
+        endForConfirm.setDate(endForConfirm.getDate() + 1);
+        confirmEndExclusive = endForConfirm.toISOString().slice(0, 10);
+      }
+      var confirmRange = formatDateRangeLabel(start, confirmEndExclusive);
+      var confirmationMessage = 'Confirmas o bloqueio de ' + unitLabel + ' entre ' + confirmRange + '?';
+      var confirmResult = typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(confirmationMessage) : true;
+      if (!confirmResult) return;
+
       setBusy(true);
       fetch('/admin/api/units/' + unitId + '/blocks', {
         method: 'POST',
@@ -485,8 +516,27 @@
         })
         .then(function (payload) {
           if (!payload || !payload.ok) throw payload;
-          toast.show({ type: 'success', message: 'Bloqueio criado para ' + (modal.dataset.unitName || 'unidade') + '.' });
-          updateBadges(unitId, start, end, reason);
+          var block = payload.block || {};
+          var blockStart = block.start_date || start;
+          var blockEnd = block.end_date || null;
+          if (!blockEnd) {
+            var fallbackEnd = new Date(end + 'T00:00:00');
+            if (Number.isFinite(fallbackEnd.getTime())) {
+              fallbackEnd.setDate(fallbackEnd.getDate() + 1);
+              blockEnd = fallbackEnd.toISOString().slice(0, 10);
+            } else {
+              blockEnd = end;
+            }
+          }
+          var blockReason = typeof block.reason === 'string' ? block.reason : reason;
+          var nightsCount = payload.summary && payload.summary.nights ? payload.summary.nights : null;
+          var successMessage = 'Bloqueio criado para ' + unitLabel + '.';
+          if (Number.isFinite(nightsCount)) {
+            successMessage =
+              'Bloqueio criado para ' + unitLabel + ' durante ' + nightsCount + ' noite' + (nightsCount === 1 ? '' : 's') + '.';
+          }
+          toast.show({ type: 'success', message: successMessage });
+          updateBadges(unitId, blockStart, blockEnd, blockReason);
           closeModal();
         })
         .catch(function (err) {
@@ -496,6 +546,10 @@
             if (conflictEl) {
               conflictEl.textContent = err.error;
               conflictEl.hidden = false;
+              conflictEl.setAttribute('tabindex', '-1');
+              setTimeout(function () {
+                try { conflictEl.focus(); } catch (focusErr) {}
+              }, 40);
             }
           } else {
             toast.show({ type: 'error', message: message });

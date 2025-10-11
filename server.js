@@ -2021,11 +2021,25 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
   return aS.isBefore(bE) && aE.isAfter(bS);
 }
 function unitAvailable(unitId, checkin, checkout) {
-  const conflicts = db.prepare(
-    `SELECT checkin AS s, checkout AS e FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
-     UNION ALL
-     SELECT start_date AS s, end_date AS e FROM blocks WHERE unit_id = ?`
-  ).all(unitId, unitId);
+  const conflicts = db
+    .prepare(
+      `SELECT s, e
+         FROM (
+           SELECT checkin AS s, checkout AS e
+             FROM bookings
+            WHERE unit_id = ?
+              AND status IN ('CONFIRMED','PENDING')
+           UNION ALL
+           SELECT start_date AS s, end_date AS e
+             FROM unit_blocks
+            WHERE unit_id = ?
+           UNION ALL
+           SELECT start_date AS s, end_date AS e
+             FROM blocks
+            WHERE unit_id = ?
+         )`
+    )
+    .all(unitId, unitId, unitId);
   return !conflicts.some(c => overlaps(checkin, checkout, c.s, c.e));
 }
 function isWeekendDate(d){ const dow = dayjs(d).day(); return dow === 0 || dow === 6; }

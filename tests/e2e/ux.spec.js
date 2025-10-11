@@ -43,18 +43,51 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
     test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
 
     await page.locator('[data-bo-target="overview"]').click();
-    const firstButton = page.locator('[data-block-unit]').first();
+    const buttons = page.locator('[data-block-unit]');
+    const firstButton = buttons.first();
+    const secondButton = buttons.nth(1);
+    const firstUnitId = await firstButton.getAttribute('data-block-unit');
     await firstButton.click();
     await page.locator('[data-block-modal]').waitFor({ state: 'visible' });
     await page.fill('[data-block-start]', '2025-09-01');
     await page.fill('[data-block-end]', '2025-09-05');
     await page.fill('[data-block-reason]', 'Manutenção preventiva');
-    await Promise.all([
-      page.waitForResponse(resp => resp.url().match(/\/admin\/api\/units\/\d+\/blocks/)),
-      page.click('[data-block-submit]')
-    ]);
-    await expect(page.locator('.bo-toast--success', { hasText: 'Bloqueio criado' })).toBeVisible();
-    await expect(page.locator('[data-block-badge]:not(.hidden)')).toHaveCount(1);
+    const firstDialogPromise = page.waitForEvent('dialog');
+    const firstResponsePromise = page.waitForResponse(resp => resp.url().match(/\/admin\/api\/units\/\d+\/blocks/) && resp.request().method() === 'POST');
+    await page.click('[data-block-submit]');
+    const firstDialog = await firstDialogPromise;
+    await expect(firstDialog.message()).toContain('Confirmas o bloqueio');
+    await firstDialog.accept();
+    const firstResponse = await firstResponsePromise;
+    await expect(firstResponse.status()).toBe(201);
+    await expect(page.locator('.bo-toast--success', { hasText: 'Bloqueio criado para' })).toBeVisible();
+
+    await secondButton.click();
+    await page.locator('[data-block-modal]').waitFor({ state: 'visible' });
+    await page.fill('[data-block-start]', '2025-10-10');
+    await page.fill('[data-block-end]', '2025-10-12');
+    await page.fill('[data-block-reason]', 'Evento privado');
+    const secondDialogPromise = page.waitForEvent('dialog');
+    const secondResponsePromise = page.waitForResponse(resp => resp.url().match(/\/admin\/api\/units\/\d+\/blocks/) && resp.request().method() === 'POST');
+    await page.click('[data-block-submit]');
+    const secondDialog = await secondDialogPromise;
+    await expect(secondDialog.message()).toContain('Confirmas o bloqueio');
+    await secondDialog.accept();
+    const secondResponse = await secondResponsePromise;
+    await expect(secondResponse.status()).toBe(201);
+    await expect(page.locator('.bo-toast--success', { hasText: 'Bloqueio criado para' })).toBeVisible();
+
+    const visibleBadges = page.locator('[data-unit-row] [data-block-badge]:not([hidden])');
+    await expect(visibleBadges).toHaveCount(2);
+
+    if (firstUnitId) {
+      const bookingUrl = `${baseURL}/book/${firstUnitId}?checkin=2025-09-01&checkout=2025-09-05`;
+      const response = await page.goto(bookingUrl, { waitUntil: 'domcontentloaded' });
+      await expect(response?.status()).toBe(409);
+      await expect(page.locator('body')).toContainText('já não tem disponibilidade');
+      await page.goto(baseURL + '/admin');
+      await page.locator('[data-bo-target="overview"]').click();
+    }
   });
 
   test('Responder a uma review negativa', async ({ page }) => {

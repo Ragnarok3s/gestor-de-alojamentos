@@ -1952,18 +1952,71 @@ function unitCalendarCard(u, month) {
   const weekdayOfFirst = (monthStart.day() + 6) % 7;
   const totalCells = Math.ceil((weekdayOfFirst + daysInMonth) / 7) * 7;
 
-  const rawEntries = db.prepare(
-    `SELECT 'BOOKING' as kind, id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
-       FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')
-     UNION ALL
-     SELECT 'BLOCK' as kind, id, start_date as s, end_date as e, 'Bloqueio' as guest_name, NULL as guest_email, NULL as guest_phone, 'BLOCK' as status, NULL as adults, NULL as children, NULL as total_cents, NULL as agency
-       FROM blocks WHERE unit_id = ?`
-  ).all(u.id, u.id).map(row => ({
-    ...row,
-    label: row.kind === 'BLOCK'
-      ? 'Bloqueio de datas'
-      : `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`,
-  }));
+  const bookingRows = db
+    .prepare(
+      `SELECT id, checkin as s, checkout as e, guest_name, guest_email, guest_phone, status, adults, children, total_cents, agency
+         FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING')`
+    )
+    .all(u.id);
+  const unitBlocks = db
+    .prepare(
+      `SELECT id, start_date, end_date, reason
+         FROM unit_blocks
+        WHERE unit_id = ?`
+    )
+    .all(u.id);
+  const legacyBlocks = db
+    .prepare(
+      `SELECT id, start_date, end_date
+         FROM blocks
+        WHERE unit_id = ?`
+    )
+    .all(u.id);
+
+  const blockEntries = unitBlocks.slice();
+  legacyBlocks.forEach(block => {
+    const duplicate = unitBlocks.some(
+      modern => modern.start_date === block.start_date && modern.end_date === block.end_date
+    );
+    if (!duplicate) {
+      blockEntries.push({ ...block, reason: null, legacy: true });
+    }
+  });
+
+  const rawEntries = bookingRows
+    .map(row => ({
+      kind: 'BOOKING',
+      id: row.id,
+      s: row.s,
+      e: row.e,
+      guest_name: row.guest_name,
+      guest_email: row.guest_email,
+      guest_phone: row.guest_phone,
+      status: row.status,
+      adults: row.adults,
+      children: row.children,
+      total_cents: row.total_cents,
+      agency: row.agency,
+      label: `${row.guest_name || 'Reserva'} (${row.adults || 0}A+${row.children || 0}C)`
+    }))
+    .concat(
+      blockEntries.map(entry => ({
+        kind: 'BLOCK',
+        id: entry.id,
+        s: entry.start_date,
+        e: entry.end_date,
+        guest_name: 'Bloqueio',
+        guest_email: null,
+        guest_phone: null,
+        status: 'BLOCK',
+        adults: null,
+        children: null,
+        total_cents: null,
+        agency: null,
+        reason: entry.reason || null,
+        label: 'Bloqueio de datas' + (entry.reason ? ` · ${entry.reason}` : '')
+      }))
+    );
 
   const bookingIds = rawEntries.filter(row => row.kind === 'BOOKING').map(row => row.id);
   const noteCounts = new Map();
@@ -2005,7 +2058,7 @@ function unitCalendarCard(u, month) {
     }
     return {
       ...row,
-      label: 'Bloqueio de datas',
+      label: row.label || 'Bloqueio de datas',
       note_count: 0,
       note_preview: '',
       note_meta: ''
@@ -2076,12 +2129,26 @@ function unitCalendarCard(u, month) {
   const weekdayHeader = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
     .map(w => `<div class="text-center text-xs text-slate-500 py-1">${w}</div>`)
     .join('');
+  const badgeSummaries = blockEntries.map(block => {
+    const startLabel = dayjs(block.start_date).format('DD/MM');
+    const endLabel = dayjs(block.end_date).isValid()
+      ? dayjs(block.end_date).subtract(1, 'day').format('DD/MM')
+      : dayjs(block.end_date).format('DD/MM');
+    const reason = block.reason ? ` · ${esc(block.reason)}` : '';
+    return `${startLabel}–${endLabel}${reason}`;
+  });
+  const blockBadge = blockEntries.length
+    ? ` <span class="bo-status-badge bo-status-badge--warning" data-block-badge="${u.id}" title="${esc(
+        'Bloqueado ' + badgeSummaries.join(', ')
+      )}">Bloqueado</span>`
+    : ` <span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
+
   return `
     <div class="card p-4 calendar-card" data-unit-card="${u.id}" data-unit-name="${esc(u.name)}">
       <div class="flex items-center justify-between mb-2">
         <div>
           <div class="text-sm text-slate-500">${u.property_name}</div>
-          <h3 class="text-lg font-semibold">${u.name}</h3>
+          <h3 class="text-lg font-semibold">${esc(u.name)}${blockBadge}</h3>
         </div>
         <a class="text-slate-600 hover:text-slate-900" href="/admin/units/${u.id}">Gerir</a>
       </div>
