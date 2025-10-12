@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const dayjs = require('dayjs');
+const path = require('node:path');
+const ExcelJS = require('exceljs');
 
 const { createDatabase } = require('../src/infra/database');
 const { createSessionService } = require('../src/services/session');
@@ -11,6 +13,16 @@ const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
 const { ConflictError } = require('../src/services/errors');
+const { createChannelIntegrationService } = require('../src/services/channel-integrations');
+
+function slugify(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
 
 function createMockRequest({ ip = '127.0.0.1', userAgent = 'jest/agent', body = {}, headers = {} } = {}) {
   return {
@@ -213,6 +225,64 @@ function testReportingService() {
   assert.equal(pdf.slice(0, 4).toString(), '%PDF', 'PDF gerado deve começar com assinatura PDF');
 }
 
+async function testChannelIntegrationWebhooks() {
+  const db = createDatabase(':memory:');
+  const service = createChannelIntegrationService({
+    db,
+    dayjs,
+    slugify,
+    ExcelJS,
+    ensureDir: async () => {},
+    uploadsDir: path.join(__dirname, '..', 'tmp', 'webhooks')
+  });
+
+  seedPropertyAndUnit(db);
+
+  const { summary, status } = await service.importFromRecords({
+    channelKey: 'booking_com',
+    records: [
+      {
+        propertyName: 'Casas de Pousadouro',
+        unitName: 'Douro Suite',
+        guestName: 'João Silva',
+        guestEmail: 'joao.silva@example.com',
+        checkin: '2025-06-01',
+        checkout: '2025-06-04',
+        totalCents: 45000,
+        externalRef: 'OTA-REF-1'
+      }
+    ],
+    uploadedBy: null,
+    targetStatus: 'CONFIRMED',
+    source: 'webhook-json'
+  });
+
+  assert.equal(status, 'processed', 'webhook deve processar registos válidos');
+  assert.equal(summary.insertedCount, 1, 'resumo deve contabilizar reserva criada');
+
+  const booking = db.prepare('SELECT guest_name, external_ref, import_source FROM bookings').get();
+  assert.equal(booking.guest_name, 'João Silva', 'reserva deve guardar nome do hóspede');
+  assert.equal(booking.external_ref, 'OTA-REF-1', 'referência externa deve ser persistida');
+  assert.equal(booking.import_source, 'webhook-json', 'origem deve marcar webhook JSON');
+
+  service.recordSyncOutcome('booking_com', { status, summary, userId: null });
+  const integrationSuccess = db
+    .prepare('SELECT last_status, last_summary_json, last_error FROM channel_integrations WHERE channel_key = ?')
+    .get('booking_com');
+  assert.equal(integrationSuccess.last_status, status, 'estado deve refletir processamento');
+  const storedSummary = JSON.parse(integrationSuccess.last_summary_json);
+  assert.equal(storedSummary.insertedCount, 1, 'resumo guardado deve coincidir com processamento');
+  assert.equal(integrationSuccess.last_error, null, 'erro deve ser limpo após sucesso');
+
+  service.recordSyncOutcome('booking_com', { error: 'assinatura inválida', userId: null });
+  const integrationError = db
+    .prepare('SELECT last_status, last_error, last_summary_json FROM channel_integrations WHERE channel_key = ?')
+    .get('booking_com');
+  assert.equal(integrationError.last_status, 'failed', 'estado deve sinalizar falha');
+  assert.equal(integrationError.last_error, 'assinatura inválida', 'mensagem de erro deve ser guardada');
+  assert.equal(integrationError.last_summary_json, null, 'resumo deve ser limpo em caso de falha');
+}
+
 function testChatbotParser() {
   const availabilityQuery = parseMessage(dayjs, '2 adultos 10 a 13 novembro');
   assert.equal(availabilityQuery.intent, 'availability', 'intenção deve mudar para disponibilidade quando dados existem');
@@ -233,7 +303,7 @@ function testChatbotParser() {
   assert.equal(withPreposition.checkin.month(), 11, 'mês de dezembro deve ser reconhecido');
 }
 
-function main() {
+async function main() {
   testSessionService();
   testCsrfProtection();
   testPricingService();
@@ -241,14 +311,13 @@ function main() {
   testUnitBlockService();
   testReviewService();
   testReportingService();
+  await testChannelIntegrationWebhooks();
   testChatbotParser();
   console.log('Todos os testes passaram.');
 }
 
-try {
-  main();
-} catch (err) {
+main().catch(err => {
   console.error(err);
   process.exit(1);
-}
+});
 

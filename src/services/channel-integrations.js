@@ -932,19 +932,61 @@ function createChannelIntegrationService({
     });
   }
 
-  async function importFromBuffer({ channelKey, buffer, format, originalName, uploadedBy, targetStatus }) {
+  async function importFromBuffer({
+    channelKey,
+    buffer,
+    format,
+    originalName,
+    uploadedBy,
+    targetStatus,
+    source
+  }) {
     const records = await Promise.resolve(
       parseRecordsFromSource({ channelKey, buffer, format, originalName, dayjs })
     );
     return processRecords({
       records,
       channelKey,
-      source: 'auto-fetch',
+      source: source || 'auto-fetch',
       fileName: null,
       originalName,
       uploadedBy,
       targetStatus
     });
+  }
+
+  function importFromRecords({ channelKey, records, uploadedBy, targetStatus, source }) {
+    const definition = getChannelDefinition(channelKey);
+    const normalized = Array.isArray(records)
+      ? records
+          .map(record => normalizeRecord(record, channelKey, definition, dayjs))
+          .filter(item => item.checkin && item.checkout && item.guestName)
+      : [];
+    return processRecords({
+      records: normalized,
+      channelKey,
+      source: source || 'webhook-json',
+      fileName: null,
+      originalName: null,
+      uploadedBy,
+      targetStatus
+    });
+  }
+
+  function recordSyncOutcome(channelKey, { status, summary, error, userId }) {
+    const normalizedStatus = error ? 'failed' : status || null;
+    const normalizedSummary = summary ? JSON.stringify(summary) : null;
+    const normalizedError = error ? String(error) : null;
+    db.prepare(
+      `UPDATE channel_integrations
+          SET last_synced_at = datetime('now'),
+              last_status = ?,
+              last_summary_json = ?,
+              last_error = ?,
+              updated_at = datetime('now'),
+              updated_by = ?
+        WHERE channel_key = ?`
+    ).run(normalizedStatus, normalizedSummary, normalizedError, userId || null, channelKey);
   }
 
   async function autoSyncChannel(channelKey, { userId, reason } = {}) {
@@ -965,29 +1007,17 @@ function createChannelIntegrationService({
         format: settings.autoFormat || determineFormatFromName(settings.autoUrl),
         originalName: settings.autoUrl,
         uploadedBy: userId,
-        targetStatus
+        targetStatus,
+        source: reason ? `auto-fetch:${reason}` : 'auto-fetch'
       });
-      db.prepare(
-        `UPDATE channel_integrations
-            SET last_synced_at = datetime('now'),
-                last_status = ?,
-                last_error = NULL,
-                last_summary_json = ?,
-                updated_at = datetime('now'),
-                updated_by = ?
-          WHERE channel_key = ?`
-      ).run(result.status, JSON.stringify(result.summary), userId || null, channelKey);
+      recordSyncOutcome(channelKey, {
+        status: result.status,
+        summary: result.summary,
+        userId
+      });
       return { skipped: false, summary: result.summary };
     } catch (err) {
-      db.prepare(
-        `UPDATE channel_integrations
-            SET last_synced_at = datetime('now'),
-                last_status = 'failed',
-                last_error = ?,
-                updated_at = datetime('now'),
-                updated_by = ?
-          WHERE channel_key = ?`
-      ).run(err.message, userId || null, channelKey);
+      recordSyncOutcome(channelKey, { error: err.message, userId });
       throw err;
     }
   }
@@ -1012,8 +1042,10 @@ function createChannelIntegrationService({
     saveIntegrationSettings,
     listRecentImports,
     importFromFile,
+    importFromRecords,
     autoSyncChannel,
-    autoSyncAll
+    autoSyncAll,
+    recordSyncOutcome
   };
 }
 

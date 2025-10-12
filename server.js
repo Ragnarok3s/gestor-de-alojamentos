@@ -45,6 +45,7 @@ const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
 
 const app = express();
+app.use('/webhooks/ota', express.raw({ type: '*/*', limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
@@ -1633,6 +1634,172 @@ const chatbotService = createChatbotService({ db });
 channelIntegrations
   .autoSyncAll({ reason: 'startup' })
   .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+function detectFormatFromContentType(contentType) {
+  if (!contentType) return '';
+  const normalized = String(contentType).toLowerCase();
+  if (normalized.includes('text/calendar') || normalized.includes('calendar')) return 'ics';
+  if (normalized.includes('text/csv') || normalized.includes('csv')) return 'csv';
+  if (
+    normalized.includes('spreadsheetml') ||
+    normalized.includes('application/vnd.ms-excel') ||
+    normalized.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  ) {
+    return 'xlsx';
+  }
+  return '';
+}
+
+function detectFormatFromName(name) {
+  if (!name) return '';
+  const ext = path.extname(String(name).toLowerCase());
+  if (!ext) return '';
+  if (ext === '.ics' || ext === '.ical') return 'ics';
+  if (ext === '.csv') return 'csv';
+  if (ext === '.tsv') return 'tsv';
+  if (ext === '.xlsx' || ext === '.xlsm' || ext === '.xls') return 'xlsx';
+  return ext.replace('.', '');
+}
+
+app.post('/webhooks/ota/:channelKey', async (req, res) => {
+  const rawChannel = req.params.channelKey;
+  const channelKey = String(rawChannel || '').trim();
+  if (!channelKey) {
+    return res.status(400).json({ error: 'Canal obrigatório' });
+  }
+  const integration = channelIntegrations.getIntegration(channelKey);
+  if (!integration) {
+    return res.status(404).json({ error: 'Canal desconhecido' });
+  }
+
+  const settings = integration.settings || {};
+  const targetStatus = settings.defaultStatus === 'PENDING' ? 'PENDING' : 'CONFIRMED';
+  const contentType = req.headers['content-type'] || '';
+  const formatHint = String(req.query.format || '').toLowerCase();
+  const headerNameRaw = req.headers['x-file-name'] || req.headers['x-filename'] || '';
+  const fileNameHeader = Array.isArray(headerNameRaw) ? headerNameRaw[0] : headerNameRaw;
+  const fileNameQuery = req.query.filename ? String(req.query.filename) : '';
+  const preferredName = fileNameQuery || (fileNameHeader ? String(fileNameHeader) : '');
+
+  const bufferBody = Buffer.isBuffer(req.body)
+    ? req.body
+    : req.body != null
+    ? Buffer.from(req.body)
+    : Buffer.alloc(0);
+
+  if (!bufferBody.length) {
+    return res.status(400).json({ error: 'Payload vazio' });
+  }
+
+  let result;
+  let originalName = preferredName ? String(preferredName) : null;
+  let format = formatHint;
+
+  try {
+    if (contentType && contentType.toLowerCase().includes('json')) {
+      const jsonString = bufferBody.toString('utf8').trim();
+      if (!jsonString) {
+        throw new Error('JSON vazio');
+      }
+      let payload;
+      try {
+        payload = JSON.parse(jsonString);
+      } catch (err) {
+        throw new Error('JSON inválido');
+      }
+
+      if (Array.isArray(payload.records)) {
+        result = await channelIntegrations.importFromRecords({
+          channelKey,
+          records: payload.records,
+          uploadedBy: null,
+          targetStatus,
+          source: 'webhook-json'
+        });
+      } else {
+        const data = payload.payload || payload.data || payload.file || '';
+        if (!data || (typeof data !== 'string' && !Array.isArray(data))) {
+          throw new Error('Estrutura JSON sem dados reconhecidos');
+        }
+        const encoding = String(payload.encoding || '').toLowerCase();
+        let buffer;
+        if (Array.isArray(data)) {
+          buffer = Buffer.from(data);
+        } else if (encoding === 'base64') {
+          buffer = Buffer.from(data, 'base64');
+        } else if (encoding === 'hex') {
+          buffer = Buffer.from(data, 'hex');
+        } else {
+          buffer = Buffer.from(data, 'utf8');
+        }
+        if (!buffer.length) {
+          throw new Error('Dados vazios no payload JSON');
+        }
+        if (payload.fileName || payload.filename) {
+          originalName = String(payload.fileName || payload.filename);
+        }
+        if (!format) {
+          format = String(payload.format || '').toLowerCase();
+        }
+        if (format === 'json') {
+          format = '';
+        }
+        if (!format) {
+          format = detectFormatFromContentType(payload.contentType || payload.mimeType || '');
+        }
+        if (!format && originalName) {
+          format = detectFormatFromName(originalName);
+        }
+        if (!format) {
+          format = detectFormatFromContentType(contentType);
+        }
+        result = await channelIntegrations.importFromBuffer({
+          channelKey,
+          buffer,
+          format,
+          originalName,
+          uploadedBy: null,
+          targetStatus,
+          source: 'webhook-json'
+        });
+      }
+    } else {
+      if (!format) {
+        format = detectFormatFromContentType(contentType);
+      }
+      if (format === 'json') {
+        format = '';
+      }
+      if (!format && preferredName) {
+        format = detectFormatFromName(preferredName);
+      }
+      result = await channelIntegrations.importFromBuffer({
+        channelKey,
+        buffer: bufferBody,
+        format,
+        originalName,
+        uploadedBy: null,
+        targetStatus,
+        source: 'webhook'
+      });
+    }
+
+    channelIntegrations.recordSyncOutcome(channelKey, {
+      status: result.status,
+      summary: result.summary,
+      userId: null
+    });
+
+    res.status(200).json({ status: result.status, summary: result.summary });
+  } catch (err) {
+    console.warn('Webhook OTA falhou:', err.message);
+    channelIntegrations.recordSyncOutcome(channelKey, {
+      error: err.message,
+      userId: null
+    });
+    res.status(400).json({ error: err.message });
+  }
+});
 
 setInterval(() => {
   channelIntegrations
