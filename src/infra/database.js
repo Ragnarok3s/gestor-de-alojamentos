@@ -930,6 +930,31 @@ function runLightMigrations(db) {
     );
 
     ensureTable(
+      'webhook_dead_letters',
+      `CREATE TABLE IF NOT EXISTS webhook_dead_letters (
+        delivery_id TEXT PRIMARY KEY,
+        job_id TEXT,
+        queue_name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        method TEXT NOT NULL,
+        headers_json TEXT,
+        body_json TEXT,
+        context_json TEXT,
+        source TEXT,
+        attempts_made INTEGER NOT NULL,
+        max_attempts INTEGER NOT NULL,
+        error_message TEXT,
+        first_failed_at TEXT NOT NULL,
+        last_failed_at TEXT NOT NULL,
+        replay_count INTEGER NOT NULL DEFAULT 0,
+        last_replayed_at TEXT,
+        last_replayed_job_id TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
       'decision_suggestions',
       `CREATE TABLE IF NOT EXISTS decision_suggestions (
         id TEXT PRIMARY KEY,

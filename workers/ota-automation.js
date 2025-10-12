@@ -25,6 +25,20 @@ function gracefulExit(signal) {
     } catch (err) {
       console.warn('[OTA Worker] Erro ao fechar fila', err.message);
     }
+    try {
+      if (server.webhookWorker && typeof server.webhookWorker.close === 'function') {
+        await server.webhookWorker.close();
+      }
+    } catch (err) {
+      console.warn('[OTA Worker] Erro ao fechar worker de webhooks', err.message);
+    }
+    try {
+      if (server.webhookQueue && typeof server.webhookQueue.close === 'function') {
+        await server.webhookQueue.close();
+      }
+    } catch (err) {
+      console.warn('[OTA Worker] Erro ao fechar fila de webhooks', err.message);
+    }
     process.exit(0);
   };
 

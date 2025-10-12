@@ -39,11 +39,13 @@ const xlsxAppendAction = require('./server/automations/actions/xlsx.append');
 const createHousekeepingTaskAction = require('./server/automations/actions/create.housekeeping_task');
 const priceOverrideAction = require('./server/automations/actions/price.override');
 const logActivityAction = require('./server/automations/actions/log.activity');
+const webhookAction = require('./server/automations/actions/webhook');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { createChatbotService } = require('./server/chatbot/service');
 const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
-const { createOtaQueue, createOtaWorker } = require('./src/infra/queue');
+const { createOtaQueue, createOtaWorker, createQueue, createWorker } = require('./src/infra/queue');
+const { createWebhookDeliveryService } = require('./src/services/webhook-delivery');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -1632,6 +1634,8 @@ const automationActionDrivers = {
   'create.housekeeping_task': createHousekeepingTaskAction,
   'price.override': priceOverrideAction,
   'log.activity': logActivityAction,
+  webhook: webhookAction,
+  'webhook.post': webhookAction,
 };
 
 const automationEngine = createAutomationEngine({
@@ -1645,6 +1649,21 @@ const automationEngine = createAutomationEngine({
   paths,
   actionDrivers: automationActionDrivers,
 });
+
+const webhookDelivery = createWebhookDeliveryService({
+  db,
+  queueFactory: createQueue,
+  workerFactory: createWorker,
+  telemetry,
+  dayjs,
+  logger: console,
+});
+
+const webhookQueue = webhookDelivery.queue;
+const webhookWorker = webhookDelivery.worker;
+const enqueueWebhookDelivery = webhookDelivery.enqueue;
+const listWebhookDeadLetters = webhookDelivery.listDeadLetters;
+const replayWebhookDeadLetter = webhookDelivery.replayDeadLetter;
 
 const otaQueue = createOtaQueue();
 const otaWorker = createOtaWorker(async job => {
@@ -1727,6 +1746,7 @@ const otaWorker = createOtaWorker(async job => {
 
       await automationEngine.handleEvent('ota.booking.created', payload, {
         source: data.channelKey || data.source || record.source_channel || 'ota',
+        enqueueWebhookDelivery,
       });
 
       processedIds.push(record.id);
@@ -1744,10 +1764,10 @@ const otaWorker = createOtaWorker(async job => {
 
 channelIntegrations.setOtaQueue(otaQueue);
 
-let otaShutdownInitiated = false;
-async function shutdownOtaProcessing() {
-  if (otaShutdownInitiated) return;
-  otaShutdownInitiated = true;
+let asyncShutdownInitiated = false;
+async function shutdownAsyncProcessing() {
+  if (asyncShutdownInitiated) return;
+  asyncShutdownInitiated = true;
   try {
     await otaWorker.close();
   } catch (err) {
@@ -1758,10 +1778,15 @@ async function shutdownOtaProcessing() {
   } catch (err) {
     console.warn('BullMQ OTA queue: erro ao encerrar', err.message);
   }
+  try {
+    await webhookDelivery.close();
+  } catch (err) {
+    console.warn('Worker de webhooks: erro ao encerrar', err.message);
+  }
 }
 
-process.once('SIGTERM', shutdownOtaProcessing);
-process.once('SIGINT', shutdownOtaProcessing);
+process.once('SIGTERM', shutdownAsyncProcessing);
+process.once('SIGINT', shutdownAsyncProcessing);
 
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
 const chatbotService = createChatbotService({ db });
@@ -3231,6 +3256,9 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  enqueueWebhookDelivery,
+  listWebhookDeadLetters,
+  replayWebhookDeadLetter,
   telemetry,
   wantsJson,
   formatAuditValue,
@@ -3347,3 +3375,8 @@ module.exports = app;
 module.exports.context = context;
 module.exports.otaQueue = otaQueue;
 module.exports.otaWorker = otaWorker;
+module.exports.webhookQueue = webhookQueue;
+module.exports.webhookWorker = webhookWorker;
+module.exports.enqueueWebhookDelivery = enqueueWebhookDelivery;
+module.exports.listWebhookDeadLetters = listWebhookDeadLetters;
+module.exports.replayWebhookDeadLetter = replayWebhookDeadLetter;
