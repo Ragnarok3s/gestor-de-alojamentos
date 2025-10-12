@@ -381,9 +381,12 @@ function createChannelIntegrationService({
   slugify,
   ExcelJS,
   ensureDir,
-  uploadsDir
+  uploadsDir,
+  otaQueue: initialOtaQueue = null
 }) {
   ensureDefaults(db);
+
+  let otaQueue = initialOtaQueue;
 
   const tabularSynonyms = {
     property: ['property', 'hotel', 'alojamento', 'property name', 'hotel name'],
@@ -774,6 +777,10 @@ function createChannelIntegrationService({
     return `${base || channelKey}@imports.local`; // synthetic email
   }
 
+  function setOtaQueue(queue) {
+    otaQueue = queue || null;
+  }
+
   async function processRecords({
     records,
     channelKey,
@@ -912,6 +919,27 @@ function createChannelIntegrationService({
     });
 
     const outcome = execute();
+
+    if (otaQueue && inserted.length) {
+      const nowIso = dayjs().toISOString();
+      const jobPayload = {
+        bookingIds: inserted.map(item => item.booking_id),
+        channelKey,
+        source,
+        importBatchId: outcome.batchId,
+        summary: outcome.summary,
+        importedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        queuedAt: nowIso,
+      };
+      try {
+        await otaQueue.add('ota-booking-imported', jobPayload, {
+          removeOnComplete: { age: 60 * 60, count: 500 },
+        });
+      } catch (err) {
+        console.warn('Fila OTA: falha ao enfileirar job', err.message);
+      }
+    }
+
     return { ...outcome, inserted, duplicates, conflicts, unmatched, errors };
   }
 
@@ -1013,7 +1041,8 @@ function createChannelIntegrationService({
     listRecentImports,
     importFromFile,
     autoSyncChannel,
-    autoSyncAll
+    autoSyncAll,
+    setOtaQueue
   };
 }
 

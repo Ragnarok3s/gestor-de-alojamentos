@@ -32,3 +32,7 @@
 - [ ] Exportar semana ➜ ficheiros CSV/PDF contêm KPIs esperados.
 - [ ] A11y básico (axe) passa em páginas de preços e reviews.
 
+## Infraestrutura — Filas OTA
+- `REDIS_URL`: string de ligação para o Redis usado pelo BullMQ (ex.: `redis://localhost:6379`). Obrigatório em produção; em desenvolvimento o helper assume `redis://127.0.0.1:6379` e emite um aviso.
+- `npm run worker:ota`: inicia apenas o worker de automação OTA (sem levantar o servidor HTTP). Útil para escalar processamentos em processos separados.
+

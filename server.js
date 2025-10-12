@@ -43,6 +43,7 @@ const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { createChatbotService } = require('./server/chatbot/service');
 const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
+const { createOtaQueue, createOtaWorker } = require('./src/infra/queue');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -421,6 +422,24 @@ const selectAutomationBlockOverlapStmt = db.prepare(
 );
 const selectAutomationBookingOverlapStmt = db.prepare(
   "SELECT id FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)"
+);
+const selectOtaBookingByIdStmt = db.prepare(
+  `SELECT b.*,
+          u.name AS unit_name,
+          u.capacity AS unit_capacity,
+          u.base_price_cents AS unit_base_price_cents,
+          u.features AS unit_features,
+          u.address AS unit_address,
+          u.property_id,
+          p.name AS property_name,
+          p.location AS property_location,
+          p.locality AS property_locality,
+          p.district AS property_district,
+          p.address AS property_address
+     FROM bookings b
+     JOIN units u ON u.id = b.unit_id
+     JOIN properties p ON p.id = u.property_id
+    WHERE b.id = ?`
 );
 const selectAutomationCancellationsStmt = db.prepare(
   "SELECT id, entity_id, before_json, created_at FROM change_logs WHERE entity_type = 'booking' AND action = 'cancel' ORDER BY id DESC LIMIT 12"
@@ -1627,18 +1646,137 @@ const automationEngine = createAutomationEngine({
   actionDrivers: automationActionDrivers,
 });
 
+const otaQueue = createOtaQueue();
+const otaWorker = createOtaWorker(async job => {
+  const data = job && job.data ? job.data : {};
+  const bookingIds = Array.isArray(data.bookingIds) ? data.bookingIds : [];
+  const processedIds = [];
+
+  try {
+    for (const rawId of bookingIds) {
+      const bookingId = Number(rawId);
+      if (!Number.isFinite(bookingId)) continue;
+      const record = selectOtaBookingByIdStmt.get(bookingId);
+      if (!record) continue;
+
+      const unit = {
+        id: record.unit_id,
+        name: record.unit_name,
+        capacity: record.unit_capacity,
+        base_price_cents: record.unit_base_price_cents,
+        features: record.unit_features,
+        address: record.unit_address,
+        property_id: record.property_id,
+      };
+
+      const property = {
+        id: record.property_id,
+        name: record.property_name,
+        location: record.property_location,
+        locality: record.property_locality,
+        district: record.property_district,
+        address: record.property_address,
+      };
+
+      const payload = {
+        booking_id: record.id,
+        booking: {
+          id: record.id,
+          unit_id: record.unit_id,
+          guest_name: record.guest_name,
+          guest_email: record.guest_email,
+          guest_phone: record.guest_phone,
+          guest_nationality: record.guest_nationality,
+          adults: record.adults,
+          children: record.children,
+          checkin: record.checkin,
+          checkout: record.checkout,
+          total_cents: record.total_cents,
+          status: record.status,
+          agency: record.agency,
+          external_ref: record.external_ref,
+          source_channel: record.source_channel,
+          import_source: record.import_source,
+          import_batch_id: record.import_batch_id,
+          imported_at: record.imported_at,
+          created_at: record.created_at,
+          notes: record.import_notes,
+        },
+        unit,
+        property,
+        guest_name: record.guest_name,
+        guest_email: record.guest_email,
+        guest_phone: record.guest_phone,
+        checkin: record.checkin,
+        checkout: record.checkout,
+        total_cents: record.total_cents,
+        status: record.status,
+        adults: record.adults,
+        children: record.children,
+        agency: record.agency,
+        source_channel: record.source_channel,
+        import_source: record.import_source,
+        imported_at: record.imported_at,
+        channelKey: data.channelKey || record.source_channel || null,
+        source: data.source || record.import_source || null,
+        queuedAt: data.queuedAt || null,
+        importBatchId: data.importBatchId || record.import_batch_id,
+        summary: data.summary || null,
+        processedAt: new Date().toISOString(),
+      };
+
+      await automationEngine.handleEvent('ota.booking.created', payload, {
+        source: data.channelKey || data.source || record.source_channel || 'ota',
+      });
+
+      processedIds.push(record.id);
+    }
+
+    return { processedCount: processedIds.length, bookingIds: processedIds };
+  } finally {
+    try {
+      runAutomationSweep('ota-event');
+    } catch (err) {
+      console.error('Automação OTA: falha ao atualizar cache após job', err);
+    }
+  }
+});
+
+channelIntegrations.setOtaQueue(otaQueue);
+
+let otaShutdownInitiated = false;
+async function shutdownOtaProcessing() {
+  if (otaShutdownInitiated) return;
+  otaShutdownInitiated = true;
+  try {
+    await otaWorker.close();
+  } catch (err) {
+    console.warn('BullMQ OTA worker: erro ao encerrar', err.message);
+  }
+  try {
+    await otaQueue.close();
+  } catch (err) {
+    console.warn('BullMQ OTA queue: erro ao encerrar', err.message);
+  }
+}
+
+process.once('SIGTERM', shutdownOtaProcessing);
+process.once('SIGINT', shutdownOtaProcessing);
+
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
 const chatbotService = createChatbotService({ db });
 
-channelIntegrations
-  .autoSyncAll({ reason: 'startup' })
-  .catch(err => console.warn('Integração de canais (startup):', err.message));
-
-setInterval(() => {
+if (process.env.OTA_WORKER_ONLY !== '1') {
   channelIntegrations
-    .autoSyncAll({ reason: 'interval' })
-    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
-}, 30 * 60 * 1000);
+    .autoSyncAll({ reason: 'startup' })
+    .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+  setInterval(() => {
+    channelIntegrations
+      .autoSyncAll({ reason: 'interval' })
+      .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+  }, 30 * 60 * 1000);
+}
 
 function scheduleDailyTask(task, hour, minute) {
   const run = () => {
@@ -3150,7 +3288,8 @@ const context = {
   UNIT_TYPE_ICON_HINTS,
   slugify,
   decisionAssistant,
-  chatbotService
+  chatbotService,
+  otaQueue
 };
 
 registerAuthRoutes(app, context);
@@ -3205,3 +3344,6 @@ if (!global.__SERVER_STARTED__) {
 }
 
 module.exports = app;
+module.exports.context = context;
+module.exports.otaQueue = otaQueue;
+module.exports.otaWorker = otaWorker;
