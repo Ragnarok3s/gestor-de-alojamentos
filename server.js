@@ -7,7 +7,14 @@ const fs = require('fs');
 const fsp = fs.promises;
 const https = require('https');
 const multer = require('multer');
-const ExcelJS = require('exceljs');
+let ExcelJS = null;
+try {
+  ExcelJS = require('exceljs');
+} catch (err) {
+  console.warn(
+    'Dependência opcional "exceljs" não encontrada; exportações para Excel ficarão indisponíveis até ser instalada (npm install exceljs).'
+  );
+}
 let sharp = null;
 try {
   sharp = require('sharp');
