@@ -1593,6 +1593,18 @@ const slugify = (value) =>
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
 
+function timingSafeCompare(expected, actual) {
+  if (typeof expected !== 'string' || typeof actual !== 'string') return false;
+  try {
+    const exp = Buffer.from(expected);
+    const act = Buffer.from(actual);
+    if (exp.length !== act.length) return false;
+    return crypto.timingSafeEqual(exp, act);
+  } catch (err) {
+    return false;
+  }
+}
+
 const emailTemplates = createEmailTemplateService({ db, dayjs });
 const mailer = createMailer({ logger: console });
 const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
@@ -1639,6 +1651,85 @@ setInterval(() => {
     .autoSyncAll({ reason: 'interval' })
     .catch(err => console.warn('Integração de canais (intervalo):', err.message));
 }, 30 * 60 * 1000);
+
+app.post('/api/ota/webhooks/:channelKey', async (req, res) => {
+  const channelKey = String(req.params.channelKey || '').trim();
+  if (!channelKey) {
+    return res.status(400).json({ error: 'Canal obrigatório' });
+  }
+
+  const integration = channelIntegrations.getIntegration(channelKey);
+  if (!integration) {
+    return res.status(404).json({ error: 'Canal desconhecido' });
+  }
+
+  const expectedSecretSources = [];
+  if (integration.settings) {
+    if (integration.settings.webhookSecret) expectedSecretSources.push(integration.settings.webhookSecret);
+    if (integration.settings.webhookToken) expectedSecretSources.push(integration.settings.webhookToken);
+    if (integration.settings.secret) expectedSecretSources.push(integration.settings.secret);
+  }
+  if (integration.credentials) {
+    if (integration.credentials.webhookSecret) expectedSecretSources.push(integration.credentials.webhookSecret);
+    if (integration.credentials.webhookToken) expectedSecretSources.push(integration.credentials.webhookToken);
+    if (integration.credentials.secret) expectedSecretSources.push(integration.credentials.secret);
+  }
+  const expectedSecret = expectedSecretSources.find(value => typeof value === 'string' && value.trim());
+
+  const providedSecrets = [];
+  const headerNames = ['x-ota-secret', 'x-ota-signature', 'x-channel-signature', 'x-webhook-signature'];
+  for (const header of headerNames) {
+    const value = req.get(header);
+    if (typeof value === 'string' && value.trim()) {
+      providedSecrets.push(value.trim());
+    }
+  }
+  const queryNames = ['secret', 'signature', 'token'];
+  for (const key of queryNames) {
+    const value = req.query ? req.query[key] : undefined;
+    if (typeof value === 'string' && value.trim()) {
+      providedSecrets.push(value.trim());
+    }
+  }
+  if (req.body && typeof req.body.signature === 'string' && req.body.signature.trim()) {
+    providedSecrets.push(req.body.signature.trim());
+  }
+  const providedSecret = providedSecrets.find(Boolean);
+
+  if (expectedSecret && (!providedSecret || !timingSafeCompare(String(expectedSecret), String(providedSecret)))) {
+    return res.status(401).json({ error: 'Assinatura inválida' });
+  }
+
+  try {
+    const eventType = req.body && typeof req.body.event === 'string' ? req.body.event : null;
+    const sourceLabel = eventType ? `webhook:${eventType}` : 'webhook';
+    const result = await channelIntegrations.importFromWebhook({
+      channelKey,
+      payload: req.body,
+      uploadedBy: null,
+      sourceLabel
+    });
+    const summary = result && result.summary ? result.summary : {};
+    const responseSummary = {
+      processed: summary.insertedCount || 0,
+      duplicates: summary.duplicateCount || 0,
+      conflicts: summary.conflictCount || 0,
+      unmatched: summary.unmatchedCount || 0,
+      errors: summary.errorCount || 0
+    };
+    logActivity(null, 'channel.webhook', 'channel', channelKey, {
+      event: eventType,
+      summary: responseSummary,
+      processedRecords: result ? result.processedRecords : 0,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || null
+    });
+    res.status(200).json({ status: 'ok', ...responseSummary });
+  } catch (err) {
+    console.warn('Webhook OTA falhou:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
 
 function scheduleDailyTask(task, hour, minute) {
   const run = () => {
