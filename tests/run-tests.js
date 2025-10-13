@@ -12,6 +12,30 @@ const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
 const { ConflictError } = require('../src/services/errors');
 
+function testServerBootstrap() {
+  const serverPath = require.resolve('../server');
+  delete require.cache[serverPath];
+  const previousFlag = global.__SERVER_STARTED__;
+  const previousDbPath = process.env.DATABASE_PATH;
+  process.env.SKIP_SERVER_START = '1';
+  process.env.DATABASE_PATH = ':memory:';
+  const app = require(serverPath);
+  assert.equal(typeof app, 'function', 'server deve exportar instância Express');
+  assert.equal(global.__SERVER_STARTED__, previousFlag, 'servidor não deve arrancar em modo de teste');
+  delete process.env.SKIP_SERVER_START;
+  if (previousDbPath === undefined) {
+    delete process.env.DATABASE_PATH;
+  } else {
+    process.env.DATABASE_PATH = previousDbPath;
+  }
+  delete require.cache[serverPath];
+  if (previousFlag === undefined) {
+    delete global.__SERVER_STARTED__;
+  } else {
+    global.__SERVER_STARTED__ = previousFlag;
+  }
+}
+
 function createMockRequest({ ip = '127.0.0.1', userAgent = 'jest/agent', body = {}, headers = {} } = {}) {
   return {
     ip,
@@ -234,6 +258,7 @@ function testChatbotParser() {
 }
 
 function main() {
+  testServerBootstrap();
   testSessionService();
   testCsrfProtection();
   testPricingService();

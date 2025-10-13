@@ -4,7 +4,11 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "node tests/run-tests.js",
+    "lint": "node scripts/lint.js",
+    "typecheck": "node scripts/typecheck.js",
+    "build": "node scripts/build-check.js",
+    "test": "node scripts/run-tests.js",
+    "depcheck": "node scripts/depcheck.js",
     "start": "node server.js"
   },
   "keywords": [],
@@ -19,8 +23,6 @@
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "multer": "^2.0.2",
-    "path-to-regexp": "^8.3.0",
-    "sharp": "^0.33.4",
-    "stripe": "^18.5.0"
+    "sharp": "^0.33.4"
   }
 }
