@@ -5290,17 +5290,39 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
     switch (successKey) {
       case 'saved':
       case '1':
-        return 'Preferências guardadas. O tema foi atualizado em todo o portal.';
-      case 'reset': return 'Tema reposto aos valores padrão.';
-      case 'template': return 'Tema personalizado guardado para reutilização futura.';
-      case 'applied': return 'Tema personalizado aplicado com sucesso.';
+        return 'Preferências guardadas. A barra de navegação foi atualizada.';
+      case 'reset': return 'Tema da barra de navegação reposto aos valores padrão.';
+      case 'template': return 'Tema personalizado da barra de navegação guardado para reutilização futura.';
+      case 'applied': return 'Tema personalizado aplicado à barra de navegação.';
       case 'deleted': return 'Tema personalizado removido.';
-      case 'logo_removed': return 'Logotipo removido. Será utilizada a sigla da marca.';
+      case 'logo_removed': return 'Logotipo removido. Será utilizada a sigla da marca na barra de navegação.';
       default: return '';
     }
   })();
   const savedThemes = store.savedThemes || [];
   const propertyLabel = propertyRow ? propertyRow.name : 'tema global';
+  const previewStyle = [
+    `--nav-background:${theme.surface}`,
+    `--nav-border:${theme.surfaceBorder}`,
+    `--nav-foreground:${theme.surfaceContrast}`,
+    `--nav-muted:${theme.mutedText}`,
+    `--nav-link:${theme.mutedText}`,
+    `--nav-link-hover:${theme.primaryHover}`,
+    `--nav-link-active:${theme.primaryColor}`,
+    `--nav-accent-gradient:linear-gradient(90deg, ${theme.secondaryColor}, ${theme.primaryColor})`,
+    `--nav-highlight:${theme.highlightColor}`,
+    `--nav-logo-from:${theme.secondaryColor}`,
+    `--nav-logo-to:${theme.primaryColor}`,
+    `--nav-logo-contrast:${theme.primaryContrast}`,
+    `--nav-pill-bg:${theme.primarySoft}`,
+    `--nav-pill-text:${theme.primaryContrast}`,
+    `--nav-button:${theme.primarySoft}`,
+    `--nav-button-hover:${theme.primaryHover}`,
+    `--nav-radius:${theme.radius}`,
+    `--nav-radius-sm:${theme.radiusSm}`,
+    `--nav-radius-lg:${theme.radiusLg}`,
+    `--nav-radius-pill:${theme.radiusPill}`
+  ].join(';');
 
   res.send(layout({
     title: 'Identidade visual',
@@ -5310,7 +5332,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
     body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mt-2">Identidade visual</h1>
-      <p class="text-slate-600 mb-4">Personalize cores, logotipo e mensagens para garantir consistência entre frontoffice e backoffice em cada propriedade.</p>
+      <p class="text-slate-600 mb-4">Personalize logotipo, cores e mensagens da barra de navegação principal. As alterações aplicam-se apenas à navbar superior visível em toda a aplicação.</p>
 
       <form method="get" class="card p-4 mb-4 flex flex-wrap gap-3 items-end max-w-xl">
         <label class="grid gap-1 text-sm text-slate-600">
@@ -5320,7 +5342,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
             ${properties.map(p => `<option value="${p.id}" ${propertyId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
           </select>
         </label>
-        <p class="text-xs text-slate-500 max-w-sm">Ao selecionar uma propriedade pode definir um tema próprio. Sem seleção, edita o tema global partilhado.</p>
+            <p class="text-xs text-slate-500 max-w-sm">Ao selecionar uma propriedade pode definir um tema próprio. Sem seleção, edita a aparência global da barra de navegação.</p>
       </form>
 
       ${successMessage ? `
@@ -5341,7 +5363,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
           <input type="hidden" name="property_id" value="${propertyId || ''}" />
           <div class="flex flex-col gap-1">
             <h2 class="text-lg font-semibold text-slate-800">Configurar ${esc(propertyLabel)}</h2>
-            <p class="text-sm text-slate-500">Definições guardadas são aplicadas imediatamente ao frontoffice e backoffice da seleção atual.</p>
+            <p class="text-sm text-slate-500">Definições guardadas são aplicadas de imediato à barra de navegação da seleção atual.</p>
           </div>
 
           <div class="grid gap-4 md:grid-cols-2">
@@ -5433,30 +5455,35 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
         </form>
 
         <aside class="grid gap-4">
-          <section class="card p-4 grid gap-3" data-theme-preview>
-            <h2 class="text-sm font-semibold text-slate-700">Pré-visualização em tempo real</h2>
-            <div class="preview-card" data-preview-root>
-              <div class="preview-top">
-                <div class="preview-logo" data-preview-logo>
-                  ${logoPath ? `<img src="${esc(logoPath)}" alt="${esc(formLogoAlt)}" />` : `<span data-preview-initials>${esc(formInitials || theme.brandInitials)}</span>`}
+          <section class="card p-4 grid gap-4" data-theme-preview>
+            <h2 class="text-sm font-semibold text-slate-700">Pré-visualização da barra de navegação</h2>
+            <div class="nav-preview" data-preview-root style="${esc(previewStyle)}">
+              <div class="nav-preview-bar">
+                <div class="nav-preview-brand">
+                  <div class="nav-preview-logo" data-preview-logo>
+                    ${logoPath ? `<img src="${esc(logoPath)}" alt="${esc(formLogoAlt)}" />` : `<span data-preview-initials>${esc(formInitials || theme.brandInitials)}</span>`}
+                  </div>
+                  <div class="nav-preview-meta">
+                    <span class="nav-preview-name" data-preview-name>${esc(formBrandName)}</span>
+                    <span class="nav-preview-tagline" data-preview-tagline>${esc(formTagline)}</span>
+                  </div>
                 </div>
-                <div>
-                  <div class="preview-brand" data-preview-name>${esc(formBrandName)}</div>
-                  <div class="preview-tagline" data-preview-tagline>${esc(formTagline)}</div>
+                <div class="nav-preview-links">
+                  <span class="nav-preview-link is-active">Início</span>
+                  <span class="nav-preview-link">Reservas</span>
+                  <span class="nav-preview-link">Proprietários</span>
+                </div>
+                <div class="nav-preview-actions">
+                  <span class="nav-preview-pill">Utilizador</span>
+                  <button type="button" class="nav-preview-button">Login</button>
                 </div>
               </div>
-              <div class="preview-body">
-                <p>Botões, formulários e cartões utilizam estas variáveis de cor e raio em todo o portal.</p>
-                <div class="preview-actions">
-                  <button type="button" class="preview-btn-primary">Reservar</button>
-                  <button type="button" class="preview-btn-secondary">Ver unidades</button>
-                </div>
-              </div>
+              <div class="nav-preview-accent"></div>
             </div>
             <ul class="preview-palette">
-              <li><span class="swatch" data-preview-swatch="primary"></span> Primária <code data-preview-code="primary">${esc(theme.primaryColor)}</code></li>
-              <li><span class="swatch" data-preview-swatch="secondary"></span> Secundária <code data-preview-code="secondary">${esc(theme.secondaryColor)}</code></li>
-              <li><span class="swatch" data-preview-swatch="highlight"></span> Destaque <code data-preview-code="highlight">${esc(theme.highlightColor)}</code></li>
+              <li><span class="swatch" data-preview-swatch="primary"></span> Primária (links ativos e gradiente) <code data-preview-code="primary">${esc(theme.primaryColor)}</code></li>
+              <li><span class="swatch" data-preview-swatch="secondary"></span> Secundária (início do gradiente) <code data-preview-code="secondary">${esc(theme.secondaryColor)}</code></li>
+              <li><span class="swatch" data-preview-swatch="highlight"></span> Destaque (elementos auxiliares) <code data-preview-code="highlight">${esc(theme.highlightColor)}</code></li>
             </ul>
           </section>
 
@@ -5478,8 +5505,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
                         </form>
                       </div>
                       <div class="saved-theme-preview">
-                        <span class="swatch" style="background:var(--saved-primary)"></span>
-                        <span class="swatch" style="background:var(--saved-secondary)"></span>
+                        <span class="saved-theme-gradient"></span>
                         <span class="text-xs text-slate-500">${esc(sample.brandName)}</span>
                       </div>
                     </li>
@@ -5492,23 +5518,30 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
       </div>
 
       <style>
-        [data-theme-preview] .preview-card{border-radius:var(--brand-radius-lg);border:1px solid var(--brand-surface-border);background:linear-gradient(135deg,var(--brand-primary-soft),#fff);padding:18px;display:grid;gap:16px;}
-        [data-theme-preview] .preview-top{display:flex;align-items:center;gap:14px;}
-        [data-theme-preview] .preview-logo{width:46px;height:46px;border-radius:var(--brand-radius-sm);background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));display:flex;align-items:center;justify-content:center;color:var(--brand-primary-contrast);font-weight:700;overflow:hidden;}
-        [data-theme-preview] .preview-logo img{width:100%;height:100%;object-fit:cover;display:block;}
-        [data-theme-preview] .preview-brand{font-weight:600;font-size:1rem;color:#1f2937;}
-        [data-theme-preview] .preview-tagline{font-size:.8rem;color:var(--brand-muted);}
-        [data-theme-preview] .preview-body{display:grid;gap:12px;font-size:.85rem;color:#475569;}
-        [data-theme-preview] .preview-actions{display:flex;gap:8px;flex-wrap:wrap;}
-        [data-theme-preview] .preview-btn-primary{background:var(--brand-primary);color:var(--brand-primary-contrast);border:none;border-radius:var(--brand-radius-pill);padding:8px 18px;font-weight:600;}
-        [data-theme-preview] .preview-btn-secondary{background:var(--brand-secondary);color:var(--brand-primary-contrast);border:none;border-radius:var(--brand-radius-pill);padding:8px 16px;font-weight:600;opacity:.9;}
+        [data-theme-preview] .nav-preview{border-radius:var(--nav-radius-lg,var(--brand-radius-lg));border:1px solid var(--nav-border,var(--brand-surface-border));background:var(--nav-background,#fff);box-shadow:0 16px 32px rgba(15,23,42,.08);display:grid;gap:0;overflow:hidden;}
+        [data-theme-preview] .nav-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:18px;padding:20px 22px;background:var(--nav-background,#fff);color:var(--nav-foreground,#1f2937);}
+        [data-theme-preview] .nav-preview-brand{display:flex;align-items:center;gap:12px;min-width:220px;}
+        [data-theme-preview] .nav-preview-logo{width:44px;height:44px;border-radius:var(--nav-radius-sm,var(--brand-radius-sm));background:linear-gradient(130deg,var(--nav-logo-from,var(--brand-primary)),var(--nav-logo-to,var(--brand-secondary)));display:flex;align-items:center;justify-content:center;color:var(--nav-logo-contrast,var(--brand-primary-contrast));font-weight:700;overflow:hidden;box-shadow:0 8px 18px rgba(15,23,42,.12);}
+        [data-theme-preview] .nav-preview-logo img{width:100%;height:100%;object-fit:cover;display:block;}
+        [data-theme-preview] .nav-preview-meta{display:flex;flex-direction:column;gap:2px;}
+        [data-theme-preview] .nav-preview-name{font-weight:600;font-size:1rem;color:inherit;}
+        [data-theme-preview] .nav-preview-tagline{font-size:.78rem;color:var(--nav-muted,#7a7b88);}
+        [data-theme-preview] .nav-preview-links{display:flex;flex-wrap:wrap;gap:18px;font-size:.9rem;}
+        [data-theme-preview] .nav-preview-link{position:relative;padding-bottom:6px;color:var(--nav-link,#7a7b88);font-weight:500;}
+        [data-theme-preview] .nav-preview-link.is-active{color:var(--nav-link-active,#2f3140);}
+        [data-theme-preview] .nav-preview-link.is-active::after{content:'';position:absolute;left:0;right:0;bottom:-10px;height:3px;border-radius:999px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));}
+        [data-theme-preview] .nav-preview-actions{display:flex;align-items:center;gap:12px;margin-left:auto;}
+        [data-theme-preview] .nav-preview-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--nav-radius-pill,999px);background:var(--nav-pill-bg,#f1f5f9);color:var(--nav-pill-text,#475569);font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;}
+        [data-theme-preview] .nav-preview-button{border:none;border-radius:var(--nav-radius-pill,999px);background:var(--nav-button,#7a7b88);color:var(--nav-link-active,#2f3140);padding:6px 14px;font-size:.8rem;font-weight:600;cursor:pointer;transition:background .18s ease;}
+        [data-theme-preview] .nav-preview-button:hover{background:var(--nav-button-hover,#424556);}
+        [data-theme-preview] .nav-preview-accent{height:4px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));opacity:.85;}
         [data-theme-preview] .preview-palette{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.8rem;color:#475569;}
         [data-theme-preview] .preview-palette .swatch{display:inline-block;width:18px;height:18px;border-radius:6px;margin-right:6px;vertical-align:middle;border:1px solid rgba(15,23,42,.12);}
         .saved-theme{border:1px solid var(--brand-surface-border);border-radius:var(--brand-radius-sm);padding:12px;display:grid;gap:8px;}
         .saved-theme-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
         .saved-theme-name{font-size:.9rem;font-weight:600;color:#1f2937;}
-        .saved-theme-preview{display:flex;align-items:center;gap:8px;font-size:.75rem;color:#475569;}
-        .saved-theme .swatch{display:inline-block;width:18px;height:18px;border-radius:6px;border:1px solid rgba(15,23,42,.12);}
+        .saved-theme-preview{display:flex;align-items:center;gap:10px;font-size:.75rem;color:#475569;}
+        .saved-theme-gradient{width:56px;height:10px;border-radius:999px;background:linear-gradient(90deg,var(--saved-secondary),var(--saved-primary));box-shadow:0 4px 10px rgba(15,23,42,.12);}
         .btn.btn-xs{padding:4px 10px;font-size:.75rem;border-radius:999px;}
       </style>
 
@@ -5586,14 +5619,17 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
               highlight = mix(primary, '#f97316', 0.35);
             }
 
-            const primaryHover = mix(primary, '#000000', 0.18);
-            const primarySoft = mix(primary, '#ffffff', 0.82);
             const surface = mix(primary, '#ffffff', 0.94);
             const surfaceBorder = mix(primary, '#1f2937', 0.12);
-            const surfaceRing = mix(primary, '#60a5fa', 0.35);
-            const background = mix(primary, '#ffffff', 0.97);
-            const muted = mix(primary, '#475569', 0.35);
-            const surfaceContrast = contrast(surface);
+            const navForeground = contrast(surface);
+            const navMuted = mix(navForeground, surface, 0.55);
+            const navLink = mix(navForeground, surface, 0.65);
+            const navLinkHover = mix(navForeground, surface, 0.4);
+            const navLinkActive = mix(navForeground, surface, 0.18);
+            const navButton = mix(navForeground, surface, 0.5);
+            const navButtonHover = mix(navForeground, primary, 0.35);
+            const navPillBg = mix(surface, highlight, 0.25);
+            const navPillText = mix(navForeground, highlight, 0.35);
 
             const cornerStyle = cornerSelect && cornerSelect.value === 'square' ? 'square' : 'rounded';
             const radius = cornerStyle === 'square' ? '14px' : '24px';
@@ -5601,22 +5637,28 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
             const radiusLg = cornerStyle === 'square' ? '24px' : '32px';
             const radiusPill = cornerStyle === 'square' ? '22px' : '999px';
 
-            previewRoot.style.setProperty('--brand-primary', primary);
-            previewRoot.style.setProperty('--brand-secondary', secondary);
-            previewRoot.style.setProperty('--brand-highlight', highlight);
-            previewRoot.style.setProperty('--brand-primary-contrast', contrast(primary));
-            previewRoot.style.setProperty('--brand-primary-hover', primaryHover);
-            previewRoot.style.setProperty('--brand-primary-soft', primarySoft);
-            previewRoot.style.setProperty('--brand-surface', surface);
-            previewRoot.style.setProperty('--brand-surface-border', surfaceBorder);
-            previewRoot.style.setProperty('--brand-surface-ring', surfaceRing);
-            previewRoot.style.setProperty('--brand-surface-contrast', surfaceContrast);
-            previewRoot.style.setProperty('--brand-background', background);
-            previewRoot.style.setProperty('--brand-muted', muted);
-            previewRoot.style.setProperty('--brand-radius', radius);
-            previewRoot.style.setProperty('--brand-radius-sm', radiusSm);
-            previewRoot.style.setProperty('--brand-radius-lg', radiusLg);
-            previewRoot.style.setProperty('--brand-radius-pill', radiusPill);
+            if (previewRoot) {
+              previewRoot.style.setProperty('--nav-background', surface);
+              previewRoot.style.setProperty('--nav-border', surfaceBorder);
+              previewRoot.style.setProperty('--nav-foreground', navForeground);
+              previewRoot.style.setProperty('--nav-muted', navMuted);
+              previewRoot.style.setProperty('--nav-link', navLink);
+              previewRoot.style.setProperty('--nav-link-hover', navLinkHover);
+              previewRoot.style.setProperty('--nav-link-active', navLinkActive);
+              previewRoot.style.setProperty('--nav-accent-gradient', `linear-gradient(90deg, ${secondary}, ${primary})`);
+              previewRoot.style.setProperty('--nav-highlight', highlight);
+              previewRoot.style.setProperty('--nav-logo-from', secondary);
+              previewRoot.style.setProperty('--nav-logo-to', primary);
+              previewRoot.style.setProperty('--nav-logo-contrast', contrast(primary));
+              previewRoot.style.setProperty('--nav-pill-bg', navPillBg);
+              previewRoot.style.setProperty('--nav-pill-text', navPillText);
+              previewRoot.style.setProperty('--nav-button', navButton);
+              previewRoot.style.setProperty('--nav-button-hover', navButtonHover);
+              previewRoot.style.setProperty('--nav-radius', radius);
+              previewRoot.style.setProperty('--nav-radius-sm', radiusSm);
+              previewRoot.style.setProperty('--nav-radius-lg', radiusLg);
+              previewRoot.style.setProperty('--nav-radius-pill', radiusPill);
+            }
 
             if (swatches.primary) swatches.primary.style.background = primary;
             if (swatches.secondary) swatches.secondary.style.background = secondary;
