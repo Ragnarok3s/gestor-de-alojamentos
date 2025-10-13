@@ -2158,6 +2158,7 @@ function rateQuote(unit_id, checkin, checkout, base_price_cents){
 // ===================== Layout =====================
 function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
   const theme = branding || getBranding();
+  const baseTheme = computeBrandingTheme(BRANDING_THEME_DEFAULT);
   const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
   const hasUser = !!user;
   const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
@@ -2194,6 +2195,42 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
     : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
   const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
   const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+
+  const navBackground = theme.surface;
+  const navBorder = theme.surfaceBorder;
+  const navForeground = theme.surfaceContrast;
+  const navMuted = mixColors(navForeground, navBackground, 0.55);
+  const navLink = mixColors(navForeground, navBackground, 0.65);
+  const navLinkHover = mixColors(navForeground, navBackground, 0.4);
+  const navLinkActive = mixColors(navForeground, navBackground, 0.18);
+  const navAccentGradient = `linear-gradient(90deg, ${theme.secondaryColor}, ${theme.primaryColor})`;
+  const navPillBg = mixColors(navBackground, theme.highlightColor, 0.25);
+  const navPillText = mixColors(navForeground, theme.highlightColor, 0.35);
+  const navButton = mixColors(navForeground, navBackground, 0.5);
+  const navButtonHover = mixColors(navForeground, theme.primaryColor, 0.35);
+  const navStyle = [
+    `--nav-background:${navBackground}`,
+    `--nav-border:${navBorder}`,
+    `--nav-foreground:${navForeground}`,
+    `--nav-muted:${navMuted}`,
+    `--nav-link:${navLink}`,
+    `--nav-link-hover:${navLinkHover}`,
+    `--nav-link-active:${navLinkActive}`,
+    `--nav-accent-gradient:${navAccentGradient}`,
+    `--nav-highlight:${theme.highlightColor}`,
+    `--nav-logo-from:${theme.secondaryColor}`,
+    `--nav-logo-to:${theme.primaryColor}`,
+    `--nav-logo-contrast:${theme.primaryContrast}`,
+    `--nav-pill-bg:${navPillBg}`,
+    `--nav-pill-text:${navPillText}`,
+    `--nav-button:${navButton}`,
+    `--nav-button-hover:${navButtonHover}`,
+    `--nav-radius:${theme.radius}`,
+    `--nav-radius-sm:${theme.radiusSm}`,
+    `--nav-radius-lg:${theme.radiusLg}`,
+    `--nav-radius-pill:${theme.radiusPill}`
+  ].join(';');
+  const navStyleAttr = esc(navStyle);
 
   const renderNotificationItem = (item) => {
     if (!item) return '';
@@ -2273,22 +2310,22 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
       <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
       <style>
         :root{
-          --brand-primary:${theme.primaryColor};
-          --brand-primary-contrast:${theme.primaryContrast};
-          --brand-primary-hover:${theme.primaryHover};
-          --brand-primary-soft:${theme.primarySoft};
-          --brand-secondary:${theme.secondaryColor};
-          --brand-highlight:${theme.highlightColor};
-          --brand-surface:${theme.surface};
-          --brand-surface-border:${theme.surfaceBorder};
-          --brand-surface-ring:${theme.surfaceRing};
-          --brand-surface-contrast:${theme.surfaceContrast};
-          --brand-background:${theme.background};
-          --brand-muted:${theme.mutedText};
-          --brand-radius:${theme.radius};
-          --brand-radius-sm:${theme.radiusSm};
-          --brand-radius-lg:${theme.radiusLg};
-          --brand-radius-pill:${theme.radiusPill};
+          --brand-primary:${baseTheme.primaryColor};
+          --brand-primary-contrast:${baseTheme.primaryContrast};
+          --brand-primary-hover:${baseTheme.primaryHover};
+          --brand-primary-soft:${baseTheme.primarySoft};
+          --brand-secondary:${baseTheme.secondaryColor};
+          --brand-highlight:${baseTheme.highlightColor};
+          --brand-surface:${baseTheme.surface};
+          --brand-surface-border:${baseTheme.surfaceBorder};
+          --brand-surface-ring:${baseTheme.surfaceRing};
+          --brand-surface-contrast:${baseTheme.surfaceContrast};
+          --brand-background:${baseTheme.background};
+          --brand-muted:${baseTheme.mutedText};
+          --brand-radius:${baseTheme.radius};
+          --brand-radius-sm:${baseTheme.radiusSm};
+          --brand-radius-lg:${baseTheme.radiusLg};
+          --brand-radius-pill:${baseTheme.radiusPill};
         }
         .input{box-sizing:border-box;width:100%;min-width:0;display:block;padding:.65rem .9rem;border-radius:.75rem;border:1px solid #cbd5e1;background:#fff;font-size:.95rem;line-height:1.5rem;transition:box-shadow .15s ease,border-color .15s ease;}
         .input::placeholder{color:#94a3b8;opacity:1;}
@@ -2347,20 +2384,20 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
         body.app-body{margin:0;background:var(--brand-background);color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
         .app-shell{min-height:100vh;display:flex;flex-direction:column;}
-        .topbar{background:var(--brand-surface);border-bottom:1px solid var(--brand-surface-border);box-shadow:0 1px 0 rgba(15,23,42,.04);}
+        .topbar{background:var(--nav-background,var(--brand-surface));border-bottom:1px solid var(--nav-border,var(--brand-surface-border));box-shadow:0 1px 0 rgba(15,23,42,.04);}
         .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
-        .brand{display:flex;align-items:center;gap:12px;color:#3a3b47;font-weight:600;text-decoration:none;font-size:1.125rem;}
-        .brand-logo{width:40px;height:40px;border-radius:var(--brand-radius-sm);background:linear-gradient(130deg,var(--brand-primary),var(--brand-secondary));display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--brand-primary-contrast);box-shadow:0 10px 20px rgba(15,23,42,.18);overflow:hidden;}
-        .brand-logo.has-image{box-shadow:none;background:none;padding:0;}
+        .brand{display:flex;align-items:center;gap:12px;color:var(--nav-foreground,#3a3b47);font-weight:600;text-decoration:none;font-size:1.125rem;}
+        .brand-logo{width:40px;height:40px;border-radius:var(--nav-radius-sm,var(--brand-radius-sm));background:linear-gradient(130deg,var(--nav-logo-from,var(--brand-primary)),var(--nav-logo-to,var(--brand-secondary)));display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--nav-logo-contrast,var(--brand-primary-contrast));box-shadow:0 10px 20px rgba(15,23,42,.18);overflow:hidden;}
+        .brand-logo.has-image{box-shadow:none;background:none;padding:0;border-radius:var(--nav-radius-sm,var(--brand-radius-sm));}
         .brand-logo-img{width:100%;height:100%;object-fit:cover;display:block;}
         .brand-logo-text{display:inline-flex;align-items:center;justify-content:center;width:100%;height:100%;}
-        .brand-name{letter-spacing:.02em;}
-        .brand-tagline{display:block;font-size:.75rem;color:#7a7b88;font-weight:500;margin-top:-6px;}
+        .brand-name{letter-spacing:.02em;color:inherit;}
+        .brand-tagline{display:block;font-size:.75rem;color:var(--nav-muted,#7a7b88);font-weight:500;margin-top:-6px;}
         .nav-links{display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
-        .nav-link{position:relative;color:#7a7b88;font-weight:500;text-decoration:none;padding-bottom:6px;transition:color .2s ease;}
-        .nav-link:hover{color:#424556;}
-        .nav-link.active{color:#2f3140;}
-        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:linear-gradient(90deg,var(--brand-secondary),var(--brand-primary));}
+        .nav-link{position:relative;color:var(--nav-link,#7a7b88);font-weight:500;text-decoration:none;padding-bottom:6px;transition:color .2s ease;}
+        .nav-link:hover{color:var(--nav-link-hover,#424556);}
+        .nav-link.active{color:var(--nav-link-active,#2f3140);}
+        .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));}
         .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
         .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
         .nav-notifications{position:relative;display:flex;align-items:center;}
@@ -2378,18 +2415,18 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .nav-notifications__item--success{border-color:#22c55e;}
         .nav-notifications__link{display:block;padding:6px 8px;border-radius:10px;color:inherit;text-decoration:none;transition:background .15s ease,color .15s ease;}
         .nav-notifications__link:hover{background:rgba(248,250,252,.9);}
-        .nav-notifications__link:hover .nav-notifications__title{color:#1d4ed8;}
+        .nav-notifications__link:hover .nav-notifications__title{color:var(--nav-highlight,#1d4ed8);}
         .nav-notifications__title{display:block;font-weight:600;color:#0f172a;text-decoration:none;}
         .nav-notifications__message{margin-top:4px;color:#475569;font-size:.78rem;}
         .nav-notifications__meta{margin-top:4px;color:#94a3b8;font-size:.72rem;}
         .nav-notifications__empty{margin:0;font-size:.85rem;color:#475569;}
         .nav-notifications__footer{margin-top:12px;text-align:right;}
         .nav-notifications__footer-link{font-size:.78rem;color:#64748b;text-decoration:none;}
-        .nav-notifications__footer-link:hover{color:#1d4ed8;}
+        .nav-notifications__footer-link:hover{color:var(--nav-highlight,#1d4ed8);}
         .logout-form{margin:0;}
-        .logout-form button,.login-link{background:none;border:none;color:#7a7b88;font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
-        .logout-form button:hover,.login-link:hover{color:#2f3140;}
-        .nav-accent-bar{height:3px;background:linear-gradient(90deg,var(--brand-secondary),var(--brand-primary));opacity:.55;}
+        .logout-form button,.login-link{background:none;border:none;color:var(--nav-button,#7a7b88);font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
+        .logout-form button:hover,.login-link:hover{color:var(--nav-button-hover,#2f3140);}
+        .nav-accent-bar{height:3px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));opacity:.55;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
         .footer{background:var(--brand-surface);border-top:1px solid var(--brand-surface-border);color:#8c8d97;font-size:.875rem;}
         .footer-inner{max-width:1120px;margin:0 auto;padding:20px 32px;}
@@ -2448,7 +2485,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .inline-feedback[data-variant="danger"]{background:#fee2e2;border:1px solid #f87171;color:#991b1b;}
         .inline-feedback strong{font-weight:600;}
         .inline-feedback-icon{width:26px;height:26px;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;box-shadow:0 10px 20px rgba(15,23,42,.08);}
-        .pill-indicator{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:.75rem;font-weight:500;color:#475569;text-transform:uppercase;letter-spacing:.08em;}
+        .pill-indicator{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:var(--nav-radius-pill,999px);background:var(--nav-pill-bg,#f1f5f9);font-size:.75rem;font-weight:500;color:var(--nav-pill-text,#475569);text-transform:uppercase;letter-spacing:.08em;}
         .result-header{display:flex;flex-direction:column;gap:12px;margin-bottom:24px;}
         .result-header .progress-steps{justify-content:flex-start;}
         .calendar-card{position:relative;}
@@ -3092,8 +3129,8 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         })();
       </script>
     </head>
-    <body class="${bodyClass}">
-      <div class="app-shell">
+      <body class="${bodyClass}">
+        <div class="app-shell" style="${navStyleAttr}">
         <header class="topbar">
           <div class="topbar-inner">
             <a href="${esc(brandHomeHref)}" class="brand" aria-label="${esc(theme.brandName)}">
