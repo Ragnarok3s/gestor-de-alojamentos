@@ -11,7 +11,9 @@ module.exports = function registerOwnersPortal(app, context) {
     eur,
     requireLogin,
     userCan,
-    userHasBackofficeAccess
+    userHasBackofficeAccess,
+    resolveBrandingForRequest,
+    rememberActiveBrandingProperty
   } = context;
 
   function ensureOwnerPortalAccess(req, res, next) {
@@ -107,6 +109,22 @@ module.exports = function registerOwnersPortal(app, context) {
     });
 
     const propertyIds = Array.from(propertySummaries.keys());
+
+    const activeBrandingPropertyId = hasRequestedProperty
+      ? requestedPropertyId
+      : propertyIds.length === 1
+      ? propertyIds[0]
+      : null;
+    const activeBrandingPropertyName =
+      activeBrandingPropertyId && propertySummaries.has(activeBrandingPropertyId)
+        ? propertySummaries.get(activeBrandingPropertyId).name
+        : null;
+
+    const brandingTheme = resolveBrandingForRequest(req, {
+      propertyId: activeBrandingPropertyId,
+      propertyName: activeBrandingPropertyName
+    });
+    rememberActiveBrandingProperty(res, activeBrandingPropertyId);
 
     let totalRevenue30 = 0;
     let totalNights30 = 0;
@@ -518,6 +536,7 @@ module.exports = function registerOwnersPortal(app, context) {
         user: viewer,
         activeNav: 'owners',
         pageClass: 'page-backoffice page-owners',
+        branding: brandingTheme,
         body
       })
     );
