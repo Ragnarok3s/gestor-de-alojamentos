@@ -110,21 +110,10 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const propertyIds = Array.from(propertySummaries.keys());
 
-    const activeBrandingPropertyId = hasRequestedProperty
-      ? requestedPropertyId
-      : propertyIds.length === 1
-      ? propertyIds[0]
-      : null;
-    const activeBrandingPropertyName =
-      activeBrandingPropertyId && propertySummaries.has(activeBrandingPropertyId)
-        ? propertySummaries.get(activeBrandingPropertyId).name
-        : null;
-
-    const brandingTheme = resolveBrandingForRequest(req, {
-      propertyId: activeBrandingPropertyId,
-      propertyName: activeBrandingPropertyName
-    });
-    rememberActiveBrandingProperty(res, activeBrandingPropertyId);
+    const brandingTheme = resolveBrandingForRequest({});
+    rememberActiveBrandingProperty(res, null);
+    req.brandingPropertyId = null;
+    req.brandingPropertyName = null;
 
     let totalRevenue30 = 0;
     let totalNights30 = 0;
