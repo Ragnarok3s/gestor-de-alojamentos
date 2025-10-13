@@ -287,6 +287,10 @@ function extractKeyedValuesFromDescription(text, slugify) {
   return map;
 }
 
+function isPlainObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function ensureDefaults(db) {
   db.prepare(
     `CREATE TABLE IF NOT EXISTS channel_integrations (
@@ -373,6 +377,365 @@ function truncatePayload(payload, maxLength = 4000) {
   if (!payload) return null;
   if (payload.length <= maxLength) return payload;
   return payload.slice(0, maxLength) + '…';
+}
+
+function buildKeyVariants(key) {
+  const base = String(key);
+  const variants = new Set([base]);
+  const snake = base
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+  variants.add(snake);
+  const camel = snake.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+  variants.add(camel);
+  if (camel) {
+    variants.add(camel.charAt(0).toUpperCase() + camel.slice(1));
+  }
+  variants.add(base.toLowerCase());
+  return Array.from(variants);
+}
+
+function resolvePath(source, path) {
+  if (!isPlainObject(source)) return undefined;
+  const segments = Array.isArray(path) ? path : String(path).split('.');
+  let current = source;
+  for (const segment of segments) {
+    if (current == null) return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (Number.isInteger(index) && index >= 0 && index < current.length) {
+        current = current[index];
+        continue;
+      }
+      return undefined;
+    }
+    const keys = buildKeyVariants(segment);
+    let next = undefined;
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(current, key)) {
+        next = current[key];
+        break;
+      }
+    }
+    if (next === undefined) {
+      return undefined;
+    }
+    current = next;
+  }
+  return current;
+}
+
+function hasMeaningfulValue(value) {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length > 0;
+  if (isPlainObject(value)) return Object.keys(value).length > 0;
+  return true;
+}
+
+function pickValue(source, candidates) {
+  for (const candidate of candidates) {
+    const value = resolvePath(source, candidate);
+    if (hasMeaningfulValue(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function coerceCurrencyValue(value, fallbackCurrency = 'EUR') {
+  if (value == null || value === '') {
+    return { cents: null, currency: fallbackCurrency };
+  }
+  if (isPlainObject(value)) {
+    const nestedCurrency = pickValue(value, [['currency'], ['code'], ['iso']]);
+    const nestedValue = pickValue(value, [['amount'], ['total'], ['gross'], ['net'], ['value'], ['price']]);
+    const currency = hasMeaningfulValue(nestedCurrency) ? String(nestedCurrency) : fallbackCurrency;
+    if (hasMeaningfulValue(nestedValue)) {
+      return coerceCurrencyValue(nestedValue, currency || fallbackCurrency);
+    }
+    return { cents: null, currency: currency || fallbackCurrency };
+  }
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && Math.abs(value) >= 1000) {
+      return { cents: value, currency: fallbackCurrency };
+    }
+    return { cents: Math.round(value * 100), currency: fallbackCurrency };
+  }
+  const parsed = parseCurrencyValue(String(value), fallbackCurrency);
+  return parsed;
+}
+
+const webhookFieldSynonyms = {
+  property: [
+    ['propertyName'],
+    ['property'],
+    ['property', 'name'],
+    ['property', 'title'],
+    ['hotel'],
+    ['hotel', 'name'],
+    ['listing', 'property'],
+    ['listing', 'name'],
+    ['accommodation', 'property'],
+    ['accommodation', 'name'],
+    ['stay', 'property'],
+    ['unit', 'propertyName'],
+    ['room', 'propertyName']
+  ],
+  unit: [
+    ['unitName'],
+    ['unit'],
+    ['unit', 'name'],
+    ['room'],
+    ['room', 'name'],
+    ['listing', 'unit'],
+    ['listing', 'name'],
+    ['accommodation'],
+    ['accommodation', 'name'],
+    ['rental'],
+    ['rental', 'name'],
+    ['inventory', 'name']
+  ],
+  checkin: [
+    ['checkin'],
+    ['checkIn'],
+    ['arrival'],
+    ['arrivalDate'],
+    ['arrival_date'],
+    ['startDate'],
+    ['start_date'],
+    ['from'],
+    ['start'],
+    ['stay', 'checkin'],
+    ['stay', 'checkIn'],
+    ['stay', 'from'],
+    ['stay', 'start'],
+    ['stay', 'arrival'],
+    ['dates', 'checkin'],
+    ['dates', 'from'],
+    ['dates', 'start']
+  ],
+  checkout: [
+    ['checkout'],
+    ['checkOut'],
+    ['departure'],
+    ['departureDate'],
+    ['departure_date'],
+    ['endDate'],
+    ['end_date'],
+    ['to'],
+    ['end'],
+    ['stay', 'checkout'],
+    ['stay', 'checkOut'],
+    ['stay', 'to'],
+    ['stay', 'end'],
+    ['stay', 'departure'],
+    ['dates', 'checkout'],
+    ['dates', 'to'],
+    ['dates', 'end']
+  ],
+  guestName: [
+    ['guestName'],
+    ['guest', 'name'],
+    ['guest', 'fullName'],
+    ['leadGuest', 'name'],
+    ['lead_guest', 'name'],
+    ['customer', 'name'],
+    ['traveller', 'name'],
+    ['contact', 'name'],
+    ['primaryGuest', 'name'],
+    ['primary_guest', 'name']
+  ],
+  guestEmail: [
+    ['guestEmail'],
+    ['guest', 'email'],
+    ['leadGuest', 'email'],
+    ['customer', 'email'],
+    ['contact', 'email'],
+    ['primaryGuest', 'email']
+  ],
+  guestPhone: [
+    ['guestPhone'],
+    ['guest', 'phone'],
+    ['guest', 'telephone'],
+    ['guest', 'mobile'],
+    ['leadGuest', 'phone'],
+    ['customer', 'phone'],
+    ['customer', 'telephone'],
+    ['contact', 'phone'],
+    ['contact', 'telephone'],
+    ['primaryGuest', 'phone']
+  ],
+  adults: [
+    ['adults'],
+    ['guests', 'adults'],
+    ['pax', 'adults'],
+    ['occupancy', 'adults'],
+    ['party', 'adults'],
+    ['counts', 'adults'],
+    ['guestCounts', 'adults'],
+    ['stay', 'guests', 'adults']
+  ],
+  children: [
+    ['children'],
+    ['guests', 'children'],
+    ['pax', 'children'],
+    ['occupancy', 'children'],
+    ['party', 'children'],
+    ['counts', 'children'],
+    ['guestCounts', 'children'],
+    ['stay', 'guests', 'children']
+  ],
+  total: [
+    ['totalCents'],
+    ['total'],
+    ['total_amount'],
+    ['totalGross'],
+    ['totalGrossCents'],
+    ['pricing', 'total'],
+    ['pricing', 'gross'],
+    ['price', 'total'],
+    ['price', 'gross'],
+    ['amount', 'total'],
+    ['amount', 'gross'],
+    ['financial', 'total'],
+    ['financial', 'gross'],
+    ['payout', 'amount'],
+    ['summary', 'total'],
+    ['totals', 'gross']
+  ],
+  currency: [
+    ['currency'],
+    ['pricing', 'currency'],
+    ['price', 'currency'],
+    ['amount', 'currency'],
+    ['financial', 'currency'],
+    ['payout', 'currency'],
+    ['totals', 'currency']
+  ],
+  reference: [
+    ['externalRef'],
+    ['externalReference'],
+    ['reference'],
+    ['bookingReference'],
+    ['reservationCode'],
+    ['reservationId'],
+    ['id'],
+    ['code'],
+    ['confirmationNumber'],
+    ['confirmation', 'number'],
+    ['otaReference'],
+    ['locator']
+  ],
+  status: [
+    ['status'],
+    ['state'],
+    ['reservationStatus'],
+    ['bookingStatus'],
+    ['event'],
+    ['type']
+  ],
+  notes: [
+    ['notes'],
+    ['note'],
+    ['comments'],
+    ['comment'],
+    ['observations'],
+    ['obs'],
+    ['message'],
+    ['specialRequests'],
+    ['special_requests'],
+    ['guest', 'message']
+  ]
+};
+
+function normalizeWebhookEntry(entry, channelKey, definition, dayjs) {
+  if (!isPlainObject(entry)) return null;
+  const propertyName = pickValue(entry, webhookFieldSynonyms.property);
+  const unitName = pickValue(entry, webhookFieldSynonyms.unit);
+  const checkin = pickValue(entry, webhookFieldSynonyms.checkin);
+  const checkout = pickValue(entry, webhookFieldSynonyms.checkout);
+  const guestName = pickValue(entry, webhookFieldSynonyms.guestName);
+  const guestEmail = pickValue(entry, webhookFieldSynonyms.guestEmail);
+  const guestPhone = pickValue(entry, webhookFieldSynonyms.guestPhone);
+  const adults = pickValue(entry, webhookFieldSynonyms.adults);
+  const children = pickValue(entry, webhookFieldSynonyms.children);
+  const totalRaw = pickValue(entry, webhookFieldSynonyms.total);
+  const currencyRaw = pickValue(entry, webhookFieldSynonyms.currency);
+  const reference = pickValue(entry, webhookFieldSynonyms.reference);
+  const status = pickValue(entry, webhookFieldSynonyms.status);
+  const notes = pickValue(entry, webhookFieldSynonyms.notes);
+  const currency = hasMeaningfulValue(currencyRaw) ? String(currencyRaw).trim() : definition?.defaultCurrency || 'EUR';
+  const totalParsed = coerceCurrencyValue(totalRaw, currency);
+
+  const record = normalizeRecord(
+    {
+      raw: entry,
+      propertyName,
+      unitName,
+      checkin,
+      checkout,
+      guestName,
+      guestEmail,
+      guestPhone,
+      adults: hasMeaningfulValue(adults) ? adults : undefined,
+      children: hasMeaningfulValue(children) ? children : undefined,
+      totalCents: hasMeaningfulValue(totalParsed.cents) ? totalParsed.cents : undefined,
+      currency: totalParsed.currency || currency,
+      reference,
+      status: status ? String(status).toUpperCase() : undefined,
+      notes
+    },
+    channelKey,
+    definition,
+    dayjs
+  );
+
+  if (!record.checkin || !record.checkout || !record.guestName) {
+    return null;
+  }
+  if (!record.unitName && !record.propertyName && !record.notes) {
+    return null;
+  }
+  return record;
+}
+
+function parseWebhookRecords({ channelKey, payload, definition, dayjs }) {
+  if (payload == null) return [];
+  const queue = [payload];
+  const seen = new WeakSet();
+  const records = [];
+
+  while (queue.length) {
+    const item = queue.shift();
+    if (item == null) continue;
+    if (Array.isArray(item)) {
+      for (const value of item) {
+        if (isPlainObject(value) || Array.isArray(value)) {
+          queue.push(value);
+        }
+      }
+      continue;
+    }
+    if (!isPlainObject(item)) continue;
+    if (seen.has(item)) continue;
+    seen.add(item);
+
+    const normalized = normalizeWebhookEntry(item, channelKey, definition, dayjs);
+    if (normalized) {
+      records.push(normalized);
+    }
+
+    for (const value of Object.values(item)) {
+      if (isPlainObject(value) || Array.isArray(value)) {
+        queue.push(value);
+      }
+    }
+  }
+
+  return records;
 }
 
 function createChannelIntegrationService({
@@ -1005,6 +1368,39 @@ function createChannelIntegrationService({
     return results;
   }
 
+  async function importFromWebhook({ channelKey, payload, uploadedBy, targetStatus, sourceLabel }) {
+    const integration = getIntegration(channelKey);
+    if (!integration) {
+      throw new Error('Canal desconhecido');
+    }
+    const definition = getChannelDefinition(channelKey);
+    const desiredStatus = targetStatus || (integration.settings?.defaultStatus === 'PENDING' ? 'PENDING' : 'CONFIRMED');
+    const records = parseWebhookRecords({ channelKey, payload, definition, dayjs });
+
+    const result = await processRecords({
+      records,
+      channelKey,
+      source: sourceLabel || 'webhook',
+      fileName: null,
+      originalName: sourceLabel || 'webhook',
+      uploadedBy,
+      targetStatus: desiredStatus
+    });
+
+    db.prepare(
+      `UPDATE channel_integrations
+          SET last_synced_at = datetime('now'),
+              last_status = ?,
+              last_error = NULL,
+              last_summary_json = ?,
+              updated_at = datetime('now'),
+              updated_by = ?
+        WHERE channel_key = ?`
+    ).run(result.status, JSON.stringify(result.summary || null), uploadedBy || null, channelKey);
+
+    return { ...result, processedRecords: records.length };
+  }
+
   return {
     CHANNEL_DEFINITIONS,
     listIntegrations,
@@ -1013,7 +1409,8 @@ function createChannelIntegrationService({
     listRecentImports,
     importFromFile,
     autoSyncChannel,
-    autoSyncAll
+    autoSyncAll,
+    importFromWebhook
   };
 }
 
