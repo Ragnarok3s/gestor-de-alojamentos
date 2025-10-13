@@ -5645,7 +5645,10 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
               previewRoot.style.setProperty('--nav-link', navLink);
               previewRoot.style.setProperty('--nav-link-hover', navLinkHover);
               previewRoot.style.setProperty('--nav-link-active', navLinkActive);
-              previewRoot.style.setProperty('--nav-accent-gradient', `linear-gradient(90deg, ${secondary}, ${primary})`);
+              previewRoot.style.setProperty(
+                '--nav-accent-gradient',
+                'linear-gradient(90deg, ' + secondary + ', ' + primary + ')'
+              );
               previewRoot.style.setProperty('--nav-highlight', highlight);
               previewRoot.style.setProperty('--nav-logo-from', secondary);
               previewRoot.style.setProperty('--nav-logo-to', primary);
