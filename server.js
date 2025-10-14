@@ -32,6 +32,8 @@ const { createEmailTemplateService } = require('./src/services/email-templates')
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createChannelSync } = require('./src/services/channel-sync');
+const { createOverbookingGuard } = require('./src/services/overbooking-guard');
 const { createAutomationEngine } = require('./server/automations/engine');
 const emailAction = require('./server/automations/actions/email');
 const notifyAction = require('./server/automations/actions/notify');
@@ -1615,7 +1617,9 @@ const channelIntegrations = createChannelIntegrationService({
   ensureDir,
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
+const channelSync = createChannelSync({ logger: console });
 const telemetry = createTelemetry({ logger: console });
+const overbookingGuard = createOverbookingGuard({ db, dayjs, logChange, channelSync, logger: console });
 
 const automationActionDrivers = {
   email: emailAction,
@@ -3222,6 +3226,7 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  channelSync,
   telemetry,
   wantsJson,
   formatAuditValue,
@@ -3242,6 +3247,7 @@ const context = {
   emailTemplates,
   mailer,
   bookingEmailer,
+  overbookingGuard,
   secureCookies,
   csrfProtection,
   requireLogin,

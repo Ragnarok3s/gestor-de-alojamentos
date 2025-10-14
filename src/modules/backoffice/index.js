@@ -1,4 +1,5 @@
 const registerUxApi = require('./ux-api');
+const { ConflictError } = require('../../services/errors');
 
 const FEATURE_PRESETS = [
   {
@@ -127,6 +128,7 @@ module.exports = function registerBackoffice(app, context) {
     insertPermissionOverrideStmt,
     emailTemplates,
     bookingEmailer,
+    overbookingGuard,
     channelIntegrations,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
@@ -162,6 +164,8 @@ module.exports = function registerBackoffice(app, context) {
   app.use('/admin', requireLogin, requireBackofficeAccess);
 
   registerUxApi(app, context);
+
+  const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
 
   const HOUSEKEEPING_TASK_TYPES = new Set(['checkout', 'checkin', 'midstay', 'custom']);
   const HOUSEKEEPING_TYPE_LABELS = {
@@ -1925,6 +1929,7 @@ module.exports = function registerBackoffice(app, context) {
         `SELECT unit_id, start_date, end_date, reason
            FROM unit_blocks
           WHERE end_date > ?
+            AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')
           ORDER BY start_date`
       )
       .all(dayjs().format('YYYY-MM-DD'));
@@ -4550,7 +4555,13 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
   const bookings = db.prepare('SELECT * FROM bookings WHERE unit_id = ? ORDER BY checkin').all(u.id);
   const legacyBlocks = db.prepare('SELECT * FROM blocks WHERE unit_id = ? ORDER BY start_date').all(u.id);
   const modernBlocks = db
-    .prepare('SELECT id, start_date, end_date, reason FROM unit_blocks WHERE unit_id = ? ORDER BY start_date')
+    .prepare(
+      `SELECT id, start_date, end_date, reason
+         FROM unit_blocks
+        WHERE unit_id = ?
+          AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')
+        ORDER BY start_date`
+    )
     .all(u.id);
   const blockEntries = modernBlocks
     .map(block => {
@@ -4847,11 +4858,15 @@ app.post('/admin/blocks/:blockId/delete', requireLogin, requirePermission('calen
 app.post('/admin/unit-blocks/:blockId/delete', requireLogin, requirePermission('calendar.block.delete'), (req, res) => {
   const blockId = Number(req.params.blockId);
   const block = db
-    .prepare('SELECT id, unit_id, start_date, end_date, reason FROM unit_blocks WHERE id = ?')
+    .prepare('SELECT id, unit_id, start_date, end_date, reason, lock_type FROM unit_blocks WHERE id = ?')
     .get(blockId);
   if (!block) {
     if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Bloqueio não encontrado.' });
     return res.status(404).send('Bloqueio não encontrado');
+  }
+  if (block.lock_type === 'HARD_LOCK') {
+    if (wantsJson(req)) return res.status(409).json({ ok: false, message: 'Bloqueio protegido pelo sistema.' });
+    return res.status(409).send('Bloqueio protegido pelo sistema.');
   }
   db.prepare('DELETE FROM unit_blocks WHERE id = ?').run(blockId);
   if (req.user && req.user.id) {
@@ -5300,6 +5315,25 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
   const q = rateQuote(b.unit_id, checkin, checkout, b.base_price_cents);
   if (q.nights < q.minStayReq) return res.status(400).send(`Estadia mínima: ${q.minStayReq} noites`);
 
+  try {
+    if (status === 'CONFIRMED') {
+      overbookingGuard.reserveSlot({
+        unitId: b.unit_id,
+        from: checkin,
+        to: checkout,
+        bookingId: b.id,
+        actorId: req.user ? req.user.id : null
+      });
+    } else {
+      deleteLockByBookingStmt.run(b.id);
+    }
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return res.status(409).send('Conflito com outra reserva ou bloqueio.');
+    }
+    throw err;
+  }
+
   adminBookingUpdateStmt.run(
     checkin,
     checkout,
@@ -5369,6 +5403,7 @@ app.post('/admin/bookings/:id/cancel', requireLogin, requirePermission('bookings
   const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
   if (!existing) return res.status(404).send('Reserva não encontrada');
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  deleteLockByBookingStmt.run(id);
   logChange(req.user.id, 'booking', Number(id), 'cancel', {
     checkin: existing.checkin,
     checkout: existing.checkout,
@@ -5385,6 +5420,7 @@ app.post('/admin/bookings/:id/delete', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
   if (existing) {
     db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
+    deleteLockByBookingStmt.run(Number(req.params.id));
     logChange(req.user.id, 'booking', Number(req.params.id), 'delete', {
       checkin: existing.checkin,
       checkout: existing.checkout,

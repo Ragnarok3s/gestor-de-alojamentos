@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS unit_blocks (
   end_date TEXT NOT NULL,
   reason TEXT NOT NULL,
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  lock_type TEXT,
+  lock_source TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA')),
+  lock_owner_booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -405,6 +408,31 @@ function runLightMigrations(db) {
     }
   };
 
+  const indexExists = (name) => {
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get(name);
+      return !!row;
+    } catch (err) {
+      console.warn(`Não foi possível validar o índice ${name}:`, err.message);
+      return false;
+    }
+  };
+
+  const ensureIndex = (name, table, columns) => {
+    if (indexExists(name)) return;
+    const cols = listColumns(table);
+    const missingColumn = columns
+      .split(',')
+      .map(col => col.trim().split(' ')[0])
+      .some(col => !cols.includes(col));
+    if (missingColumn) return;
+    try {
+      db.exec(`CREATE INDEX ${name} ON ${table}(${columns})`);
+    } catch (err) {
+      console.warn(`Falha ao criar índice ${name}:`, err.message);
+    }
+  };
+
   const ensureTrigger = (name, ddl) => {
     if (triggerExists(name)) return;
     try {
@@ -474,12 +502,25 @@ function runLightMigrations(db) {
         end_date TEXT NOT NULL,
         reason TEXT NOT NULL,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        lock_type TEXT,
+        lock_source TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA')),
+        lock_owner_booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
-      CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);`
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_booking ON unit_blocks(lock_owner_booking_id);`
     );
+
+    ensureColumn('unit_blocks', 'lock_type', 'TEXT');
+    ensureColumn(
+      'unit_blocks',
+      'lock_source',
+      "TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA'))"
+    );
+    ensureColumn('unit_blocks', 'lock_owner_booking_id', 'INTEGER REFERENCES bookings(id) ON DELETE SET NULL');
+    ensureIndex('idx_unit_blocks_booking', 'unit_blocks', 'lock_owner_booking_id');
 
     ensureTable(
       'reviews',

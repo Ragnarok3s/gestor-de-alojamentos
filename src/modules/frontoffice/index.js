@@ -1,3 +1,5 @@
+const { ConflictError } = require('../../services/errors');
+
 module.exports = function registerFrontoffice(app, context) {
   const {
     db,
@@ -29,8 +31,11 @@ module.exports = function registerFrontoffice(app, context) {
     ExcelJS,
     rescheduleBookingUpdateStmt,
     rescheduleBlockUpdateStmt,
-    bookingEmailer
+    bookingEmailer,
+    overbookingGuard
   } = context;
+
+  const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
 
   function inlineScript(source) {
     return source.replace(/<\/(script)/gi, '<\\/$1');
@@ -879,11 +884,26 @@ app.post('/book', (req, res) => {
       null,
       confirmationToken
     );
-    return { id: r.lastInsertRowid, confirmationToken, status: bookingStatus };
+    const bookingId = r.lastInsertRowid;
+    overbookingGuard.reserveSlot({
+      unitId,
+      from: checkin,
+      to: checkout,
+      bookingId,
+      actorId: user ? user.id : null
+    });
+    return { id: bookingId, confirmationToken, status: bookingStatus };
   });
 
   try {
-    const { id, confirmationToken } = trx();
+    const { id, confirmationToken, status: finalStatus } = trx();
+
+    logChange(user ? user.id : null, 'booking', id, 'create', null, {
+      unit_id: unitId,
+      checkin,
+      checkout,
+      status: finalStatus
+    });
 
     const bookingRow = db
       .prepare(
@@ -909,7 +929,9 @@ app.post('/book', (req, res) => {
     res.redirect(`/booking/${id}?token=${confirmationToken}`);
   } catch (e) {
     csrfProtection.rotateToken(req, res);
-    if (e.message === 'conflict') return res.status(409).send('Datas indisponíveis. Tente novamente.');
+    if (e instanceof ConflictError || e.message === 'conflict') {
+      return res.status(409).send('Datas indisponíveis. Tente novamente.');
+    }
     if (e.message && e.message.startsWith('minstay:')) return res.status(400).send('Estadia mínima: ' + e.message.split(':')[1] + ' noites');
     console.error(e);
     res.status(500).send('Erro ao criar reserva');
@@ -1744,6 +1766,21 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, requirePermission('ca
   if (quote.nights < quote.minStayReq)
     return res.status(400).json({ ok: false, message: `Estadia mínima: ${quote.minStayReq} noites.` });
 
+  try {
+    overbookingGuard.reserveSlot({
+      unitId: booking.unit_id,
+      from: checkin,
+      to: checkout,
+      bookingId: booking.id,
+      actorId: req.user ? req.user.id : null
+    });
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return res.status(409).json({ ok: false, message: 'Conflito com outra reserva ou bloqueio.' });
+    }
+    throw err;
+  }
+
   rescheduleBookingUpdateStmt.run(checkin, checkout, quote.total_cents, booking.id);
 
   logChange(req.user.id, 'booking', booking.id, 'reschedule',
@@ -1760,6 +1797,7 @@ app.post('/calendar/booking/:id/cancel', requireLogin, requirePermission('calend
   if (!booking) return res.status(404).json({ ok: false, message: 'Reserva não encontrada.' });
 
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
+  deleteLockByBookingStmt.run(id);
   logChange(req.user.id, 'booking', id, 'cancel', {
     checkin: booking.checkin,
     checkout: booking.checkout,

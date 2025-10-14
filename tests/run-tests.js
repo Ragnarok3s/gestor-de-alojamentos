@@ -10,6 +10,31 @@ const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
 const { ConflictError } = require('../src/services/errors');
+const { createOverbookingGuard } = require('../src/services/overbooking-guard');
+
+function testServerBootstrap() {
+  const serverPath = require.resolve('../server');
+  delete require.cache[serverPath];
+  const previousFlag = global.__SERVER_STARTED__;
+  const previousDbPath = process.env.DATABASE_PATH;
+  process.env.SKIP_SERVER_START = '1';
+  process.env.DATABASE_PATH = ':memory:';
+  const app = require(serverPath);
+  assert.equal(typeof app, 'function', 'server deve exportar instância Express');
+  assert.equal(global.__SERVER_STARTED__, previousFlag, 'servidor não deve arrancar em modo de teste');
+  delete process.env.SKIP_SERVER_START;
+  if (previousDbPath === undefined) {
+    delete process.env.DATABASE_PATH;
+  } else {
+    process.env.DATABASE_PATH = previousDbPath;
+  }
+  delete require.cache[serverPath];
+  if (previousFlag === undefined) {
+    delete global.__SERVER_STARTED__;
+  } else {
+    global.__SERVER_STARTED__ = previousFlag;
+  }
+}
 
 function testServerBootstrap() {
   const serverPath = require.resolve('../server');
@@ -200,6 +225,62 @@ function testUnitBlockService() {
   }, ConflictError, 'não deve permitir bloquear intervalo com reservas');
 }
 
+async function testOverbookingGuardService() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  const channelQueue = [];
+  const guard = createOverbookingGuard({
+    db,
+    dayjs,
+    logChange: () => {},
+    channelSync: {
+      queueLock: (payload) => channelQueue.push(payload)
+    },
+    logger: { warn: () => {} }
+  });
+
+  const insertBooking = db.prepare(
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
+  );
+
+  const bookingId = insertBooking.run(unitId, 'Maria', 'maria@example.com', '2025-06-01', '2025-06-04', 36000, 'PENDING')
+    .lastInsertRowid;
+  const hold = guard.reserveSlot({ unitId, from: '2025-06-01', to: '2025-06-04', bookingId });
+  assert.equal(hold.created, true, 'primeiro bloqueio deve ser criado');
+  assert.ok(channelQueue.length >= 1, 'bloqueio deve ser enfileirado para canais');
+
+  const repeat = guard.reserveSlot({ unitId, from: '2025-06-01', to: '2025-06-04', bookingId });
+  assert.equal(repeat.created, false, 'chamada idempotente não deve recriar bloqueio');
+  assert.ok(channelQueue.length >= 1, 'idempotência não deve duplicar fila');
+
+  const concurrentFrom = '2025-07-01';
+  const concurrentTo = '2025-07-04';
+  const firstConcurrentId = insertBooking.run(unitId, 'João', 'joao@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING')
+    .lastInsertRowid;
+  const secondConcurrentId = insertBooking.run(unitId, 'Carla', 'carla@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING')
+    .lastInsertRowid;
+
+  function runReserve(booking) {
+    return new Promise((resolve) => {
+      setImmediate(() => {
+        try {
+          const result = guard.reserveSlot({ unitId, from: concurrentFrom, to: concurrentTo, bookingId: booking });
+          resolve({ ok: true, result });
+        } catch (err) {
+          resolve({ ok: false, err });
+        }
+      });
+    });
+  }
+
+  const [attemptA, attemptB] = await Promise.all([runReserve(firstConcurrentId), runReserve(secondConcurrentId)]);
+  const failure = [attemptA, attemptB].find(item => !item.ok);
+  const success = [attemptA, attemptB].find(item => item.ok);
+  assert.ok(success && success.ok, 'uma tentativa deve obter bloqueio');
+  assert.ok(failure && failure.err instanceof ConflictError, 'segunda tentativa deve falhar com conflito');
+  assert.ok(channelQueue.length >= 2, 'segundo bloqueio válido deve ser enfileirado');
+}
+
 function testReviewService() {
   const db = createDatabase(':memory:');
   const { propertyId, unitId } = seedPropertyAndUnit(db);
@@ -236,22 +317,21 @@ function testReportingService() {
   assert.equal(pdf.slice(0, 4).toString(), '%PDF', 'PDF gerado deve começar com assinatura PDF');
 }
 
-function main() {
+async function main() {
   testServerBootstrap();
   testSessionService();
   testCsrfProtection();
   testPricingService();
   testRateManagementService();
   testUnitBlockService();
+  await testOverbookingGuardService();
   testReviewService();
   testReportingService();
   console.log('Todos os testes passaram.');
 }
 
-try {
-  main();
-} catch (err) {
+main().catch(err => {
   console.error(err);
   process.exit(1);
-}
+});
 

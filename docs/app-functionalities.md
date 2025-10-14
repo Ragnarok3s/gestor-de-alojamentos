@@ -12,11 +12,11 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 |---|----------------|----------|---------------------|-------------|
 | 1 | Autenticação Backoffice e Sessões | UI/API `/login`, `POST /logout` | `src/modules/auth`; `src/services/session.js` | CSRF e cookies seguros configurados |
 | 2 | Segurança de Conta e 2FA | UI `/account/seguranca`, `POST` 2FA rotas | `src/modules/account`; `src/services/twoFactorService.js` | Gestão de códigos e desafios |
-| 3 | Motor de Reservas Público | UI `/`, `/book/:unitId`, API `POST /book` | `src/modules/frontoffice/index.js` | Validações de hóspedes e quotas |
+| 3 | Motor de Reservas Público | UI `/`, `/book/:unitId`, API `POST /book` | `src/modules/frontoffice/index.js` | Validações, hard-lock idempotente e quotas |
 | 4 | Calendário Operacional e Reagendamento | UI `/calendar`, API `/calendar/booking/:id/...` | `src/modules/frontoffice/index.js` | Reagendamento com validação de conflitos |
 | 5 | Gestão de Tarefas de Limpeza | UI `/limpeza/tarefas`, `/admin/limpeza` | `src/modules/backoffice/index.js` | Fluxos de criação, progresso e reabertura |
 | 6 | Gestão de Propriedades e Unidades | UI `/admin/properties`, `/admin/units/:id` | `src/modules/backoffice/index.js` | Inclui geocoding e galeria de imagens |
-| 7 | Gestão de Reservas no Backoffice | UI `/admin/bookings` e detalhes | `src/modules/backoffice/index.js` | Edição, notas e cancelamentos com auditoria |
+| 7 | Gestão de Reservas no Backoffice | UI `/admin/bookings` e detalhes | `src/modules/backoffice/index.js` | Edição, hard-lock OTA e cancelamentos com auditoria |
 | 8 | Gestão de Tarifas e Bloqueios | API `/admin/api/rates/*`, `/admin/api/units/:id/blocks` | `src/modules/backoffice/ux-api.js`; serviços de rates/blocks | Bulk edit com undo e bloqueios anti-conflito |
 | 9 | Centro de Reviews e Respostas | UI aba reviews, API `/admin/api/reviews` | `src/modules/backoffice/ux-api.js`; `src/services/review-center.js` | Telemetria e filtros negativos |
 |10 | Relatórios e KPIs Exportáveis | UI aba estatísticas, API `/admin/api/reports/weekly` | `src/modules/backoffice/ux-api.js`; `src/services/reporting.js` | Exporta CSV/PDF com limites de 31 dias |
@@ -69,6 +69,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 - Pesquisar unidades por datas, hóspedes e propriedade com verificação de capacidade e estadia mínima.【F:src/modules/frontoffice/index.js†L108-L200】
 - Visualizar ficha de confirmação `/book/:unitId` com resumo de preço e dados da unidade.【F:src/modules/frontoffice/index.js†L805-L906】
 - Submeter reserva (`POST /book`) e receber estado `PENDING` ou `CONFIRMED` de acordo com privilégios internos.【F:src/modules/frontoffice/index.js†L909-L960】
+- Criar bloqueio `HARD_LOCK` idempotente ligado à reserva e enfileirar atualização para OTAs, evitando overbookings.【F:src/modules/frontoffice/index.js†L909-L960】【F:src/services/overbooking-guard.js†L1-L149】
 - Receber feedback imediato sobre conflitos ou falhas de validação (ex.: capacidade, CSRF).【F:src/modules/frontoffice/index.js†L909-L949】
 **Entradas:**
 - **API:** `POST /book`
@@ -77,7 +78,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **Módulos principais:** `src/modules/frontoffice/index.js`, `src/services/booking-emails.js`, `server.js` (branding e emailer).【F:server.js†L1609-L1638】  
 **Dependências relevantes:** `dayjs` para datas, `better-sqlite3` para persistência, `crypto` para tokens de confirmação.【F:src/modules/frontoffice/index.js†L39-L960】  
 **Exemplo real:** _“Um hóspede escolhe 15–18 Agosto para dois adultos, confirma a “Suite Vista Rio” e recebe mensagem de reserva pendente enquanto a equipa valida.”_  
-**Notas/Riscos:** Bloqueios e reservas sobrepostas geram erro 409; testes E2E confirmam que unidades bloqueadas retornam `409` ao tentar reservar no período indisponível.【F:tests/e2e/ux.spec.js†L76-L124】
+**Notas/Riscos:** Bloqueios e reservas sobrepostas geram erro 409; testes E2E confirmam que locks concorrentes rejeitam a segunda tentativa, mantendo coerência OTA.【F:tests/e2e/ux.spec.js†L76-L166】
 
 ### Calendário Operacional e Reagendamento
 **O que é:** Visão privada do calendário com filtros por propriedade/unidade, listagem mobile responsiva e endpoints para reagendar ou cancelar reservas e bloqueios com validação de conflitos e estadia mínima.【F:src/modules/frontoffice/index.js†L1109-L1899】  
@@ -85,6 +86,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 - Navegar mês a mês e filtrar por unidade, datas ou hóspede.【F:src/modules/frontoffice/index.js†L1110-L1208】
 - Visualizar overview por estado (confirmadas, pendentes) e totais de noites.【F:src/modules/frontoffice/index.js†L1178-L1199】
 - Reagendar reservas com cálculo de nova tarifa e registo de mudança.【F:src/modules/frontoffice/index.js†L1806-L1849】
+- Atualizar automaticamente o bloqueio `HARD_LOCK` associado à reserva ao reagendar, mantendo proteção contra overbooking.【F:src/modules/frontoffice/index.js†L1806-L1856】【F:src/services/overbooking-guard.js†L1-L149】
 - Reagendar ou cancelar bloqueios diretamente do calendário com validação cruzada.【F:src/modules/frontoffice/index.js†L1869-L1899】
 **Entradas:**
 - **API:** `POST /calendar/booking/:id/reschedule`, `POST /calendar/booking/:id/cancel`, `POST /calendar/block/:id/reschedule`
@@ -93,7 +95,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **Módulos principais:** `src/modules/frontoffice/index.js` (secção calendário), `server.js` (permissões), `src/services/unit-blocks.js` para conflitos.【F:server.js†L3200-L3256】【F:src/services/unit-blocks.js†L1-L90】  
 **Dependências relevantes:** `dayjs`, serviços de pricing e logging de alterações.【F:src/modules/frontoffice/index.js†L1806-L1899】  
 **Exemplo real:** _“A gestora arrasta uma reserva para novas datas; o sistema recalcula o preço, verifica mínimos e atualiza a linha no calendário.”_  
-**Notas/Riscos:** Apenas perfis com `calendar.reschedule` podem alterar datas; conflitos com reservas/bloqueios devolvem `409`.【F:src/modules/frontoffice/index.js†L1820-L1887】
+**Notas/Riscos:** Apenas perfis com `calendar.reschedule` podem alterar datas; conflitos com reservas/bloqueios devolvem `409` e locks liberam datas ao cancelar.【F:src/modules/frontoffice/index.js†L1820-L1898】
 
 ### Gestão de Tarefas de Limpeza
 **O que é:** Painéis `/limpeza/tarefas` e `/admin/limpeza` com métricas, backlog, criação de tarefas baseadas em reservas e ações de progresso/conclusão/reabertura, registando auditoria completa.【F:src/modules/backoffice/index.js†L987-L1843】  
@@ -132,6 +134,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **O que o utilizador consegue fazer:**
 - Filtrar reservas por hóspede, estado ou mês e abrir ficha detalhada.【F:src/modules/backoffice/index.js†L4895-L4992】
 - Atualizar datas, contactos, estado e notas internas; ao confirmar envia email configurável ao hóspede.【F:src/modules/backoffice/index.js†L5129-L5218】
+- Confirmar ou reclassificar reservas com criação/remoção de bloqueios `HARD_LOCK` idempotentes e sincronização OTA via fila dedicada.【F:src/modules/backoffice/index.js†L5129-L5263】【F:src/services/overbooking-guard.js†L1-L149】
 - Adicionar notas cronológicas e cancelar reservas com registo de auditoria.【F:src/modules/backoffice/index.js†L5223-L5248】
 - Eliminar definitivamente (apenas admin) mantendo logs de alterações.【F:src/modules/backoffice/index.js†L5250-L5263】
 **Entradas:**
@@ -141,7 +144,7 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **Módulos principais:** `src/modules/backoffice/index.js`, `src/services/booking-emails.js`, `src/services/email-templates.js`.【F:src/modules/backoffice/index.js†L4895-L5263】【F:src/services/booking-emails.js†L24-L99】  
 **Dependências relevantes:** `dayjs` para formatação, emailer configurado no servidor.【F:server.js†L1609-L1638】  
 **Exemplo real:** _“A equipa ajusta a estadia de uma reserva, confirma-a e o hóspede recebe o email ‘booking_confirmed_guest’ automaticamente.”_  
-**Notas/Riscos:** Atualizações verificam conflitos e estadias mínimas; cancelamentos e eliminações requerem permissões específicas (`bookings.cancel`, `users.manage`).【F:src/modules/backoffice/index.js†L4895-L5263】
+**Notas/Riscos:** Atualizações verificam conflitos, mantêm locks sincronizados e liberam datas ao cancelar; cancelamentos e eliminações requerem permissões específicas (`bookings.cancel`, `users.manage`).【F:src/modules/backoffice/index.js†L4895-L5263】
 
 ### Histórico Operacional de Reservas e Tarefas
 **O que é:** Aba "Histórico" exclusiva para Direção e Desenvolvimento no backoffice que agrega as últimas alterações efetuadas em reservas e tarefas de limpeza com difs antes/depois para auditoria rápida.【F:src/modules/backoffice/index.js†L2035-L2055】【F:src/modules/backoffice/index.js†L2085-L2129】【F:src/modules/backoffice/index.js†L3931-L3954】

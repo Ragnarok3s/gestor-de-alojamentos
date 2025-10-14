@@ -124,6 +124,69 @@ test.describe('Casas de Pousadouro — Fluxos UX críticos', () => {
     }
   });
 
+  test('Guard de overbooking impede reservas duplicadas', async ({ page }) => {
+    test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
+
+    await page.locator('[data-bo-target="overview"]').click();
+    const unitButton = page.locator('[data-block-unit]').first();
+    await expect(unitButton).toBeVisible();
+    const unitId = await unitButton.getAttribute('data-block-unit');
+    expect(unitId).toBeTruthy();
+
+    const checkin = '2030-01-05';
+    const checkout = '2030-01-09';
+
+    const browser = page.context().browser();
+    const ctxA = await browser.newContext();
+    const ctxB = await browser.newContext();
+    const pageA = await ctxA.newPage();
+    const pageB = await ctxB.newPage();
+
+    await pageA.goto(`${baseURL}/book/${unitId}?checkin=${checkin}&checkout=${checkout}&adults=2&children=0`);
+    await pageB.goto(`${baseURL}/book/${unitId}?checkin=${checkin}&checkout=${checkout}&adults=2&children=0`);
+
+    const tokenA = await pageA.locator('input[name="_csrf"]').inputValue();
+    const tokenB = await pageB.locator('input[name="_csrf"]').inputValue();
+
+    const payloadA = {
+      _csrf: tokenA,
+      unit_id: unitId,
+      checkin,
+      checkout,
+      adults: '2',
+      children: '0',
+      guest_name: 'Teste Guard 1',
+      guest_email: 'guard1@example.com',
+      guest_nationality: 'PT',
+      guest_phone: '+351000000001'
+    };
+
+    const payloadB = {
+      _csrf: tokenB,
+      unit_id: unitId,
+      checkin,
+      checkout,
+      adults: '2',
+      children: '0',
+      guest_name: 'Teste Guard 2',
+      guest_email: 'guard2@example.com',
+      guest_nationality: 'PT',
+      guest_phone: '+351000000002'
+    };
+
+    const [respA, respB] = await Promise.all([
+      pageA.request.post(baseURL + '/book', { form: payloadA }),
+      pageB.request.post(baseURL + '/book', { form: payloadB })
+    ]);
+
+    const statuses = [respA.status(), respB.status()].sort();
+    expect(statuses[0]).toBe(302);
+    expect(statuses[1]).toBe(409);
+
+    await ctxA.close();
+    await ctxB.close();
+  });
+
   test('Responder a uma review negativa', async ({ page }) => {
     test.skip(!baseURL, 'Define E2E_BASE_URL para executar os testes de interface.');
 
