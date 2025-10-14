@@ -32,6 +32,8 @@ const { createEmailTemplateService } = require('./src/services/email-templates')
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createChannelSync } = require('./src/services/channel-sync');
+const { createOverbookingGuard } = require('./src/services/overbooking-guard');
 const { createAutomationEngine } = require('./server/automations/engine');
 const emailAction = require('./server/automations/actions/email');
 const notifyAction = require('./server/automations/actions/notify');
@@ -40,8 +42,6 @@ const createHousekeepingTaskAction = require('./server/automations/actions/creat
 const priceOverrideAction = require('./server/automations/actions/price.override');
 const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
-const { createChatbotService } = require('./server/chatbot/service');
-const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
 
 const app = express();
@@ -58,6 +58,7 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const skipStartupTasks = process.env.SKIP_SERVER_START === '1';
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -1202,7 +1203,7 @@ function mixColors(hexA, hexB, ratio) {
   const a = hexToRgb(hexA);
   const b = hexToRgb(hexB);
   if (!a || !b) return hexA;
-  const t = Math.max(0, Math.min(1, Number(ratio))); 
+  const t = Math.max(0, Math.min(1, Number(ratio)));
   return rgbToHex({
     r: a.r * (1 - t) + b.r * t,
     g: a.g * (1 - t) + b.g * t,
@@ -1616,7 +1617,9 @@ const channelIntegrations = createChannelIntegrationService({
   ensureDir,
   uploadsDir: UPLOAD_CHANNEL_IMPORTS
 });
+const channelSync = createChannelSync({ logger: console });
 const telemetry = createTelemetry({ logger: console });
+const overbookingGuard = createOverbookingGuard({ db, dayjs, logChange, channelSync, logger: console });
 
 const automationActionDrivers = {
   email: emailAction,
@@ -1640,17 +1643,17 @@ const automationEngine = createAutomationEngine({
 });
 
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
-const chatbotService = createChatbotService({ db });
-
-channelIntegrations
-  .autoSyncAll({ reason: 'startup' })
-  .catch(err => console.warn('Integração de canais (startup):', err.message));
-
-setInterval(() => {
+if (!skipStartupTasks) {
   channelIntegrations
-    .autoSyncAll({ reason: 'interval' })
-    .catch(err => console.warn('Integração de canais (intervalo):', err.message));
-}, 30 * 60 * 1000);
+    .autoSyncAll({ reason: 'startup' })
+    .catch(err => console.warn('Integração de canais (startup):', err.message));
+
+  setInterval(() => {
+    channelIntegrations
+      .autoSyncAll({ reason: 'interval' })
+      .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+  }, 30 * 60 * 1000);
+}
 
 app.post('/api/ota/webhooks/:channelKey', async (req, res) => {
   const channelKey = String(req.params.channelKey || '').trim();
@@ -1754,37 +1757,39 @@ function scheduleDailyTask(task, hour, minute) {
   schedule();
 }
 
-scheduleDailyTask(() => {
-  decisionAssistant.run({ reason: 'daily' });
-}, 3, 10);
+if (!skipStartupTasks) {
+  scheduleDailyTask(() => {
+    decisionAssistant.run({ reason: 'daily' });
+  }, 3, 10);
 
-scheduleDailyTask(() => {
-  automationEngine.handleEvent('daily.cron', { ts: Date.now() });
-}, 3, 30);
+  scheduleDailyTask(() => {
+    automationEngine.handleEvent('daily.cron', { ts: Date.now() });
+  }, 3, 30);
 
-try {
-  runAutomationSweep('startup');
-} catch (err) {
-  console.error('Automação: falha inicial', err);
-}
-
-try {
-  decisionAssistant.run({ reason: 'startup' });
-} catch (err) {
-  console.error('Assistente de decisões: falha inicial', err);
-}
-
-automationEngine
-  .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
-  .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
-
-setInterval(() => {
   try {
-    runAutomationSweep('interval');
+    runAutomationSweep('startup');
   } catch (err) {
-    console.error('Automação: falha periódica', err);
+    console.error('Automação: falha inicial', err);
   }
-}, 30 * 60 * 1000);
+
+  try {
+    decisionAssistant.run({ reason: 'startup' });
+  } catch (err) {
+    console.error('Assistente de decisões: falha inicial', err);
+  }
+
+  automationEngine
+    .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
+    .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
+
+  setInterval(() => {
+    try {
+      runAutomationSweep('interval');
+    } catch (err) {
+      console.error('Automação: falha periódica', err);
+    }
+  }, 30 * 60 * 1000);
+}
 
 function wantsJson(req) {
   const accept = String(req.headers.accept || '').toLowerCase();
@@ -3184,6 +3189,7 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  channelSync,
   telemetry,
   wantsJson,
   formatAuditValue,
@@ -3204,6 +3210,7 @@ const context = {
   emailTemplates,
   mailer,
   bookingEmailer,
+  overbookingGuard,
   secureCookies,
   csrfProtection,
   requireLogin,
@@ -3240,12 +3247,10 @@ const context = {
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
   slugify,
-  decisionAssistant,
-  chatbotService
+  decisionAssistant
 };
 
 registerAuthRoutes(app, context);
-app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerBackoffice(app, context);
@@ -3279,7 +3284,7 @@ app.use((req, res) => {
 });
 
 // ===================== START SERVER =====================
-if (!global.__SERVER_STARTED__) {
+if (!global.__SERVER_STARTED__ && process.env.SKIP_SERVER_START !== '1') {
   const PORT = process.env.PORT || 3000;
   const SSL_KEY_PATH = process.env.SSL_KEY_PATH;
   const SSL_CERT_PATH = process.env.SSL_CERT_PATH;

@@ -1,79 +1,296 @@
-# Funcionalidades Principais da Aplicação
+# Funcionalidades da Aplicação
 
-A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A lista abaixo resume cada funcionalidade com uma explicação e um exemplo de utilização no mundo real.
+_Gerado automaticamente em: 2025-10-14 17:51_
 
-- **Gestão de utilizadores com perfis e permissões** – O servidor define perfis como receção, gestão, direção e limpeza, atribuindo automaticamente as permissões adequadas a cada função para controlar o acesso ao calendário, reservas, automatizações e limpezas.【F:server.js†L160-L225】  
-  *Exemplo real*: A equipa de limpeza inicia sessão e só vê as tarefas que precisa de executar, enquanto a direção consegue exportar relatórios financeiros completos.
+## Sumário
+- Número total de funcionalidades: 16
+- Módulos analisados: [api, ui, cli, jobs, models, tests]
+- Nota: Documento deduplicado (sem funcionalidades repetidas).
 
-- **Pesquisa e reserva por propriedade** – A página pública agrupa as unidades por propriedade, aplica filtros de datas, capacidade e disponibilidade e gera orçamentos quando existe uma pesquisa activa.【F:src/modules/frontoffice/index.js†L109-L236】  
-  *Exemplo real*: Um hóspede escolhe “16/10/2025 - 22/10/2025” para duas pessoas e recebe a lista das unidades disponíveis na quinta pretendida com o preço calculado.
+## Tabela Resumo
+| # | Funcionalidade | Entradas | Principais Módulos | Observações |
+|---|----------------|----------|---------------------|-------------|
+| 1 | Autenticação Backoffice e Sessões | UI/API `/login`, `POST /logout` | `src/modules/auth`; `src/services/session.js` | CSRF e cookies seguros configurados |
+| 2 | Segurança de Conta e 2FA | UI `/account/seguranca`, `POST` 2FA rotas | `src/modules/account`; `src/services/twoFactorService.js` | Gestão de códigos e desafios |
+| 3 | Motor de Reservas Público | UI `/`, `/book/:unitId`, API `POST /book` | `src/modules/frontoffice/index.js` | Validações, hard-lock idempotente e quotas |
+| 4 | Calendário Operacional e Reagendamento | UI `/calendar`, API `/calendar/booking/:id/...` | `src/modules/frontoffice/index.js` | Reagendamento com validação de conflitos |
+| 5 | Gestão de Tarefas de Limpeza | UI `/limpeza/tarefas`, `/admin/limpeza` | `src/modules/backoffice/index.js` | Fluxos de criação, progresso e reabertura |
+| 6 | Gestão de Propriedades e Unidades | UI `/admin/properties`, `/admin/units/:id` | `src/modules/backoffice/index.js` | Inclui geocoding e galeria de imagens |
+| 7 | Gestão de Reservas no Backoffice | UI `/admin/bookings` e detalhes | `src/modules/backoffice/index.js` | Edição, hard-lock OTA e cancelamentos com auditoria |
+| 8 | Gestão de Tarifas e Bloqueios | API `/admin/api/rates/*`, `/admin/api/units/:id/blocks` | `src/modules/backoffice/ux-api.js`; serviços de rates/blocks | Bulk edit com undo e bloqueios anti-conflito |
+| 9 | Centro de Reviews e Respostas | UI aba reviews, API `/admin/api/reviews` | `src/modules/backoffice/ux-api.js`; `src/services/review-center.js` | Telemetria e filtros negativos |
+|10 | Relatórios e KPIs Exportáveis | UI aba estatísticas, API `/admin/api/reports/weekly` | `src/modules/backoffice/ux-api.js`; `src/services/reporting.js` | Exporta CSV/PDF com limites de 31 dias |
+|11 | Channel Manager e Integrações OTA | UI `#channel-manager`, API `/admin/channel-*` | `src/modules/backoffice/index.js`; `server.js` | Sincronizações auto e uploads manuais |
+|12 | Portal de Proprietários | UI `/owners` | `src/modules/owners/index.js` | Dashboards por propriedade e canais |
+|13 | Motor de Automações Operacionais | API `/admin/automation/*` | `src/modules/backoffice/index.js`; `server/automations/engine.js` | Exporta métricas e aciona drivers |
+|14 | Assistente de Decisão Comercial | Jobs agendados | `server/decisions/assistant.js`; `server.js` | Sugere ajustes de preço/promoções |
+|15 | Reindexação da Base de Conhecimento | CLI `createKbReindexer` | `server/kb/reindex.js` | Atualiza índice de FAQ/artigos |
+|16 | Histórico Operacional de Reservas e Tarefas | UI `/admin` (aba "Histórico") | `src/modules/backoffice/index.js`; `server.js` | Visível apenas para Direção/Dev |
 
-- **Validação de pedidos e criação de reservas pendentes** – O frontoffice valida contactos, datas e capacidade antes de inserir a reserva. As reservas submetidas por hóspedes entram com estado `PENDING`, enquanto colaboradores autorizados continuam a confirmar de imediato.【F:src/modules/frontoffice/index.js†L39-L105】【F:src/modules/frontoffice/index.js†L851-L862】
-  *Exemplo real*: Um pedido directo feito pelo site fica marcado como “pendente” até que a equipa de reservas analise a disponibilidade final e aprove o pedido.
+---
 
-- **Assistente de reservas com chatbot conversacional** – O widget flutuante permite aos visitantes conversar com um bot que guarda o contexto da sessão, sugere unidades disponíveis com cartões ricos e ligações directas para reservar com as datas preenchidas.【F:src/modules/frontoffice/index.js†L620-L711】【F:server/chatbot/handlers/availability.js†L3-L83】【F:server/chatbot/service.js†L1-L75】
-  *Exemplo real*: Um hóspede pergunta “3 noites para 2 pessoas em Novembro?” e o assistente devolve as suites disponíveis com preço estimado e botão “Reservar agora”.
+## Funcionalidades (detalhe)
 
-- **Envio automático de emails transaccionais configuráveis** – Os modelos para emails de reserva pendente e confirmada podem ser editados no backoffice, e o serviço gera e envia mensagens automáticas aos hóspedes quando uma reserva é criada ou passa a confirmada.【F:src/services/email-templates.js†L1-L200】【F:src/services/booking-emails.js†L24-L90】【F:src/modules/backoffice/index.js†L3377-L3386】
-  *Exemplo real*: Após confirmar uma estadia, o gestor envia automaticamente um email personalizado com as datas e link para consulta sem precisar copiar mensagens manualmente.
+### Autenticação Backoffice e Sessões
+**O que é:** Implementa formulário e processamento de login/logout com proteção CSRF, validação de credenciais bcrypt e gestão de sessões persistentes com cookies `httpOnly` e tolerância a redirecionamentos seguros.【F:src/modules/auth/index.js†L1-L101】【F:src/services/session.js†L3-L140】  
+**O que o utilizador consegue fazer:**
+- Abrir o formulário `/login` e receber feedback de erro/sucesso.【F:src/modules/auth/index.js†L20-L61】
+- Autenticar-se por `POST /login` com rotação automática de token CSRF.【F:src/modules/auth/index.js†L63-L101】
+- Obter redireciono condicional para dashboard, reservas ou limpeza conforme permissões.【F:src/modules/auth/index.js†L82-L101】
+- Terminar sessão via `POST /logout`, com registo de auditoria e destruição da sessão persistente.【F:src/modules/auth/index.js†L103-L118】【F:src/services/session.js†L64-L70】
+**Entradas:**
+- **API:** `POST /login`, `POST /logout`
+- **UI:** `/login`
+- **CLI:** —
+**Módulos principais:** `src/modules/auth/index.js`, `src/services/session.js`, `server.js` (configuração de cookies e permissões).【F:server.js†L3200-L3256】  
+**Dependências relevantes:** `bcryptjs` para hash das passwords, `cookie-parser` e o serviço de sessão próprio.【F:server.js†L5-L55】【F:src/services/session.js†L3-L140】  
+**Exemplo real:** _“Uma rececionista acede a `/login`, insere as credenciais e é redirecionada para `/admin` com a sessão guardada por 7 dias; ao terminar o turno, clica em “Terminar sessão”, limpando o cookie `adm`.”_  
+**Notas/Riscos:** Exige HTTPS para definir `secureCookies` quando configurado; redirecionos externos são bloqueados por `isSafeRedirectTarget` para prevenir open-redirects.【F:server.js†L130-L192】【F:src/modules/auth/index.js†L23-L47】
 
-- **Notificações internas sobre reservas pendentes e alertas operacionais** – O painel de notificações procura reservas a aguardar confirmação e outras alertas operacionais, mostrando-os apenas aos utilizadores com permissões adequadas.【F:src/services/notifications.js†L19-L168】
-  *Exemplo real*: A receção recebe um aviso “Reserva a aguardar confirmação” quando entra um novo pedido pela app, garantindo resposta rápida ao hóspede.
+### Segurança de Conta e 2FA
+**O que é:** Área de conta que permite ativar, confirmar, regenerar e desativar autenticação de dois fatores, bem como consultar logs de sessão e exportar CSV de acessos.【F:src/modules/account/index.js†L1-L181】【F:src/services/twoFactorService.js†L11-L205】  
+**O que o utilizador consegue fazer:**
+- Iniciar configuração 2FA com QR code e códigos de recuperação.【F:src/modules/account/index.js†L65-L131】
+- Confirmar códigos TOTP e gerar novos códigos de recuperação.【F:src/modules/account/index.js†L132-L168】【F:src/services/twoFactorService.js†L133-L205】
+- Desativar 2FA ou cancelar configuração pendente, com rotação de tokens.【F:src/modules/account/index.js†L168-L207】
+- Consultar e exportar histórico dos últimos 50 eventos de sessão.【F:src/modules/account/index.js†L182-L238】
+**Entradas:**
+- **API:** `POST /account/seguranca/2fa/*`
+- **UI:** `/account/seguranca`
+- **CLI:** —
+**Módulos principais:** `src/modules/account/index.js`, `src/services/twoFactorService.js`, `src/services/twoFactor.js` (geração de códigos).【F:src/services/twoFactorService.js†L11-L205】  
+**Dependências relevantes:** `crypto` para hashing, utilitários TOTP customizados, `dayjs` para datas.【F:src/services/twoFactorService.js†L1-L205】  
+**Exemplo real:** _“Um diretor ativa o 2FA, digitaliza o QR code, confirma o token de 6 dígitos e descarrega novos códigos de recuperação antes de sair da página.”_  
+**Notas/Riscos:** Falhas na validação rejeitam tokens; rotas exigem sessão autenticada e validação de CSRF em cada formulário.【F:src/modules/account/index.js†L14-L33】【F:src/modules/account/index.js†L109-L131】
 
-- **Gestão de reservas no backoffice com filtros avançados** – A listagem administrativa aceita pesquisa por hóspede, canal ou mês, abre a ficha da reserva para editar datas, contactos, estado e notas internas, recalcula tarifas com validação de estadia mínima e permite cancelar ou eliminar registos mantendo histórico de auditoria.【F:src/modules/backoffice/index.js†L4895-L5238】
-  *Exemplo real*: A equipa de operações revê todas as reservas de Outubro, ajusta o número de crianças numa estadia e cancela um pedido duplicado, registando automaticamente a alteração.
+### Motor de Reservas Público
+**O que é:** Portal público que lista unidades disponíveis por propriedade, calcula cotações e aceita submissões de reserva com validações de contacto e agência, emitindo confirmações pendentes ou automáticas conforme permissões.【F:src/modules/frontoffice/index.js†L39-L200】【F:src/modules/frontoffice/index.js†L798-L960】  
+**O que o utilizador consegue fazer:**
+- Pesquisar unidades por datas, hóspedes e propriedade com verificação de capacidade e estadia mínima.【F:src/modules/frontoffice/index.js†L108-L200】
+- Visualizar ficha de confirmação `/book/:unitId` com resumo de preço e dados da unidade.【F:src/modules/frontoffice/index.js†L805-L906】
+- Submeter reserva (`POST /book`) e receber estado `PENDING` ou `CONFIRMED` de acordo com privilégios internos.【F:src/modules/frontoffice/index.js†L909-L960】
+- Criar bloqueio `HARD_LOCK` idempotente ligado à reserva e enfileirar atualização para OTAs, evitando overbookings.【F:src/modules/frontoffice/index.js†L909-L960】【F:src/services/overbooking-guard.js†L1-L149】
+- Receber feedback imediato sobre conflitos ou falhas de validação (ex.: capacidade, CSRF).【F:src/modules/frontoffice/index.js†L909-L949】
+**Entradas:**
+- **API:** `POST /book`
+- **UI:** `/`, `/search`, `/book/:unitId`
+- **CLI:** —
+**Módulos principais:** `src/modules/frontoffice/index.js`, `src/services/booking-emails.js`, `server.js` (branding e emailer).【F:server.js†L1609-L1638】  
+**Dependências relevantes:** `dayjs` para datas, `better-sqlite3` para persistência, `crypto` para tokens de confirmação.【F:src/modules/frontoffice/index.js†L39-L960】  
+**Exemplo real:** _“Um hóspede escolhe 15–18 Agosto para dois adultos, confirma a “Suite Vista Rio” e recebe mensagem de reserva pendente enquanto a equipa valida.”_  
+**Notas/Riscos:** Bloqueios e reservas sobrepostas geram erro 409; testes E2E confirmam que locks concorrentes rejeitam a segunda tentativa, mantendo coerência OTA.【F:tests/e2e/ux.spec.js†L76-L166】
 
-- **Mapa de reservas com reagendamento via arrastar-e-largar e visão mobile optimizada** – O backoffice apresenta um calendário semanal com filtros, legenda por estado, suporte a arrastar para reagendar e uma visão móvel em formato tabela para evitar cortes em ecrãs pequenos.【F:src/modules/frontoffice/index.js†L1016-L1692】
-  *Exemplo real*: Um gestor usa um tablet para arrastar uma reserva confirmada dois dias para a frente quando o hóspede solicita alteração de datas.
+### Calendário Operacional e Reagendamento
+**O que é:** Visão privada do calendário com filtros por propriedade/unidade, listagem mobile responsiva e endpoints para reagendar ou cancelar reservas e bloqueios com validação de conflitos e estadia mínima.【F:src/modules/frontoffice/index.js†L1109-L1899】  
+**O que o utilizador consegue fazer:**
+- Navegar mês a mês e filtrar por unidade, datas ou hóspede.【F:src/modules/frontoffice/index.js†L1110-L1208】
+- Visualizar overview por estado (confirmadas, pendentes) e totais de noites.【F:src/modules/frontoffice/index.js†L1178-L1199】
+- Reagendar reservas com cálculo de nova tarifa e registo de mudança.【F:src/modules/frontoffice/index.js†L1806-L1849】
+- Atualizar automaticamente o bloqueio `HARD_LOCK` associado à reserva ao reagendar, mantendo proteção contra overbooking.【F:src/modules/frontoffice/index.js†L1806-L1856】【F:src/services/overbooking-guard.js†L1-L149】
+- Reagendar ou cancelar bloqueios diretamente do calendário com validação cruzada.【F:src/modules/frontoffice/index.js†L1869-L1899】
+**Entradas:**
+- **API:** `POST /calendar/booking/:id/reschedule`, `POST /calendar/booking/:id/cancel`, `POST /calendar/block/:id/reschedule`
+- **UI:** `/calendar`
+- **CLI:** —
+**Módulos principais:** `src/modules/frontoffice/index.js` (secção calendário), `server.js` (permissões), `src/services/unit-blocks.js` para conflitos.【F:server.js†L3200-L3256】【F:src/services/unit-blocks.js†L1-L90】  
+**Dependências relevantes:** `dayjs`, serviços de pricing e logging de alterações.【F:src/modules/frontoffice/index.js†L1806-L1899】  
+**Exemplo real:** _“A gestora arrasta uma reserva para novas datas; o sistema recalcula o preço, verifica mínimos e atualiza a linha no calendário.”_  
+**Notas/Riscos:** Apenas perfis com `calendar.reschedule` podem alterar datas; conflitos com reservas/bloqueios devolvem `409` e locks liberam datas ao cancelar.【F:src/modules/frontoffice/index.js†L1820-L1898】
 
-- **Gestão completa de tarefas de limpeza** – Existem páginas específicas para listar pendentes, em curso e concluídas, criar novas tarefas, actualizar progresso e reabrir limpezas, respeitando as permissões de cada perfil.【F:src/modules/backoffice/index.js†L976-L1831】
-  *Exemplo real*: A governanta adiciona uma limpeza urgente após um check-out antecipado e marca a tarefa como concluída quando a equipa termina a preparação do quarto.
+### Gestão de Tarefas de Limpeza
+**O que é:** Painéis `/limpeza/tarefas` e `/admin/limpeza` com métricas, backlog, criação de tarefas baseadas em reservas e ações de progresso/conclusão/reabertura, registando auditoria completa.【F:src/modules/backoffice/index.js†L987-L1843】  
+**O que o utilizador consegue fazer:**
+- Consultar quadro de limpeza com pendentes, em curso e concluídas (últimas 24h/7d).【F:src/modules/backoffice/index.js†L987-L1058】
+- Criar tarefas a partir de reservas, definindo prioridade, prazos e tipo (checkout/checkin/etc.).【F:src/modules/backoffice/index.js†L1635-L1751】
+- Atualizar estado para “em progresso” ou “concluída” com registo de timestamps e utilizadores.【F:src/modules/backoffice/index.js†L1753-L1815】
+- Reabrir tarefas para revisão e manter histórico de alterações.【F:src/modules/backoffice/index.js†L1817-L1843】
+**Entradas:**
+- **API:** `POST /admin/limpeza/tarefas`, `POST /limpeza/tarefas/:id/progresso`, `POST /limpeza/tarefas/:id/concluir`
+- **UI:** `/limpeza/tarefas`, `/admin/limpeza`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js` (secção housekeeping), `server/services/pricing.js` para cálculos auxiliares (quando integra com automações).【F:src/modules/backoffice/index.js†L987-L1843】  
+**Dependências relevantes:** `dayjs` para planeamento, logging via `logActivity` e base de dados de housekeeping.【F:src/modules/backoffice/index.js†L1635-L1815】  
+**Exemplo real:** _“A governanta cria uma limpeza ‘checkout’ ligada à reserva 542, marca início quando a equipa chega e conclui após inspeção, ficando registados os tempos.”_  
+**Notas/Riscos:** Campos de data/hora validados e normalizados; acesso restrito por permissões `housekeeping.view/manage/complete`.【F:src/modules/backoffice/index.js†L987-L1099】【F:src/modules/backoffice/index.js†L1635-L1843】
 
-- **Centro de reviews com resposta directa** – O painel “Avaliações dos hóspedes” destaca contadores, filtros para recentes ou negativas e um compositor com validação de 1000 caracteres, enviando respostas via API dedicada e registando telemetria da acção.【F:src/modules/backoffice/index.js†L3729-L3776】【F:src/modules/backoffice/ux-api.js†L146-L188】【F:src/services/review-center.js†L1-L66】
-  *Exemplo real*: A direção filtra apenas críticas negativas da última semana, redige uma resposta empática e confirma o envio sem sair do dashboard.
+### Gestão de Propriedades e Unidades
+**O que é:** Formulários administrativos para criar/editar propriedades (com geocodificação), gerir unidades, definir rates manuais e administrar galerias de imagens com compressão automática.【F:src/modules/backoffice/index.js†L4160-L4859】  
+**O que o utilizador consegue fazer:**
+- Criar novas propriedades com morada e coordenadas obtidas por geocoding.【F:src/modules/backoffice/index.js†L4160-L4194】
+- Editar detalhes, ver reservas associadas e eliminar propriedades/unidades se necessário.【F:src/modules/backoffice/index.js†L4206-L4276】【F:src/modules/backoffice/index.js†L4685-L4702】
+- Criar unidades com capacidades, definir rates específicas e bloquear datas diretamente na ficha.【F:src/modules/backoffice/index.js†L4376-L4753】
+- Carregar, reordenar e definir imagem principal de cada unidade com compressão via `sharp` quando disponível.【F:src/modules/backoffice/index.js†L4755-L4859】
+**Entradas:**
+- **API:** `POST /admin/properties/*`, `POST /admin/units/*`
+- **UI:** `/admin/properties/:id`, `/admin/units/:id`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js`, `server.js` (geocoding helper), `src/services/channel-integrations.js` (para dashboards de propriedade).【F:server.js†L1500-L1640】  
+**Dependências relevantes:** `multer`/`sharp` para uploads, `https` e serviços de geocoding externos, `ExcelJS` para exportações associadas.【F:server.js†L7-L83】【F:src/modules/backoffice/index.js†L4755-L4837】  
+**Exemplo real:** _“Ao integrar uma nova quinta, o administrador cria a propriedade, regista morada, adiciona três unidades e carrega a sessão fotográfica, escolhendo a imagem de destaque.”_  
+**Notas/Riscos:** Eliminar propriedade remove unidades/reservas; compressão de imagens falha silenciosamente se `sharp` indisponível (aviso na inicialização).【F:src/modules/backoffice/index.js†L4198-L4204】【F:server.js†L9-L19】
 
-- **Painel de revenue com métricas, gráficos e tabela diária** – O separador “Revenue” consolida receita confirmada e pendente, previsões automáticas, repartição por canal e gera gráficos interactivos e uma tabela diária com ADR, RevPAR, ocupação e booking pace.【F:src/modules/backoffice/index.js†L3189-L3460】【F:src/modules/backoffice/scripts/revenue-dashboard.js†L1-L200】
-  *Exemplo real*: A direção analisa o gráfico de receita dos últimos 30 dias para comparar o desempenho entre semanas e perceber em que dias a ocupação caiu.
+### Gestão de Reservas no Backoffice
+**O que é:** Listagem avançada `/admin/bookings` com filtros, ecrã detalhado com edição de dados, recalculo de tarifas, notas, cancelamentos e eliminação administradora, incluindo envio automático de emails ao confirmar.【F:src/modules/backoffice/index.js†L4894-L5263】  
+**O que o utilizador consegue fazer:**
+- Filtrar reservas por hóspede, estado ou mês e abrir ficha detalhada.【F:src/modules/backoffice/index.js†L4895-L4992】
+- Atualizar datas, contactos, estado e notas internas; ao confirmar envia email configurável ao hóspede.【F:src/modules/backoffice/index.js†L5129-L5218】
+- Confirmar ou reclassificar reservas com criação/remoção de bloqueios `HARD_LOCK` idempotentes e sincronização OTA via fila dedicada.【F:src/modules/backoffice/index.js†L5129-L5263】【F:src/services/overbooking-guard.js†L1-L149】
+- Adicionar notas cronológicas e cancelar reservas com registo de auditoria.【F:src/modules/backoffice/index.js†L5223-L5248】
+- Eliminar definitivamente (apenas admin) mantendo logs de alterações.【F:src/modules/backoffice/index.js†L5250-L5263】
+**Entradas:**
+- **API:** `POST /admin/bookings/:id/update`, `POST /admin/bookings/:id/notes`, `POST /admin/bookings/:id/cancel`
+- **UI:** `/admin/bookings`, `/admin/bookings/:id`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js`, `src/services/booking-emails.js`, `src/services/email-templates.js`.【F:src/modules/backoffice/index.js†L4895-L5263】【F:src/services/booking-emails.js†L24-L99】  
+**Dependências relevantes:** `dayjs` para formatação, emailer configurado no servidor.【F:server.js†L1609-L1638】  
+**Exemplo real:** _“A equipa ajusta a estadia de uma reserva, confirma-a e o hóspede recebe o email ‘booking_confirmed_guest’ automaticamente.”_  
+**Notas/Riscos:** Atualizações verificam conflitos, mantêm locks sincronizados e liberam datas ao cancelar; cancelamentos e eliminações requerem permissões específicas (`bookings.cancel`, `users.manage`).【F:src/modules/backoffice/index.js†L4895-L5263】
 
-- **Painel operacional automatizado e exportações** – A área “Estatísticas” cruza dados diários e semanais gerados pelo motor de automatizações para apresentar KPIs unificados, alertas de receita futura, sugestões de tarifa e bloqueios gerados automaticamente, permitindo exportar o snapshot completo em CSV com filtros de período, propriedade e tipologia.【F:src/modules/backoffice/index.js†L2830-L3106】【F:src/modules/backoffice/index.js†L3940-L4048】【F:server/automations/engine.js†L1-L120】
-  *Exemplo real*: A gestão selecciona “Setembro · Casas de Campo”, revê os alertas de sobreocupação e descarrega o CSV para discutir ajustes de preço na reunião semanal.
+### Histórico Operacional de Reservas e Tarefas
+**O que é:** Aba "Histórico" exclusiva para Direção e Desenvolvimento no backoffice que agrega as últimas alterações efetuadas em reservas e tarefas de limpeza com difs antes/depois para auditoria rápida.【F:src/modules/backoffice/index.js†L2035-L2055】【F:src/modules/backoffice/index.js†L2085-L2129】【F:src/modules/backoffice/index.js†L3931-L3954】
+**O que o utilizador consegue fazer:**
+- Abrir o painel "Histórico" em `/admin` e consultar cronologicamente alterações recentes a reservas com hora, autor e ação registada.【F:src/modules/backoffice/index.js†L3936-L3945】
+- Visualizar diffs estruturados das tarefas de limpeza (criação, início, conclusão e reabertura) com destaque do responsável.【F:src/modules/backoffice/index.js†L1756-L1899】【F:src/modules/backoffice/index.js†L3942-L3949】
+- Confirmar que cada evento resulta de um `logChange` persistido na tabela `change_logs`, garantindo rastreabilidade total.【F:server.js†L372-L401】【F:src/infra/database.js†L203-L214】
+- Beneficiar de filtragem automática por perfil: apenas diretores (`direcao`) e desenvolvedores (`dev`) veem a aba e os dados sensíveis.【F:src/modules/backoffice/index.js†L2035-L2037】【F:src/modules/backoffice/index.js†L2575-L2587】【F:src/modules/backoffice/index.js†L3931-L3954】
+**Entradas:**
+- **API:** — (consulta direta à base `change_logs`)
+- **UI:** `/admin` → aba "Histórico"
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js`, `server.js` (função `logChange`), `src/infra/database.js` (estrutura `change_logs`).
+**Dependências relevantes:** `dayjs` para formatação temporal, helper `renderAuditDiff` para destacar diferenças JSON, `better-sqlite3` para leitura eficiente dos logs.【F:src/modules/backoffice/index.js†L2085-L2124】【F:server.js†L372-L401】
+**Exemplo real:** _“Um diretor abre a aba ‘Histórico’, verifica que a rececionista iniciou a tarefa #42 às 08:15, concluiu-a às 09:05 e no mesmo período reagendou a reserva #318, confirmando a sequência de ações.”_
+**Notas/Riscos:** Apenas os últimos 60 eventos por entidade são listados; alterações executadas fora dos fluxos com `logChange` não aparecem; acesso restringe-se a Direção/Dev com sessão válida.【F:src/modules/backoffice/index.js†L2085-L2129】【F:src/modules/backoffice/index.js†L3931-L3954】
 
-- **Integrações com canais externos e uploads manuais** – O serviço de integrações conhece Booking.com, Airbnb, i-escape e Splendia, importando ficheiros CSV/XLSX/ICS, agendando sincronizações automáticas e registando histórico de lotes. O backoffice inclui cartões de configuração, upload manual e histórico de importações.【F:src/services/channel-integrations.js†L6-L200】【F:src/modules/backoffice/index.js†L3310-L3338】
-  *Exemplo real*: O gestor descarrega o CSV diário da Booking.com e carrega-o na nova página “Integrações” para criar rapidamente as reservas no sistema.
+### Gestão de Tarifas e Bloqueios
+**O que é:** API UX dedicada a atualizações em massa de tarifas, undo imediato e criação de bloqueios de unidades com prevenção de sobreposições, integrada no dashboard de overview.【F:src/modules/backoffice/ux-api.js†L52-L144】
+**O que o utilizador consegue fazer:**
+- Aplicar preços para várias unidades e noites via `PUT /admin/api/rates/bulk`, com telemetria e resumo de impacto.【F:src/modules/backoffice/ux-api.js†L52-L88】
+- Reverter alterações recentes com `POST /admin/api/rates/bulk/undo`.【F:src/modules/backoffice/ux-api.js†L91-L98】
+- Bloquear unidades específicas justificando o motivo, verificando reservas e bloqueios existentes.【F:src/modules/backoffice/ux-api.js†L100-L144】
+- Confirmar via UI com toasts, undo e validação (coberto por testes Playwright).【F:tests/e2e/ux.spec.js†L23-L125】
+**Entradas:**
+- **API:** `PUT /admin/api/rates/bulk`, `POST /admin/api/rates/bulk/undo`, `POST /admin/api/units/:unitId/blocks`
+- **UI:** Dashboard `/admin` (cartão “Gestão rápida de preços” e modal de bloqueios)
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/ux-api.js`, `src/services/rate-management.js`, `src/services/unit-blocks.js` (normalização e persistência).【F:src/services/rate-management.js†L1-L101】【F:src/services/unit-blocks.js†L1-L90】  
+**Dependências relevantes:** `dayjs` para datas, telemetria opcional, validações customizadas.  
+**Exemplo real:** _“O revenue manager atualiza os fins de semana de Agosto para €185, confirma o toast “Preços atualizados” e, ao detectar um erro, usa “Anular” para desfazer as rates.”_  
+**Notas/Riscos:** Payload inválido dispara `ValidationError`; bloqueios rejeitam períodos com reservas ou bloqueios prévios garantindo consistência.【F:src/services/unit-blocks.js†L33-L85】
 
-- **Channel Manager oficial no backoffice** – Um separador dedicado no backoffice reúne métricas de integrações, alertas operacionais, histórico de importações e atalhos para sincronizações manuais ou automáticas dos canais OTA suportados.【F:src/modules/backoffice/index.js†L3440-L3492】
-  *Exemplo real*: Ao iniciar o turno, a equipa de revenue abre o “Channel Manager” para confirmar que todas as integrações auto-sync correram bem e identificar rapidamente um alerta de credenciais expiradas antes que afecte novas reservas.
+### Centro de Reviews e Respostas
+**O que é:** API e UI para listar reviews negativas ou recentes, redigir respostas e registar telemetria/auditoria da interação, exibindo badges “Respondida”.【F:src/modules/backoffice/ux-api.js†L146-L188】【F:tests/e2e/ux.spec.js†L127-L145】  
+**O que o utilizador consegue fazer:**
+- Filtrar avaliações negativas e recentes com `/admin/api/reviews?filter=negative`.【F:src/modules/backoffice/ux-api.js†L146-L156】
+- Enviar respostas via `POST /admin/api/reviews/:id/respond` com validação e logging.【F:src/modules/backoffice/ux-api.js†L158-L188】
+- Receber confirmação visual na UI e ver badge de status atualizado (teste E2E).【F:tests/e2e/ux.spec.js†L127-L145】
+**Entradas:**
+- **API:** `GET /admin/api/reviews`, `POST /admin/api/reviews/:id/respond`
+- **UI:** Aba “Avaliações” em `/admin`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/ux-api.js`, `src/services/review-center.js` (regras de negócio).【F:src/services/review-center.js†L1-L104】  
+**Dependências relevantes:** Telemetria opcional para medir sucesso/falha das respostas.  
+**Exemplo real:** _“A diretora filtra críticas negativas, responde a um comentário e vê o banner ‘Resposta registada’ com a avaliação marcada como respondida.”_  
+**Notas/Riscos:** IDs inválidos ou respostas vazias geram `ValidationError`; permissões de backoffice aplicadas pelo router principal.【F:src/modules/backoffice/ux-api.js†L159-L188】
 
-- **Gestão rápida de preços com pré-visualização e undo** – O dashboard permite seleccionar intervalos de datas, unidades ou tipologias, simular o impacto nas noites afectadas e aplicar tarifas em massa com hipótese de desfazer em 5 segundos, tudo com validação de payloads e registo de telemetria.【F:src/modules/backoffice/index.js†L3392-L3464】【F:src/modules/backoffice/scripts/ux-enhancements.js†L300-L357】【F:src/modules/backoffice/ux-api.js†L52-L98】【F:src/services/rate-management.js†L1-L67】
-  *Exemplo real*: O revenue manager define um preço promocional para todos os T2 aos fins-de-semana de Dezembro e, ao detectar um erro, carrega em “Anular” para repor as tarifas anteriores.
+### Relatórios e KPIs Exportáveis
+**O que é:** Serviço de reporting que gera snapshots semanais com KPIs (ocupação, ADR, RevPAR) e endpoints para exportar em JSON, CSV ou PDF, com verificação de intervalos até 31 dias.【F:src/modules/backoffice/ux-api.js†L190-L235】【F:src/services/reporting.js†L1-L128】  
+**O que o utilizador consegue fazer:**
+- Solicitar snapshot via `GET /admin/api/reports/weekly?from=...&to=...` e visualizar no dashboard.【F:src/modules/backoffice/ux-api.js†L190-L220】
+- Exportar CSV/PDF com cabeçalhos e formatação PT-PT.【F:src/modules/backoffice/ux-api.js†L210-L235】
+- Aceder sumário rápido de KPIs correntes com `GET /admin/api/kpis/summary`.【F:src/modules/backoffice/ux-api.js†L236-L244】
+- Confirmar via UI que downloads incluem cabeçalhos corretos (teste E2E).【F:tests/e2e/ux.spec.js†L147-L189】
+**Entradas:**
+- **API:** `GET /admin/api/reports/weekly`, `GET /admin/api/kpis/summary`
+- **UI:** Aba “Estatísticas” em `/admin`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/ux-api.js`, `src/services/reporting.js`, `src/services/reporting-pdf.js`.  
+**Dependências relevantes:** `dayjs` e `ExcelJS` (para alguns cálculos no dashboard), `pdfkit` via módulo PDF.  
+**Exemplo real:** _“Antes da reunião semanal, a diretora exporta CSV e PDF de 1-7 Julho e valida que o ficheiro contém colunas de ocupação e reservas.”_  
+**Notas/Riscos:** Intervalos superiores a 31 dias são rejeitados; formato inválido devolve erro tratado. Telemetria regista sucesso/falha.【F:src/modules/backoffice/ux-api.js†L190-L235】【F:src/services/reporting.js†L28-L83】
 
-- **Bloqueio rápido de unidades com detecção de conflitos** – A modal “Bloquear unidade” recolhe datas e motivo, impede intervalos sobrepostos com reservas ou bloqueios antigos e emite telemetria após criar registos consistentes na tabela `unit_blocks`.【F:src/modules/backoffice/index.js†L3891-L3934】【F:src/modules/backoffice/ux-api.js†L100-L144】【F:src/services/unit-blocks.js†L1-L56】
-  *Exemplo real*: Quando é preciso reparar uma caldeira, a equipa bloqueia a suite por três noites e recebe aviso imediato caso exista uma reserva em conflito.
+### Channel Manager e Integrações OTA
+**O que é:** Consolida integrações automáticas/manuais com OTAs, apresenta alertas e histórico de importações e expõe rotas para guardar credenciais, sincronizar e importar ficheiros com logging e avisos UI.【F:src/modules/backoffice/index.js†L2035-L4140】【F:server.js†L1646-L1755】  
+**O que o utilizador consegue fazer:**
+- Visualizar cartões de canais com estado, última sincronização e alertas.【F:src/modules/backoffice/index.js†L2035-L2247】【F:src/modules/backoffice/index.js†L3685-L3717】
+- Guardar credenciais e configurações automáticas via `POST /admin/channel-integrations/:key/settings`.【F:src/modules/backoffice/index.js†L4055-L4085】
+- Desencadear sincronização manual (`POST /admin/channel-integrations/:key/sync`) e acompanhar resumo de processamento.【F:src/modules/backoffice/index.js†L4087-L4108】
+- Importar ficheiros CSV/ICS via `POST /admin/channel-imports/upload` e ver histórico recente.【F:src/modules/backoffice/index.js†L4113-L4139】
+- Receber webhooks OTA validados com assinatura segura.【F:server.js†L1658-L1734】
+**Entradas:**
+- **API:** `/admin/channel-integrations/:key/*`, `/admin/channel-imports/upload`, `/api/ota/webhooks/:channelKey`
+- **UI:** Tab “Channel Manager” em `/admin`
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js` (canal manager), `src/services/channel-integrations.js`, `server.js` (webhooks/schedulers).【F:src/modules/backoffice/index.js†L2035-L3717】【F:server.js†L1631-L1755】  
+**Dependências relevantes:** `ExcelJS` para importações, `multer` para uploads, agendamentos `setInterval` para sync automático.  
+**Exemplo real:** _“O revenue manager ativa as credenciais da Booking.com, lança uma sincronização manual e observa o resumo com reservas inseridas, conflitos e alertas na mesma página.”_  
+**Notas/Riscos:** Sincronizações falhadas mostram aviso contextual; webhooks exigem segredo partilhado e falham com 401 se assinatura não coincidir.【F:server.js†L1658-L1704】
 
-- **Relatórios semanais exportáveis em CSV ou PDF** – Os controlos do dashboard recolhem um intervalo até 31 dias, geram snapshots com ocupação, ADR, RevPAR e noites disponíveis e exportam-nos em ficheiro pronto para partilha, registando a operação para auditoria.【F:src/modules/backoffice/index.js†L2918-L2939】【F:src/modules/backoffice/ux-api.js†L190-L235】【F:src/services/reporting.js†L1-L96】
-  *Exemplo real*: Antes de enviar o reporte à administração, a diretora exporta um PDF com os KPIs da semana e partilha-o por email.
+### Portal de Proprietários
+**O que é:** Área `/owners` dedicada que agrega métricas de receita, ocupação, reservas pendentes e distribuição por canal apenas para propriedades autorizadas, com filtros e listas de próximas estadias.【F:src/modules/owners/index.js†L4-L248】  
+**O que o utilizador consegue fazer:**
+- Entrar com permissão `owners.portal.view` e selecionar propriedade específica.【F:src/modules/owners/index.js†L17-L88】
+- Visualizar resumo de receita 30 dias, ocupação e check-ins semanais.【F:src/modules/owners/index.js†L89-L239】
+- Ver próximas reservas até 90 dias e canais com maior peso.【F:src/modules/owners/index.js†L200-L239】
+- Filtrar por propriedade quando tem múltiplas unidades atribuídas.【F:src/modules/owners/index.js†L224-L260】
+**Entradas:**
+- **API:** —
+- **UI:** `/owners`
+- **CLI:** —
+**Módulos principais:** `src/modules/owners/index.js`, `src/services/notifications.js` (partilha de métricas) e base de dados de bookings.  
+**Dependências relevantes:** `dayjs`, `Intl.NumberFormat` PT-PT para percentagens.  
+**Exemplo real:** _“Um proprietário seleciona ‘Quinta Azul’ e verifica que 3 reservas confirmadas entrarão na próxima semana, com 60% da receita vindo da Booking.com.”_  
+**Notas/Riscos:** Garante isolamento através de `property_owners`; utilizadores sem permissão recebem 403.【F:src/modules/owners/index.js†L17-L83】
 
-- **Área de Proprietários fora do backoffice** – A rota `/owners` mostra cartões de receita, ocupação, reservas pendentes, próximas chegadas e distribuição por canal apenas para as propriedades associadas ao utilizador, permitindo que os proprietários consultem dados actualizados sem depender da direção.【F:src/modules/owners/index.js†L1-L207】【F:src/modules/owners/index.js†L252-L460】
-  *Exemplo real*: Um proprietário entra na nova área e confirma que a sua casa tem duas reservas pendentes e três chegadas confirmadas para a próxima semana, percebendo de imediato que a maioria veio da Booking.com e que a receita das últimas quatro semanas superou as expectativas.
+### Motor de Automações Operacionais
+**O que é:** Engine que corre regras por trigger, avalia condições e executa ações (email, notificações, criação de tarefas, overrides de preço), expondo dashboards e exportações CSV com métricas de execução.【F:server/automations/engine.js†L1-L176】【F:src/modules/backoffice/index.js†L1914-L4048】  
+**O que o utilizador consegue fazer:**
+- Consultar painel de automações com alertas, sugestões e blocos gerados automaticamente.【F:src/modules/backoffice/index.js†L1914-L3092】
+- Exportar CSV operacional via `/admin/automation/export.csv` com filtros e métricas.【F:src/modules/backoffice/index.js†L3940-L4052】
+- Atualizar dados em tempo real via `/admin/automation/operational.json` para gráficos e indicadores.【F:src/modules/backoffice/index.js†L3940-L3944】
+- Acompanhar métricas de receita futura, ocupação e recomendações de bloqueios/ tarifas.【F:src/modules/backoffice/index.js†L1914-L3092】
+**Entradas:**
+- **API:** `GET /admin/automation/operational.json`, `GET /admin/automation/export.csv`
+- **UI:** Secção “Automação” no dashboard `/admin`
+- **CLI:** —
+**Módulos principais:** `server/automations/engine.js` (execução), `server.js` (drivers e agendamentos), `src/modules/backoffice/index.js` (UI).【F:server.js†L1622-L1775】  
+**Dependências relevantes:** `ExcelJS` para ações, `dayjs`, drivers customizados (email, notify, xlsx, housekeeping, price override, log).【F:server.js†L1611-L1638】  
+**Exemplo real:** _“O motor deteta baixa ocupação, gera sugestão tarifária e exporta CSV com alertas para análise numa reunião operacional.”_  
+**Notas/Riscos:** Triggers falhados lançam erros capturados e registados; exportações sempre em UTF-8 com BOM para compatibilidade.【F:src/modules/backoffice/index.js†L3946-L4052】【F:server/automations/engine.js†L70-L125】
 
-- **Conta “Owners” com seleção directa de propriedades** – Ao criar utilizadores Owners no backoffice, a direção escolhe as propriedades disponíveis através de checkboxes, garantindo que cada proprietário apenas vê os dados atribuídos e que o login redireciona directamente para a área dedicada.【F:src/modules/backoffice/index.js†L5553-L5637】【F:src/modules/backoffice/index.js†L5800-L5852】【F:server.js†L145-L252】
-  *Exemplo real*: Ao contratar um novo parceiro, a direção cria a conta Owners “quinta-azul” e selecciona apenas a Quinta Azul na lista, assegurando que o proprietário acede aos relatórios e reservas dessa casa sem ver inventário de outras unidades.
+### Assistente de Decisão Comercial
+**O que é:** Serviço batch que analisa reservas futuras, ocupação e ritmo de vendas para gerar sugestões automáticas (ajustar preço, campanhas, rever políticas), executado no arranque e diariamente às 03h10.【F:server/decisions/assistant.js†L1-L205】【F:server.js†L1737-L1778】  
+**O que o utilizador consegue fazer:**
+- Receber sugestões armazenadas em `decision_suggestions` (ex.: baixar tarifa 10%).【F:server/decisions/assistant.js†L38-L134】
+- Aproveitar recomendações de promoções e políticas com contexto (ocupação, pace, pedidos especiais).【F:server/decisions/assistant.js†L134-L205】
+- Integrar automaticamente com automação/dashboards (dados expostos nas métricas de automação).【F:src/modules/backoffice/index.js†L1914-L3073】
+**Entradas:**
+- **API:** —
+- **UI:** Integrado no dashboard de automação (sem rota própria)
+- **CLI:** Jobs agendados via `scheduleDailyTask`
+**Módulos principais:** `server/decisions/assistant.js`, `server.js` (agendamento), tabelas `decision_suggestions`.【F:server.js†L1737-L1778】  
+**Dependências relevantes:** `dayjs`, `randomUUID`, estatísticas de bookings.  
+**Exemplo real:** _“Às 03h10 o assistente marca uma sugestão ‘Baixar tarifa 10% (Suite Vista Rio)’ porque a ocupação nas próximas duas semanas caiu para 35%.”_  
+**Notas/Riscos:** Atualiza sugestões existentes para evitar duplicados; apenas corre quando `SKIP_SERVER_START` não está ativo.【F:server/decisions/assistant.js†L118-L205】【F:server.js†L1631-L1778】
 
-- **Gestão granular de permissões pelo utilizador Dev** – O perfil `dev` é o único com acesso ao novo painel de “Permissões personalizadas”, permitindo adicionar ou remover privilégios individuais por utilizador, armazenando os ajustes na base de dados e terminando as sessões activas sempre que há alterações.【F:src/modules/backoffice/index.js†L5594-L5774】【F:src/modules/backoffice/index.js†L6082-L6171】【F:server.js†L260-L309】【F:server.js†L2970-L3039】
-  *Exemplo real*: Após promover um rececionista a supervisor, o developer activa temporariamente as permissões de exportação e gestão de tarifas para essa conta específica, mantendo as restantes contas de receção com acessos restritos.
 
-- **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
-  *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
+### Reindexação da Base de Conhecimento
+**O que é:** Serviço utilitário `createKbReindexer` que recompila perguntas e artigos publicados para a tabela `kb_index`, permitindo atualização rápida do motor de busca/FAQ através de scripts externos ou jobs manuais.【F:server/kb/reindex.js†L1-L37】  
+**O que o utilizador consegue fazer:**
+- Apagar índice atual e reimportar Q&A e artigos publicados com tags normalizadas.【F:server/kb/reindex.js†L8-L35】
+- Integrar em tarefa CLI/manual para manter respostas da base de conhecimento e artigos de ajuda sempre atualizados.【F:server/kb/reindex.js†L1-L37】
+**Entradas:**
+- **API:** —
+- **UI:** —
+- **CLI:** Função `reindexAll()` exposta para scripts Node
+**Módulos principais:** `server/kb/reindex.js`, base de dados `kb_*`.  
+**Dependências relevantes:** `better-sqlite3` (prepared statements).  
+**Exemplo real:** _“Após publicar novos artigos de suporte, o operador executa um script que chama `createKbReindexer({ db }).reindexAll()` para atualizar o motor de pesquisa interno das FAQs.”_
+**Notas/Riscos:** Exige base de dados com tabelas `kb_qas`, `kb_articles` e `kb_index`; operação corre dentro de transação para consistência.【F:server/kb/reindex.js†L8-L33】
 
-- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】
-  *Exemplo real*: Ao abrir um novo alojamento, a equipa altera rapidamente as cores do portal e cria acessos distintos para receção e direção.
+---
 
-- **Gestão de propriedades e unidades com métricas agregadas** – O painel principal do backoffice permite listar alojamentos atribuídos, adicionar novas propriedades e criar unidades com capacidade, preço base e características configuráveis, além de apresentar a receita total por ativo.【F:src/modules/backoffice/index.js†L3242-L3322】
-  *Exemplo real*: Ao integrar um novo edifício, a equipa cria a propriedade “Residência Aurora”, adiciona as três unidades disponíveis e verifica de imediato o volume de receita associado a cada uma.
-
-- **Ficha completa da unidade com reservas, bloqueios e rates** – Cada unidade possui uma página com histórico de reservas, formulário para bloquear datas, criação de rates sazonais e edição rápida de capacidade ou preço base sem sair do contexto operacional.【F:src/modules/backoffice/index.js†L4110-L4245】
-  *Exemplo real*: Antes de aceitar um pedido de grupo, o gestor consulta a ficha da “Suite Vista Rio”, bloqueia duas noites entre estadias e ajusta o mínimo de noites da rate de verão.
-
-- **Gestão de galeria e assets das unidades** – As imagens são carregadas diretamente no backoffice, comprimidas automaticamente e podem ser reordenadas por arrastar-e-largar, definindo o destaque visual da unidade em segundos.【F:src/modules/backoffice/index.js†L4254-L4284】
-  *Exemplo real*: Após uma sessão fotográfica, o marketing sobe as novas imagens da “Casa das Laranjeiras”, marca a melhor fotografia como principal e remove capturas antigas para manter o catálogo coerente.
-
+## Verificação de Duplicados
+- Resultado: **Nenhuma duplicação encontrada.**
+- Chaves geradas: `[autenticacao-backoffice-e-sessoes, seguranca-de-conta-e-2fa, motor-de-reservas-publico, calendario-operacional-e-reagendamento, gestao-de-tarefas-de-limpeza, gestao-de-propriedades-e-unidades, gestao-de-reservas-no-backoffice, historico-operacional-de-reservas-e-tarefas, gestao-de-tarifas-e-bloqueios, centro-de-reviews-e-respostas, relatorios-e-kpis-exportaveis, channel-manager-e-integracoes-ota, portal-de-proprietarios, motor-de-automacoes-operacionais, assistente-de-decisao-comercial, reindexacao-da-base-de-conhecimento]`
+- Entradas únicas por funcionalidade: **OK**

@@ -107,12 +107,16 @@ CREATE TABLE IF NOT EXISTS unit_blocks (
   end_date TEXT NOT NULL,
   reason TEXT NOT NULL,
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  lock_type TEXT,
+  lock_source TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA')),
+  lock_owner_booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
+CREATE INDEX IF NOT EXISTS idx_unit_blocks_booking ON unit_blocks(lock_owner_booking_id);
 
 CREATE TABLE IF NOT EXISTS rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -474,11 +478,27 @@ function runLightMigrations(db) {
         end_date TEXT NOT NULL,
         reason TEXT NOT NULL,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        lock_type TEXT,
+        lock_source TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA')),
+        lock_owner_booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
-      CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);`
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
+      CREATE INDEX IF NOT EXISTS idx_unit_blocks_booking ON unit_blocks(lock_owner_booking_id);`
+    );
+
+    ensureColumn('unit_blocks', 'lock_type', 'TEXT');
+    ensureColumn(
+      'unit_blocks',
+      'lock_source',
+      "TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA'))"
+    );
+    ensureColumn(
+      'unit_blocks',
+      'lock_owner_booking_id',
+      'INTEGER REFERENCES bookings(id) ON DELETE SET NULL'
     );
 
     ensureTable(
@@ -945,27 +965,6 @@ function runLightMigrations(db) {
       )`
     );
 
-    ensureTable(
-      'chatbot_sessions',
-      `CREATE TABLE IF NOT EXISTS chatbot_sessions (
-        id TEXT PRIMARY KEY,
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
-        state TEXT NOT NULL CHECK (json_valid(state)),
-        property_id TEXT
-      )`
-    );
-
-    ensureTable(
-      'chatbot_messages',
-      `CREATE TABLE IF NOT EXISTS chatbot_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`
-    );
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }

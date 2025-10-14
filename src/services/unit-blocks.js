@@ -56,8 +56,8 @@ function createUnitBlockService({ db, dayjs }) {
   );
 
   const insertBlockStmt = db.prepare(
-    `INSERT INTO unit_blocks (unit_id, start_date, end_date, reason, created_by)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO unit_blocks (unit_id, start_date, end_date, reason, created_by, lock_type, lock_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
 
   function createBlock({ unitId, startDate, endDateExclusive, reason, userId }) {
@@ -73,7 +73,15 @@ function createUnitBlockService({ db, dayjs }) {
     if (legacyConflict > 0) {
       throw new ConflictError('Intervalo já se encontra bloqueado.');
     }
-    const info = insertBlockStmt.run(unitId, startDate, endDateExclusive, reason, userId || null);
+    const info = insertBlockStmt.run(
+      unitId,
+      startDate,
+      endDateExclusive,
+      reason,
+      userId || null,
+      'MANUAL',
+      'SYSTEM'
+    );
     return {
       id: info.lastInsertRowid,
       unit_id: unitId,
