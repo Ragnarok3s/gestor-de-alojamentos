@@ -40,8 +40,6 @@ const createHousekeepingTaskAction = require('./server/automations/actions/creat
 const priceOverrideAction = require('./server/automations/actions/price.override');
 const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
-const { createChatbotService } = require('./server/chatbot/service');
-const { createChatbotRouter } = require('./server/chatbot/router');
 const { createTelemetry } = require('./src/services/telemetry');
 
 const app = express();
@@ -1641,8 +1639,6 @@ const automationEngine = createAutomationEngine({
 });
 
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
-const chatbotService = createChatbotService({ db });
-
 if (!skipStartupTasks) {
   channelIntegrations
     .autoSyncAll({ reason: 'startup' })
@@ -3282,12 +3278,10 @@ const context = {
   FEATURE_ICON_KEYS,
   UNIT_TYPE_ICON_HINTS,
   slugify,
-  decisionAssistant,
-  chatbotService
+  decisionAssistant
 };
 
 registerAuthRoutes(app, context);
-app.use('/chatbot', createChatbotRouter(context));
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerBackoffice(app, context);

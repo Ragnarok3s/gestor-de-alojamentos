@@ -945,27 +945,6 @@ function runLightMigrations(db) {
       )`
     );
 
-    ensureTable(
-      'chatbot_sessions',
-      `CREATE TABLE IF NOT EXISTS chatbot_sessions (
-        id TEXT PRIMARY KEY,
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
-        state TEXT NOT NULL CHECK (json_valid(state)),
-        property_id TEXT
-      )`
-    );
-
-    ensureTable(
-      'chatbot_messages',
-      `CREATE TABLE IF NOT EXISTS chatbot_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`
-    );
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
   }

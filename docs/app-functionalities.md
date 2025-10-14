@@ -24,8 +24,8 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 |12 | Portal de Proprietários | UI `/owners` | `src/modules/owners/index.js` | Dashboards por propriedade e canais |
 |13 | Motor de Automações Operacionais | API `/admin/automation/*` | `src/modules/backoffice/index.js`; `server/automations/engine.js` | Exporta métricas e aciona drivers |
 |14 | Assistente de Decisão Comercial | Jobs agendados | `server/decisions/assistant.js`; `server.js` | Sugere ajustes de preço/promoções |
-|15 | Chatbot de Apoio à Reserva | UI widget `/chatbot` | `server/chatbot/router.js`; `server.js` | Sessões persistentes e feedback |
-|16 | Reindexação da Base de Conhecimento | CLI `createKbReindexer` | `server/kb/reindex.js` | Atualiza índice de FAQ/artigos |
+|15 | Reindexação da Base de Conhecimento | CLI `createKbReindexer` | `server/kb/reindex.js` | Atualiza índice de FAQ/artigos |
+|16 | Histórico Operacional de Reservas e Tarefas | UI `/admin` (aba "Histórico") | `src/modules/backoffice/index.js`; `server.js` | Visível apenas para Direção/Dev |
 
 ---
 
@@ -143,8 +143,24 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **Exemplo real:** _“A equipa ajusta a estadia de uma reserva, confirma-a e o hóspede recebe o email ‘booking_confirmed_guest’ automaticamente.”_  
 **Notas/Riscos:** Atualizações verificam conflitos e estadias mínimas; cancelamentos e eliminações requerem permissões específicas (`bookings.cancel`, `users.manage`).【F:src/modules/backoffice/index.js†L4895-L5263】
 
+### Histórico Operacional de Reservas e Tarefas
+**O que é:** Aba "Histórico" exclusiva para Direção e Desenvolvimento no backoffice que agrega as últimas alterações efetuadas em reservas e tarefas de limpeza com difs antes/depois para auditoria rápida.【F:src/modules/backoffice/index.js†L2035-L2055】【F:src/modules/backoffice/index.js†L2085-L2129】【F:src/modules/backoffice/index.js†L3931-L3954】
+**O que o utilizador consegue fazer:**
+- Abrir o painel "Histórico" em `/admin` e consultar cronologicamente alterações recentes a reservas com hora, autor e ação registada.【F:src/modules/backoffice/index.js†L3936-L3945】
+- Visualizar diffs estruturados das tarefas de limpeza (criação, início, conclusão e reabertura) com destaque do responsável.【F:src/modules/backoffice/index.js†L1756-L1899】【F:src/modules/backoffice/index.js†L3942-L3949】
+- Confirmar que cada evento resulta de um `logChange` persistido na tabela `change_logs`, garantindo rastreabilidade total.【F:server.js†L372-L401】【F:src/infra/database.js†L203-L214】
+- Beneficiar de filtragem automática por perfil: apenas diretores (`direcao`) e desenvolvedores (`dev`) veem a aba e os dados sensíveis.【F:src/modules/backoffice/index.js†L2035-L2037】【F:src/modules/backoffice/index.js†L2575-L2587】【F:src/modules/backoffice/index.js†L3931-L3954】
+**Entradas:**
+- **API:** — (consulta direta à base `change_logs`)
+- **UI:** `/admin` → aba "Histórico"
+- **CLI:** —
+**Módulos principais:** `src/modules/backoffice/index.js`, `server.js` (função `logChange`), `src/infra/database.js` (estrutura `change_logs`).
+**Dependências relevantes:** `dayjs` para formatação temporal, helper `renderAuditDiff` para destacar diferenças JSON, `better-sqlite3` para leitura eficiente dos logs.【F:src/modules/backoffice/index.js†L2085-L2124】【F:server.js†L372-L401】
+**Exemplo real:** _“Um diretor abre a aba ‘Histórico’, verifica que a rececionista iniciou a tarefa #42 às 08:15, concluiu-a às 09:05 e no mesmo período reagendou a reserva #318, confirmando a sequência de ações.”_
+**Notas/Riscos:** Apenas os últimos 60 eventos por entidade são listados; alterações executadas fora dos fluxos com `logChange` não aparecem; acesso restringe-se a Direção/Dev com sessão válida.【F:src/modules/backoffice/index.js†L2085-L2129】【F:src/modules/backoffice/index.js†L3931-L3954】
+
 ### Gestão de Tarifas e Bloqueios
-**O que é:** API UX dedicada a atualizações em massa de tarifas, undo imediato e criação de bloqueios de unidades com prevenção de sobreposições, integrada no dashboard de overview.【F:src/modules/backoffice/ux-api.js†L52-L144】  
+**O que é:** API UX dedicada a atualizações em massa de tarifas, undo imediato e criação de bloqueios de unidades com prevenção de sobreposições, integrada no dashboard de overview.【F:src/modules/backoffice/ux-api.js†L52-L144】
 **O que o utilizador consegue fazer:**
 - Aplicar preços para várias unidades e noites via `PUT /admin/api/rates/bulk`, com telemetria e resumo de impacto.【F:src/modules/backoffice/ux-api.js†L52-L88】
 - Reverter alterações recentes com `POST /admin/api/rates/bulk/undo`.【F:src/modules/backoffice/ux-api.js†L91-L98】
@@ -254,38 +270,24 @@ _Gerado automaticamente em: 2025-10-14 17:51_
 **Exemplo real:** _“Às 03h10 o assistente marca uma sugestão ‘Baixar tarifa 10% (Suite Vista Rio)’ porque a ocupação nas próximas duas semanas caiu para 35%.”_  
 **Notas/Riscos:** Atualiza sugestões existentes para evitar duplicados; apenas corre quando `SKIP_SERVER_START` não está ativo.【F:server/decisions/assistant.js†L118-L205】【F:server.js†L1631-L1778】
 
-### Chatbot de Apoio à Reserva
-**O que é:** Router HTMX que mantém sessões de chatbot via cookie, processa mensagens com “brain” interno, regista histórico e recolhe feedback útil/inútil, integrando no frontoffice como widget.【F:server/chatbot/router.js†L1-L120】【F:server.js†L3249-L3254】  
-**O que o utilizador consegue fazer:**
-- Abrir widget no site público e enviar perguntas sobre disponibilidade.【F:src/modules/frontoffice/index.js†L620-L794】【F:server/chatbot/router.js†L17-L83】
-- Receber respostas ricas com HTML e botões, armazenadas na sessão do chatbot.【F:server/chatbot/router.js†L58-L93】
-- Avaliar resposta (👍/👎) via `/chatbot/feedback`, guardando notas e melhorando conteúdo.【F:server/chatbot/router.js†L94-L120】
-**Entradas:**
-- **API:** `POST /chatbot/message`, `POST /chatbot/feedback`
-- **UI:** Widget incluído no layout do frontoffice
-- **CLI:** —
-**Módulos principais:** `server/chatbot/router.js`, `server/chatbot/service.js`, `src/modules/frontoffice/index.js` (inclusão do widget).【F:src/modules/frontoffice/index.js†L620-L711】【F:server/chatbot/router.js†L1-L120】  
-**Dependências relevantes:** `express`, `htmx` via markup, base de conhecimento (tabelas `kb_*`).  
-**Exemplo real:** _“Um visitante pergunta ‘Há disponibilidade em novembro?’ e o chatbot responde com cartões de suites e botões ‘Reservar agora’, pedindo feedback de utilidade.”_  
-**Notas/Riscos:** Cookies não são `httpOnly` para permitir HTMX; validação CSRF protege endpoints mesmo nas chamadas assíncronas.【F:server/chatbot/router.js†L13-L46】
 
 ### Reindexação da Base de Conhecimento
 **O que é:** Serviço utilitário `createKbReindexer` que recompila perguntas e artigos publicados para a tabela `kb_index`, permitindo atualização rápida do motor de busca/FAQ através de scripts externos ou jobs manuais.【F:server/kb/reindex.js†L1-L37】  
 **O que o utilizador consegue fazer:**
 - Apagar índice atual e reimportar Q&A e artigos publicados com tags normalizadas.【F:server/kb/reindex.js†L8-L35】
-- Integrar em tarefa CLI/manual para manter respostas do chatbot e ajuda sempre atualizadas.【F:server/kb/reindex.js†L1-L37】
+- Integrar em tarefa CLI/manual para manter respostas da base de conhecimento e artigos de ajuda sempre atualizados.【F:server/kb/reindex.js†L1-L37】
 **Entradas:**
 - **API:** —
 - **UI:** —
 - **CLI:** Função `reindexAll()` exposta para scripts Node
 **Módulos principais:** `server/kb/reindex.js`, base de dados `kb_*`.  
 **Dependências relevantes:** `better-sqlite3` (prepared statements).  
-**Exemplo real:** _“Após publicar novos artigos, o operador executa um script que chama `createKbReindexer({ db }).reindexAll()` para atualizar o motor de FAQ do chatbot.”_  
+**Exemplo real:** _“Após publicar novos artigos de suporte, o operador executa um script que chama `createKbReindexer({ db }).reindexAll()` para atualizar o motor de pesquisa interno das FAQs.”_
 **Notas/Riscos:** Exige base de dados com tabelas `kb_qas`, `kb_articles` e `kb_index`; operação corre dentro de transação para consistência.【F:server/kb/reindex.js†L8-L33】
 
 ---
 
 ## Verificação de Duplicados
 - Resultado: **Nenhuma duplicação encontrada.**
-- Chaves geradas: `[autenticacao-backoffice-e-sessoes, seguranca-de-conta-e-2fa, motor-de-reservas-publico, calendario-operacional-e-reagendamento, gestao-de-tarefas-de-limpeza, gestao-de-propriedades-e-unidades, gestao-de-reservas-no-backoffice, gestao-de-tarifas-e-bloqueios, centro-de-reviews-e-respostas, relatorios-e-kpis-exportaveis, channel-manager-e-integracoes-ota, portal-de-proprietarios, motor-de-automacoes-operacionais, assistente-de-decisao-comercial, chatbot-de-apoio-a-reserva, reindexacao-da-base-de-conhecimento]`
+- Chaves geradas: `[autenticacao-backoffice-e-sessoes, seguranca-de-conta-e-2fa, motor-de-reservas-publico, calendario-operacional-e-reagendamento, gestao-de-tarefas-de-limpeza, gestao-de-propriedades-e-unidades, gestao-de-reservas-no-backoffice, historico-operacional-de-reservas-e-tarefas, gestao-de-tarifas-e-bloqueios, centro-de-reviews-e-respostas, relatorios-e-kpis-exportaveis, channel-manager-e-integracoes-ota, portal-de-proprietarios, motor-de-automacoes-operacionais, assistente-de-decisao-comercial, reindexacao-da-base-de-conhecimento]`
 - Entradas únicas por funcionalidade: **OK**
