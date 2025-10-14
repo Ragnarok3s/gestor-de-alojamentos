@@ -116,7 +116,6 @@ CREATE TABLE IF NOT EXISTS unit_blocks (
 
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
-CREATE INDEX IF NOT EXISTS idx_unit_blocks_booking ON unit_blocks(lock_owner_booking_id);
 
 CREATE TABLE IF NOT EXISTS rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -409,6 +408,31 @@ function runLightMigrations(db) {
     }
   };
 
+  const indexExists = (name) => {
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get(name);
+      return !!row;
+    } catch (err) {
+      console.warn(`Não foi possível validar o índice ${name}:`, err.message);
+      return false;
+    }
+  };
+
+  const ensureIndex = (name, table, columns) => {
+    if (indexExists(name)) return;
+    const cols = listColumns(table);
+    const missingColumn = columns
+      .split(',')
+      .map(col => col.trim().split(' ')[0])
+      .some(col => !cols.includes(col));
+    if (missingColumn) return;
+    try {
+      db.exec(`CREATE INDEX ${name} ON ${table}(${columns})`);
+    } catch (err) {
+      console.warn(`Falha ao criar índice ${name}:`, err.message);
+    }
+  };
+
   const ensureTrigger = (name, ddl) => {
     if (triggerExists(name)) return;
     try {
@@ -495,11 +519,8 @@ function runLightMigrations(db) {
       'lock_source',
       "TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (lock_source IN ('SYSTEM','OTA'))"
     );
-    ensureColumn(
-      'unit_blocks',
-      'lock_owner_booking_id',
-      'INTEGER REFERENCES bookings(id) ON DELETE SET NULL'
-    );
+    ensureColumn('unit_blocks', 'lock_owner_booking_id', 'INTEGER REFERENCES bookings(id) ON DELETE SET NULL');
+    ensureIndex('idx_unit_blocks_booking', 'unit_blocks', 'lock_owner_booking_id');
 
     ensureTable(
       'reviews',
