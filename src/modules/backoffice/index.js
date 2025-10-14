@@ -1842,7 +1842,7 @@ module.exports = function registerBackoffice(app, context) {
     res.redirect(resolveHousekeepingRedirect(req, '/admin/limpeza'));
   });
 
-  
+
   app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
     const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
     const unitsRaw = db
@@ -5155,8 +5155,8 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
   if (adults + children > b.capacity) return res.status(400).send(`Capacidade excedida (máx ${b.capacity}).`);
 
   const conflict = db.prepare(`
-    SELECT 1 FROM bookings 
-     WHERE unit_id = ? 
+    SELECT 1 FROM bookings
+     WHERE unit_id = ?
        AND id <> ?
        AND status IN ('CONFIRMED','PENDING')
        AND NOT (checkout <= ? OR checkin >= ?)

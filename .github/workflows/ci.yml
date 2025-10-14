@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Detect package manager
+        run: |
+          if [ -f pnpm-lock.yaml ]; then echo "PM=pnpm" >> $GITHUB_ENV;
+          elif [ -f yarn.lock ]; then echo "PM=yarn" >> $GITHUB_ENV;
+          else echo "PM=npm" >> $GITHUB_ENV; fi
+      - name: Setup package manager
+        if: env.PM == 'pnpm'
+        run: npm install -g pnpm
+      - name: Install dependencies
+        run: |
+          if [ "$PM" = "pnpm" ]; then pnpm install --frozen-lockfile;
+          elif [ "$PM" = "yarn" ]; then yarn install --frozen-lockfile;
+          else npm ci; fi
+      - name: Dependency check
+        run: npm run depcheck
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
