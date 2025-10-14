@@ -392,6 +392,27 @@ module.exports = function registerBackoffice(app, context) {
     return `${propertyName}${baseLabel} · ${unitName}`;
   }
 
+  function serializeHousekeepingTaskForAudit(task) {
+    if (!task) return null;
+    return {
+      booking_id: task.booking_id || null,
+      unit_id: task.unit_id || null,
+      property_id: task.property_id || null,
+      task_type: task.task_type || null,
+      title: task.title || null,
+      details: task.details || null,
+      due_date: task.due_date || null,
+      due_time: task.due_time || null,
+      status: task.status || null,
+      priority: task.priority || null,
+      source: task.source || null,
+      started_at: task.started_at || null,
+      started_by: task.started_by || null,
+      completed_at: task.completed_at || null,
+      completed_by: task.completed_by || null
+    };
+  }
+
   function syncHousekeepingAutoTasks({ today, windowStart, windowEnd }) {
     const deleteTaskStmt = db.prepare('DELETE FROM housekeeping_tasks WHERE id = ?');
     const orphanTasks = db
@@ -1734,6 +1755,15 @@ module.exports = function registerBackoffice(app, context) {
       );
 
     const taskId = result.lastInsertRowid;
+    const createdTask = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    logChange(
+      req.user.id,
+      'housekeeping_task',
+      taskId,
+      'create',
+      null,
+      serializeHousekeepingTaskForAudit(createdTask)
+    );
     logActivity(req.user.id, 'housekeeping:create', 'housekeeping_task', taskId, {
       bookingId: bookingId || null,
       unitId: resolvedUnitId || null,
@@ -1756,7 +1786,7 @@ module.exports = function registerBackoffice(app, context) {
       if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
       return res.status(400).send('Tarefa inválida');
     }
-    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    const task = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
     if (!task) {
       if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
       return res.status(404).send('Tarefa não encontrada');
@@ -1773,6 +1803,15 @@ module.exports = function registerBackoffice(app, context) {
               started_by = COALESCE(started_by, ?)
         WHERE id = ?`
     ).run(now, req.user.id, taskId);
+    const afterTask = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    logChange(
+      req.user.id,
+      'housekeeping_task',
+      taskId,
+      'start',
+      serializeHousekeepingTaskForAudit(task),
+      serializeHousekeepingTaskForAudit(afterTask)
+    );
     logActivity(req.user.id, 'housekeeping:start', 'housekeeping_task', taskId, {
       from: task.status,
       to: 'in_progress'
@@ -1787,7 +1826,7 @@ module.exports = function registerBackoffice(app, context) {
       if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
       return res.status(400).send('Tarefa inválida');
     }
-    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    const task = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
     if (!task) {
       if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
       return res.status(404).send('Tarefa não encontrada');
@@ -1806,6 +1845,15 @@ module.exports = function registerBackoffice(app, context) {
               started_by = COALESCE(started_by, ?)
         WHERE id = ?`
     ).run(now, req.user.id, now, req.user.id, taskId);
+    const afterTask = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    logChange(
+      req.user.id,
+      'housekeeping_task',
+      taskId,
+      'complete',
+      serializeHousekeepingTaskForAudit(task),
+      serializeHousekeepingTaskForAudit(afterTask)
+    );
     logActivity(req.user.id, 'housekeeping:complete', 'housekeeping_task', taskId, {
       from: task.status,
       to: 'completed'
@@ -1820,7 +1868,7 @@ module.exports = function registerBackoffice(app, context) {
       if (wantsJson(req)) return res.status(400).json({ ok: false, message: 'Tarefa inválida' });
       return res.status(400).send('Tarefa inválida');
     }
-    const task = db.prepare('SELECT id, status FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    const task = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
     if (!task) {
       if (wantsJson(req)) return res.status(404).json({ ok: false, message: 'Tarefa não encontrada' });
       return res.status(404).send('Tarefa não encontrada');
@@ -1834,6 +1882,15 @@ module.exports = function registerBackoffice(app, context) {
               completed_by = NULL
         WHERE id = ?`
     ).run(taskId);
+    const afterTask = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+    logChange(
+      req.user.id,
+      'housekeeping_task',
+      taskId,
+      'reopen',
+      serializeHousekeepingTaskForAudit(task),
+      serializeHousekeepingTaskForAudit(afterTask)
+    );
     logActivity(req.user.id, 'housekeeping:reopen', 'housekeeping_task', taskId, {
       from: task.status,
       to: 'pending'
@@ -1975,6 +2032,9 @@ module.exports = function registerBackoffice(app, context) {
     const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
     const canManageIntegrations = canManageEmailTemplates;
     const canViewCalendar = userCan(req.user, 'calendar.view');
+    const isDevOperator = req.user && req.user.role === MASTER_ROLE;
+    const isDirectorOperator = req.user && req.user.role === 'direcao';
+    const canViewHistory = !!(isDevOperator || isDirectorOperator);
 
     let housekeepingSummary = null;
     let housekeepingCounts = null;
@@ -2021,6 +2081,53 @@ module.exports = function registerBackoffice(app, context) {
           )
           .all()
       : [];
+
+    const historyLimit = 60;
+    let historyBookingLogs = [];
+    let historyTaskLogs = [];
+    if (canViewHistory) {
+      const historyStmt = db.prepare(
+        `SELECT cl.id,
+                cl.entity_type,
+                cl.entity_id,
+                cl.action,
+                cl.before_json,
+                cl.after_json,
+                cl.created_at,
+                u.username AS actor_username
+           FROM change_logs cl
+           LEFT JOIN users u ON u.id = cl.actor_id
+          WHERE cl.entity_type = ?
+          ORDER BY cl.created_at DESC
+          LIMIT ?`
+      );
+      historyBookingLogs = historyStmt.all('booking', historyLimit);
+      historyTaskLogs = historyStmt.all('housekeeping_task', historyLimit);
+    }
+
+    let historyBookingHtml = '';
+    let historyTaskHtml = '';
+    if (canViewHistory) {
+      const renderHistoryEntry = (log, label) => html`
+        <article class="bo-card p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</span>
+            <span class="text-xs uppercase tracking-wide text-amber-700">${esc(log.action)}</span>
+          </div>
+          <div class="flex flex-wrap gap-2 text-sm text-slate-700">
+            <span class="pill-indicator">${esc(label)}</span>
+            <span class="text-slate-500">por ${esc(log.actor_username || 'Utilizador removido')}</span>
+          </div>
+          <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
+        </article>
+      `;
+      historyBookingHtml = historyBookingLogs.length
+        ? historyBookingLogs.map(log => renderHistoryEntry(log, `Reserva #${log.entity_id}`)).join('')
+        : '<p class="bo-empty">Sem alterações recentes às reservas.</p>';
+      historyTaskHtml = historyTaskLogs.length
+        ? historyTaskLogs.map(log => renderHistoryEntry(log, `Tarefa #${log.entity_id}`)).join('')
+        : '<p class="bo-empty">Sem alterações recentes às tarefas de limpeza.</p>';
+    }
 
     const notifications = buildUserNotifications({
       user: req.user,
@@ -2474,6 +2581,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
+      ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
     ];
@@ -3819,6 +3927,31 @@ module.exports = function registerBackoffice(app, context) {
                     `
                   : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
               </section>
+
+              ${canViewHistory
+                ? html`
+                    <section class="bo-pane" data-bo-pane="history">
+                      <div class="bo-card space-y-6">
+                        <div>
+                          <h2>Histórico de alterações</h2>
+                          <p class="bo-subtitle">
+                            Acompanhe as edições efetuadas pela equipa em reservas e tarefas de limpeza.
+                          </p>
+                        </div>
+                        <div class="grid gap-6 lg:grid-cols-2">
+                          <div class="space-y-3">
+                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Reservas</h3>
+                            <div class="space-y-4">${historyBookingHtml}</div>
+                          </div>
+                          <div class="space-y-3">
+                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Tarefas de limpeza</h3>
+                            <div class="space-y-4">${historyTaskHtml}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  `
+                : ''}
 
               <section class="bo-pane" data-bo-pane="branding">
                 <div class="bo-card">
