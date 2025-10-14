@@ -1,0 +1,79 @@
+# Funcionalidades Principais da Aplicação
+
+A aplicação cobre todo o ciclo de operações de um gestor de alojamentos. A lista abaixo resume cada funcionalidade com uma explicação e um exemplo de utilização no mundo real.
+
+- **Gestão de utilizadores com perfis e permissões** – O servidor define perfis como receção, gestão, direção e limpeza, atribuindo automaticamente as permissões adequadas a cada função para controlar o acesso ao calendário, reservas, automatizações e limpezas.【F:server.js†L160-L225】  
+  *Exemplo real*: A equipa de limpeza inicia sessão e só vê as tarefas que precisa de executar, enquanto a direção consegue exportar relatórios financeiros completos.
+
+- **Pesquisa e reserva por propriedade** – A página pública agrupa as unidades por propriedade, aplica filtros de datas, capacidade e disponibilidade e gera orçamentos quando existe uma pesquisa activa.【F:src/modules/frontoffice/index.js†L109-L236】  
+  *Exemplo real*: Um hóspede escolhe “16/10/2025 - 22/10/2025” para duas pessoas e recebe a lista das unidades disponíveis na quinta pretendida com o preço calculado.
+
+- **Validação de pedidos e criação de reservas pendentes** – O frontoffice valida contactos, datas e capacidade antes de inserir a reserva. As reservas submetidas por hóspedes entram com estado `PENDING`, enquanto colaboradores autorizados continuam a confirmar de imediato.【F:src/modules/frontoffice/index.js†L39-L105】【F:src/modules/frontoffice/index.js†L851-L862】
+  *Exemplo real*: Um pedido directo feito pelo site fica marcado como “pendente” até que a equipa de reservas analise a disponibilidade final e aprove o pedido.
+
+- **Assistente de reservas com chatbot conversacional** – O widget flutuante permite aos visitantes conversar com um bot que guarda o contexto da sessão, sugere unidades disponíveis com cartões ricos e ligações directas para reservar com as datas preenchidas.【F:src/modules/frontoffice/index.js†L620-L711】【F:server/chatbot/handlers/availability.js†L3-L83】【F:server/chatbot/service.js†L1-L75】
+  *Exemplo real*: Um hóspede pergunta “3 noites para 2 pessoas em Novembro?” e o assistente devolve as suites disponíveis com preço estimado e botão “Reservar agora”.
+
+- **Envio automático de emails transaccionais configuráveis** – Os modelos para emails de reserva pendente e confirmada podem ser editados no backoffice, e o serviço gera e envia mensagens automáticas aos hóspedes quando uma reserva é criada ou passa a confirmada.【F:src/services/email-templates.js†L1-L200】【F:src/services/booking-emails.js†L24-L90】【F:src/modules/backoffice/index.js†L3377-L3386】
+  *Exemplo real*: Após confirmar uma estadia, o gestor envia automaticamente um email personalizado com as datas e link para consulta sem precisar copiar mensagens manualmente.
+
+- **Notificações internas sobre reservas pendentes e alertas operacionais** – O painel de notificações procura reservas a aguardar confirmação e outras alertas operacionais, mostrando-os apenas aos utilizadores com permissões adequadas.【F:src/services/notifications.js†L19-L168】
+  *Exemplo real*: A receção recebe um aviso “Reserva a aguardar confirmação” quando entra um novo pedido pela app, garantindo resposta rápida ao hóspede.
+
+- **Gestão de reservas no backoffice com filtros avançados** – A listagem administrativa aceita pesquisa por hóspede, canal ou mês, abre a ficha da reserva para editar datas, contactos, estado e notas internas, recalcula tarifas com validação de estadia mínima e permite cancelar ou eliminar registos mantendo histórico de auditoria.【F:src/modules/backoffice/index.js†L4895-L5238】
+  *Exemplo real*: A equipa de operações revê todas as reservas de Outubro, ajusta o número de crianças numa estadia e cancela um pedido duplicado, registando automaticamente a alteração.
+
+- **Mapa de reservas com reagendamento via arrastar-e-largar e visão mobile optimizada** – O backoffice apresenta um calendário semanal com filtros, legenda por estado, suporte a arrastar para reagendar e uma visão móvel em formato tabela para evitar cortes em ecrãs pequenos.【F:src/modules/frontoffice/index.js†L1016-L1692】
+  *Exemplo real*: Um gestor usa um tablet para arrastar uma reserva confirmada dois dias para a frente quando o hóspede solicita alteração de datas.
+
+- **Gestão completa de tarefas de limpeza** – Existem páginas específicas para listar pendentes, em curso e concluídas, criar novas tarefas, actualizar progresso e reabrir limpezas, respeitando as permissões de cada perfil.【F:src/modules/backoffice/index.js†L976-L1831】
+  *Exemplo real*: A governanta adiciona uma limpeza urgente após um check-out antecipado e marca a tarefa como concluída quando a equipa termina a preparação do quarto.
+
+- **Centro de reviews com resposta directa** – O painel “Avaliações dos hóspedes” destaca contadores, filtros para recentes ou negativas e um compositor com validação de 1000 caracteres, enviando respostas via API dedicada e registando telemetria da acção.【F:src/modules/backoffice/index.js†L3729-L3776】【F:src/modules/backoffice/ux-api.js†L146-L188】【F:src/services/review-center.js†L1-L66】
+  *Exemplo real*: A direção filtra apenas críticas negativas da última semana, redige uma resposta empática e confirma o envio sem sair do dashboard.
+
+- **Painel de revenue com métricas, gráficos e tabela diária** – O separador “Revenue” consolida receita confirmada e pendente, previsões automáticas, repartição por canal e gera gráficos interactivos e uma tabela diária com ADR, RevPAR, ocupação e booking pace.【F:src/modules/backoffice/index.js†L3189-L3460】【F:src/modules/backoffice/scripts/revenue-dashboard.js†L1-L200】
+  *Exemplo real*: A direção analisa o gráfico de receita dos últimos 30 dias para comparar o desempenho entre semanas e perceber em que dias a ocupação caiu.
+
+- **Painel operacional automatizado e exportações** – A área “Estatísticas” cruza dados diários e semanais gerados pelo motor de automatizações para apresentar KPIs unificados, alertas de receita futura, sugestões de tarifa e bloqueios gerados automaticamente, permitindo exportar o snapshot completo em CSV com filtros de período, propriedade e tipologia.【F:src/modules/backoffice/index.js†L2830-L3106】【F:src/modules/backoffice/index.js†L3940-L4048】【F:server/automations/engine.js†L1-L120】
+  *Exemplo real*: A gestão selecciona “Setembro · Casas de Campo”, revê os alertas de sobreocupação e descarrega o CSV para discutir ajustes de preço na reunião semanal.
+
+- **Integrações com canais externos e uploads manuais** – O serviço de integrações conhece Booking.com, Airbnb, i-escape e Splendia, importando ficheiros CSV/XLSX/ICS, agendando sincronizações automáticas e registando histórico de lotes. O backoffice inclui cartões de configuração, upload manual e histórico de importações.【F:src/services/channel-integrations.js†L6-L200】【F:src/modules/backoffice/index.js†L3310-L3338】
+  *Exemplo real*: O gestor descarrega o CSV diário da Booking.com e carrega-o na nova página “Integrações” para criar rapidamente as reservas no sistema.
+
+- **Channel Manager oficial no backoffice** – Um separador dedicado no backoffice reúne métricas de integrações, alertas operacionais, histórico de importações e atalhos para sincronizações manuais ou automáticas dos canais OTA suportados.【F:src/modules/backoffice/index.js†L3440-L3492】
+  *Exemplo real*: Ao iniciar o turno, a equipa de revenue abre o “Channel Manager” para confirmar que todas as integrações auto-sync correram bem e identificar rapidamente um alerta de credenciais expiradas antes que afecte novas reservas.
+
+- **Gestão rápida de preços com pré-visualização e undo** – O dashboard permite seleccionar intervalos de datas, unidades ou tipologias, simular o impacto nas noites afectadas e aplicar tarifas em massa com hipótese de desfazer em 5 segundos, tudo com validação de payloads e registo de telemetria.【F:src/modules/backoffice/index.js†L3392-L3464】【F:src/modules/backoffice/scripts/ux-enhancements.js†L300-L357】【F:src/modules/backoffice/ux-api.js†L52-L98】【F:src/services/rate-management.js†L1-L67】
+  *Exemplo real*: O revenue manager define um preço promocional para todos os T2 aos fins-de-semana de Dezembro e, ao detectar um erro, carrega em “Anular” para repor as tarifas anteriores.
+
+- **Bloqueio rápido de unidades com detecção de conflitos** – A modal “Bloquear unidade” recolhe datas e motivo, impede intervalos sobrepostos com reservas ou bloqueios antigos e emite telemetria após criar registos consistentes na tabela `unit_blocks`.【F:src/modules/backoffice/index.js†L3891-L3934】【F:src/modules/backoffice/ux-api.js†L100-L144】【F:src/services/unit-blocks.js†L1-L56】
+  *Exemplo real*: Quando é preciso reparar uma caldeira, a equipa bloqueia a suite por três noites e recebe aviso imediato caso exista uma reserva em conflito.
+
+- **Relatórios semanais exportáveis em CSV ou PDF** – Os controlos do dashboard recolhem um intervalo até 31 dias, geram snapshots com ocupação, ADR, RevPAR e noites disponíveis e exportam-nos em ficheiro pronto para partilha, registando a operação para auditoria.【F:src/modules/backoffice/index.js†L2918-L2939】【F:src/modules/backoffice/ux-api.js†L190-L235】【F:src/services/reporting.js†L1-L96】
+  *Exemplo real*: Antes de enviar o reporte à administração, a diretora exporta um PDF com os KPIs da semana e partilha-o por email.
+
+- **Área de Proprietários fora do backoffice** – A rota `/owners` mostra cartões de receita, ocupação, reservas pendentes, próximas chegadas e distribuição por canal apenas para as propriedades associadas ao utilizador, permitindo que os proprietários consultem dados actualizados sem depender da direção.【F:src/modules/owners/index.js†L1-L207】【F:src/modules/owners/index.js†L252-L460】
+  *Exemplo real*: Um proprietário entra na nova área e confirma que a sua casa tem duas reservas pendentes e três chegadas confirmadas para a próxima semana, percebendo de imediato que a maioria veio da Booking.com e que a receita das últimas quatro semanas superou as expectativas.
+
+- **Conta “Owners” com seleção directa de propriedades** – Ao criar utilizadores Owners no backoffice, a direção escolhe as propriedades disponíveis através de checkboxes, garantindo que cada proprietário apenas vê os dados atribuídos e que o login redireciona directamente para a área dedicada.【F:src/modules/backoffice/index.js†L5553-L5637】【F:src/modules/backoffice/index.js†L5800-L5852】【F:server.js†L145-L252】
+  *Exemplo real*: Ao contratar um novo parceiro, a direção cria a conta Owners “quinta-azul” e selecciona apenas a Quinta Azul na lista, assegurando que o proprietário acede aos relatórios e reservas dessa casa sem ver inventário de outras unidades.
+
+- **Gestão granular de permissões pelo utilizador Dev** – O perfil `dev` é o único com acesso ao novo painel de “Permissões personalizadas”, permitindo adicionar ou remover privilégios individuais por utilizador, armazenando os ajustes na base de dados e terminando as sessões activas sempre que há alterações.【F:src/modules/backoffice/index.js†L5594-L5774】【F:src/modules/backoffice/index.js†L6082-L6171】【F:server.js†L260-L309】【F:server.js†L2970-L3039】
+  *Exemplo real*: Após promover um rececionista a supervisor, o developer activa temporariamente as permissões de exportação e gestão de tarifas para essa conta específica, mantendo as restantes contas de receção com acessos restritos.
+
+- **Resumo operacional e estatísticas com exportação** – O dashboard reúne métricas de ocupação, unidades com melhor desempenho e permite exportar os dados operacionais em CSV, respeitando filtros de propriedade e período.【F:src/modules/backoffice/index.js†L3342-L3520】
+  *Exemplo real*: Antes de uma reunião semanal, o gestor exporta o relatório operacional com ocupação e top unidades para partilhar com a equipa.
+
+- **Personalização de identidade visual e gestão de utilizadores** – O backoffice inclui secções para ajustar cores, branding e gerir contas de utilizadores, garantindo que a experiência pública segue a imagem da marca.【F:src/modules/backoffice/index.js†L3389-L3432】
+  *Exemplo real*: Ao abrir um novo alojamento, a equipa altera rapidamente as cores do portal e cria acessos distintos para receção e direção.
+
+- **Gestão de propriedades e unidades com métricas agregadas** – O painel principal do backoffice permite listar alojamentos atribuídos, adicionar novas propriedades e criar unidades com capacidade, preço base e características configuráveis, além de apresentar a receita total por ativo.【F:src/modules/backoffice/index.js†L3242-L3322】
+  *Exemplo real*: Ao integrar um novo edifício, a equipa cria a propriedade “Residência Aurora”, adiciona as três unidades disponíveis e verifica de imediato o volume de receita associado a cada uma.
+
+- **Ficha completa da unidade com reservas, bloqueios e rates** – Cada unidade possui uma página com histórico de reservas, formulário para bloquear datas, criação de rates sazonais e edição rápida de capacidade ou preço base sem sair do contexto operacional.【F:src/modules/backoffice/index.js†L4110-L4245】
+  *Exemplo real*: Antes de aceitar um pedido de grupo, o gestor consulta a ficha da “Suite Vista Rio”, bloqueia duas noites entre estadias e ajusta o mínimo de noites da rate de verão.
+
+- **Gestão de galeria e assets das unidades** – As imagens são carregadas diretamente no backoffice, comprimidas automaticamente e podem ser reordenadas por arrastar-e-largar, definindo o destaque visual da unidade em segundos.【F:src/modules/backoffice/index.js†L4254-L4284】
+  *Exemplo real*: Após uma sessão fotográfica, o marketing sobe as novas imagens da “Casa das Laranjeiras”, marca a melhor fotografia como principal e remove capturas antigas para manter o catálogo coerente.
+
