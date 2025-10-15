@@ -32,7 +32,8 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBookingUpdateStmt,
     rescheduleBlockUpdateStmt,
     bookingEmailer,
-    overbookingGuard
+    overbookingGuard,
+    otaDispatcher
   } = context;
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
@@ -904,6 +905,19 @@ app.post('/book', (req, res) => {
       checkout,
       status: finalStatus
     });
+
+    if (otaDispatcher && typeof otaDispatcher.pushUpdate === 'function') {
+      otaDispatcher.pushUpdate({
+        unitId,
+        type: 'booking.created',
+        payload: {
+          bookingId: id,
+          checkin,
+          checkout,
+          agency: agencyValue
+        }
+      });
+    }
 
     const bookingRow = db
       .prepare(
@@ -1783,6 +1797,18 @@ app.post('/calendar/booking/:id/reschedule', requireLogin, requirePermission('ca
 
   rescheduleBookingUpdateStmt.run(checkin, checkout, quote.total_cents, booking.id);
 
+  if (otaDispatcher && typeof otaDispatcher.pushUpdate === 'function') {
+    otaDispatcher.pushUpdate({
+      unitId: booking.unit_id,
+      type: 'booking.reschedule',
+      payload: {
+        bookingId: booking.id,
+        checkin,
+        checkout
+      }
+    });
+  }
+
   logChange(req.user.id, 'booking', booking.id, 'reschedule',
     { checkin: booking.checkin, checkout: booking.checkout, total_cents: booking.total_cents },
     { checkin, checkout, total_cents: quote.total_cents }
@@ -1798,6 +1824,13 @@ app.post('/calendar/booking/:id/cancel', requireLogin, requirePermission('calend
 
   db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
   deleteLockByBookingStmt.run(id);
+  if (otaDispatcher && typeof otaDispatcher.pushUpdate === 'function') {
+    otaDispatcher.pushUpdate({
+      unitId: booking.unit_id,
+      type: 'booking.cancel',
+      payload: { bookingId: booking.id }
+    });
+  }
   logChange(req.user.id, 'booking', id, 'cancel', {
     checkin: booking.checkin,
     checkout: booking.checkout,

@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const dayjs = require('dayjs');
+const ExcelJS = require('exceljs');
 
 const { createDatabase } = require('../src/infra/database');
 const { createSessionService } = require('../src/services/session');
@@ -11,6 +13,35 @@ const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
 const { ConflictError } = require('../src/services/errors');
 const { createOverbookingGuard } = require('../src/services/overbooking-guard');
+const { createChannelIntegrationService } = require('../src/services/channel-integrations');
+const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
+
+const simpleSlugify = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+function stableStringify(value) {
+  const seen = new WeakSet();
+  const sorter = (key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      if (seen.has(val)) return val;
+      seen.add(val);
+      const ordered = {};
+      Object.keys(val)
+        .sort()
+        .forEach(name => {
+          ordered[name] = val[name];
+        });
+      return ordered;
+    }
+    return val;
+  };
+  return JSON.stringify(value, sorter);
+}
 
 function testServerBootstrap() {
   const serverPath = require.resolve('../server');
@@ -281,6 +312,143 @@ async function testOverbookingGuardService() {
   assert.ok(channelQueue.length >= 2, 'segundo bloqueio válido deve ser enfileirado');
 }
 
+async function testOtaWebhookIngestion() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  const channelIntegrations = createChannelIntegrationService({
+    db,
+    dayjs,
+    slugify: simpleSlugify,
+    ExcelJS,
+    ensureDir: () => Promise.resolve(),
+    uploadsDir: 'uploads-test'
+  });
+  const dispatcher = createOtaDispatcher({
+    db,
+    dayjs,
+    channelIntegrations,
+    overbookingGuard: createOverbookingGuard({
+      db,
+      dayjs,
+      logChange: () => {},
+      channelSync: { queueLock: () => {} },
+      logger: { warn: () => {} }
+    }),
+    logger: { warn: () => {}, info: () => {} }
+  });
+
+  db.prepare(
+    `UPDATE channel_integrations SET settings_json = ?, credentials_json = ? WHERE channel_key = 'airbnb'`
+  ).run(
+    JSON.stringify({ webhookSecret: 'topsecret', autoEnabled: true }),
+    JSON.stringify({ apiSecret: 'air-secret' })
+  );
+
+  const payload = {
+    event: 'booking.created',
+    reservation: {
+      propertyName: 'Casas de Pousadouro',
+      unitName: 'Douro Suite',
+      guestName: 'Helena Martins',
+      guestEmail: 'helena@example.com',
+      checkin: '2025-08-10',
+      checkout: '2025-08-12',
+      total: { amount: 420, currency: 'EUR' },
+      externalReference: 'OTA-123'
+    }
+  };
+  const rawBody = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', 'topsecret').update(rawBody).digest('hex');
+
+  await dispatcher.ingest({
+    channelKey: 'airbnb',
+    payload,
+    headers: { 'x-ota-signature': signature },
+    rawBody
+  });
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE external_ref = ?').get('OTA-123');
+  assert.ok(booking, 'webhook deve criar reserva via dispatcher');
+  assert.equal(booking.unit_id, unitId, 'reserva importada deve ligar à unidade correta');
+  const lock = db.prepare('SELECT * FROM unit_blocks WHERE lock_owner_booking_id = ?').get(booking.id);
+  assert.ok(lock, 'reserva OTA deve bloquear datas automaticamente');
+}
+
+async function testOtaDispatcherQueue() {
+  const db = createDatabase(':memory:');
+  const { unitId } = seedPropertyAndUnit(db);
+  const channelIntegrations = createChannelIntegrationService({
+    db,
+    dayjs,
+    slugify: simpleSlugify,
+    ExcelJS,
+    ensureDir: () => Promise.resolve(),
+    uploadsDir: 'uploads-test'
+  });
+  const dispatcher = createOtaDispatcher({
+    db,
+    dayjs,
+    channelIntegrations,
+    overbookingGuard: createOverbookingGuard({
+      db,
+      dayjs,
+      logChange: () => {},
+      channelSync: { queueLock: () => {} },
+      logger: { warn: () => {} }
+    }),
+    logger: { warn: () => {}, info: () => {} }
+  });
+
+  const secrets = {
+    airbnb: 'air-secret',
+    booking: 'booking-secret',
+    expedia: 'exp-secret'
+  };
+  for (const [channel, secret] of Object.entries(secrets)) {
+    db.prepare(
+      'UPDATE channel_integrations SET settings_json = ?, credentials_json = ? WHERE channel_key = ?'
+    ).run(JSON.stringify({ autoEnabled: true }), JSON.stringify({ apiSecret: secret }), channel);
+  }
+
+  dispatcher.pushUpdate({
+    unitId,
+    type: 'rate.change',
+    payload: { startDate: '2025-09-01', endDateExclusive: '2025-09-05', priceCents: 15500 }
+  });
+  dispatcher.pushUpdate({
+    unitId,
+    type: 'availability.change',
+    payload: { startDate: '2025-09-01', endDateExclusive: '2025-09-05' }
+  });
+
+  dispatcher.flushPendingDebounce();
+
+  const pending = db.prepare('SELECT id, type, payload FROM channel_sync_queue').all();
+  assert.equal(pending.length, 1, 'deve agregar um único item na fila');
+  const queuedPayload = JSON.parse(pending[0].payload);
+  assert.equal(queuedPayload.updates.length, 2, 'fila deve manter ambas as alterações');
+
+  const result = await dispatcher.flushQueue();
+  assert.equal(result.processed.length, 1, 'flush deve processar o item agregado');
+
+  const stored = db.prepare('SELECT status, payload FROM channel_sync_queue WHERE id = ?').get(pending[0].id);
+  assert.equal(stored.status, 'processed', 'item deve ficar marcado como processado');
+
+  const outbound = dispatcher.getOutboundLog();
+  assert.equal(outbound.length, 3, 'três canais devem receber notificações');
+  const channels = outbound.map(entry => entry.channel).sort();
+  assert.deepEqual(channels, ['airbnb', 'booking', 'expedia'], 'todos os canais configurados recebem atualizações');
+
+  outbound.forEach(entry => {
+    const secret = secrets[entry.channel];
+    const { signature, ...message } = entry.update;
+    if (secret) {
+      const expected = crypto.createHmac('sha256', secret).update(stableStringify(message)).digest('hex');
+      assert.equal(signature, expected, 'assinatura deve corresponder ao HMAC esperado');
+    }
+  });
+}
+
 function testReviewService() {
   const db = createDatabase(':memory:');
   const { propertyId, unitId } = seedPropertyAndUnit(db);
@@ -325,6 +493,8 @@ async function main() {
   testRateManagementService();
   testUnitBlockService();
   await testOverbookingGuardService();
+  await testOtaWebhookIngestion();
+  await testOtaDispatcherQueue();
   testReviewService();
   testReportingService();
   console.log('Todos os testes passaram.');
