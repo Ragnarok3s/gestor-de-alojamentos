@@ -137,6 +137,98 @@ function testCsrfProtection() {
   assert.notEqual(rotated, token, 'token deve rodar');
 }
 
+function testRequireScopeMiddleware() {
+  const serverPath = require.resolve('../server');
+  delete require.cache[serverPath];
+  const previousSkip = process.env.SKIP_SERVER_START;
+  const previousDbPath = process.env.DATABASE_PATH;
+  process.env.SKIP_SERVER_START = '1';
+  process.env.DATABASE_PATH = ':memory:';
+  const server = require(serverPath);
+  const { db, requireScope, buildUserContext } = server;
+
+  const propertyId = db.prepare('INSERT INTO properties(name) VALUES (?)').run('Quinta das Escopos').lastInsertRowid;
+  db
+    .prepare('INSERT INTO units(property_id, name, capacity, base_price_cents) VALUES (?,?,?,?)')
+    .run(propertyId, 'Casa Pátio', 4, 18000);
+  const userId = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('maria', 'hash', 'rececao')
+    .lastInsertRowid;
+
+  const req = {
+    params: { id: String(propertyId) },
+    originalUrl: `/admin/properties/${propertyId}`,
+    cookies: {},
+    headers: {},
+  };
+  req.user = buildUserContext({ user_id: userId, username: 'maria', role: 'rececao' });
+
+  const res = {
+    statusCode: 200,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    sent: null,
+    send(payload) {
+      this.sent = payload;
+      return this;
+    },
+    json(payload) {
+      this.sent = payload;
+      return this;
+    }
+  };
+
+  let nextCalled = false;
+  requireScope('properties', 'manage', r => r.params.id)(req, res, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, false, 'middleware deve bloquear acesso sem escopo específico');
+  assert.equal(res.statusCode, 403, 'sem escopo deve responder com 403');
+
+  const roleRow = db.prepare('SELECT id FROM roles WHERE key = ?').get('gestao');
+  db.prepare('INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id) VALUES (?,?,?)').run(userId, roleRow.id, propertyId);
+
+  req.user = buildUserContext({ user_id: userId, username: 'maria', role: 'rececao' });
+  const resAllowed = {
+    statusCode: 200,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    sent: null,
+    send(payload) {
+      this.sent = payload;
+      return this;
+    },
+    json(payload) {
+      this.sent = payload;
+      return this;
+    }
+  };
+  let nextAllowed = false;
+  requireScope('properties', 'manage', r => r.params.id)(req, resAllowed, () => {
+    nextAllowed = true;
+  });
+  assert.equal(nextAllowed, true, 'middleware deve permitir acesso quando escopo é atribuído');
+  assert.equal(resAllowed.statusCode, 200, 'resposta não deve alterar status quando autorizado');
+
+  if (server && server.db && typeof server.db.close === 'function') {
+    server.db.close();
+  }
+  delete require.cache[serverPath];
+  if (previousSkip === undefined) {
+    delete process.env.SKIP_SERVER_START;
+  } else {
+    process.env.SKIP_SERVER_START = previousSkip;
+  }
+  if (previousDbPath === undefined) {
+    delete process.env.DATABASE_PATH;
+  } else {
+    process.env.DATABASE_PATH = previousDbPath;
+  }
+}
+
 function testPricingService() {
   const unit = { id: 'u1', name: 'Studio Teste', base_price_cents: 12000 };
   const history = {
@@ -321,6 +413,7 @@ async function main() {
   testServerBootstrap();
   testSessionService();
   testCsrfProtection();
+  testRequireScopeMiddleware();
   testPricingService();
   testRateManagementService();
   testUnitBlockService();

@@ -1,6 +1,8 @@
 const Database = require('better-sqlite3');
 const { randomUUID } = require('node:crypto');
 
+const { ROLE_DEFINITIONS, splitPermissionKey, MASTER_ROLE } = require('../security/permissions');
+
 function createDatabase(databasePath = 'booking_engine.db') {
   const db = new Database(databasePath);
   db.pragma('journal_mode = WAL');
@@ -133,6 +135,45 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'admin'
 );
+
+CREATE TABLE IF NOT EXISTS roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS permissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,
+  resource TEXT NOT NULL,
+  action TEXT NOT NULL,
+  description TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, role_id, property_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_property ON user_roles(property_id);
 
 CREATE TABLE IF NOT EXISTS reviews (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -986,8 +1027,118 @@ function runLightMigrations(db) {
       )`
     );
 
+    ensureIndex('idx_role_permissions_role', 'role_permissions', 'role_id');
+    ensureIndex('idx_role_permissions_permission', 'role_permissions', 'permission_id');
+    ensureIndex('idx_user_roles_role', 'user_roles', 'role_id');
+
+    seedRolePermissionMatrix(db);
+    backfillOwnerScopes(db);
+
   } catch (err) {
     console.warn('Falha ao executar migrações ligeiras:', err.message);
+  }
+}
+
+function seedRolePermissionMatrix(db) {
+  try {
+    const listRoles = db.prepare('SELECT id, key FROM roles');
+    const listPermissions = db.prepare('SELECT id, key FROM permissions');
+    const insertRole = db.prepare(
+      'INSERT INTO roles(key, name, description, is_system, updated_at) VALUES (?,?,?,?,datetime(\'now\'))'
+    );
+    const updateRole = db.prepare(
+      'UPDATE roles SET name = ?, description = ?, is_system = 1, updated_at = datetime(\'now\') WHERE id = ?'
+    );
+    const insertPermission = db.prepare(
+      'INSERT INTO permissions(key, resource, action, description, is_system, updated_at) VALUES (?,?,?,?,1,datetime(\'now\'))'
+    );
+    const updatePermission = db.prepare(
+      'UPDATE permissions SET resource = ?, action = ?, description = ?, is_system = 1, updated_at = datetime(\'now\') WHERE id = ?'
+    );
+    const linkRolePermission = db.prepare(
+      'INSERT OR IGNORE INTO role_permissions(role_id, permission_id) VALUES (?, ?)'
+    );
+
+    const normalizeRoleKey = (value) => String(value || '').trim().toLowerCase();
+
+    const existingRoles = new Map();
+    listRoles.all().forEach(row => {
+      if (row && row.key) {
+        existingRoles.set(normalizeRoleKey(row.key), Number(row.id));
+      }
+    });
+
+    const existingPermissions = new Map();
+    listPermissions.all().forEach(row => {
+      if (row && row.key) {
+        existingPermissions.set(String(row.key).trim(), Number(row.id));
+      }
+    });
+
+    const transaction = db.transaction(() => {
+      ROLE_DEFINITIONS.forEach(role => {
+        if (!role || !role.key) return;
+        const roleKey = normalizeRoleKey(role.key);
+        if (!roleKey) return;
+        let roleId = existingRoles.get(roleKey);
+        if (!roleId) {
+          const result = insertRole.run(roleKey, role.label || roleKey, role.description || null, 1);
+          roleId = Number(result.lastInsertRowid);
+          existingRoles.set(roleKey, roleId);
+        } else {
+          updateRole.run(role.label || roleKey, role.description || null, roleId);
+        }
+
+        (role.permissions || []).forEach(permissionKey => {
+          if (!permissionKey) return;
+          const normalizedPermission = String(permissionKey).trim();
+          if (!normalizedPermission) return;
+          const { resource, action } = splitPermissionKey(normalizedPermission);
+          let permissionId = existingPermissions.get(normalizedPermission);
+          if (!permissionId) {
+            const result = insertPermission.run(
+              normalizedPermission,
+              resource || normalizedPermission,
+              action || 'access',
+              null
+            );
+            permissionId = Number(result.lastInsertRowid);
+            existingPermissions.set(normalizedPermission, permissionId);
+          } else {
+            updatePermission.run(resource || normalizedPermission, action || 'access', null, permissionId);
+          }
+          linkRolePermission.run(roleId, permissionId);
+        });
+      });
+    });
+
+    transaction();
+  } catch (err) {
+    console.warn('Falha ao sincronizar roles/permissões:', err.message);
+  }
+}
+
+function backfillOwnerScopes(db) {
+  try {
+    const ownerRole = db.prepare('SELECT id FROM roles WHERE key = ?').get('owner');
+    if (!ownerRole || !ownerRole.id) return;
+    db.prepare(
+      `INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id)
+         SELECT po.user_id, ?, po.property_id
+           FROM property_owners po
+          WHERE po.user_id IS NOT NULL`
+    ).run(ownerRole.id);
+
+    const devRole = db.prepare('SELECT id FROM roles WHERE key = ?').get(MASTER_ROLE);
+    if (!devRole || !devRole.id) return;
+    db.prepare(
+      `INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id)
+         SELECT u.id, ?, NULL
+           FROM users u
+          WHERE lower(u.role) = ?`
+    ).run(devRole.id, MASTER_ROLE);
+  } catch (err) {
+    console.warn('Falha ao sincronizar escopos existentes:', err.message);
   }
 }
 
