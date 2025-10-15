@@ -43,6 +43,12 @@ const priceOverrideAction = require('./server/automations/actions/price.override
 const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { createTelemetry } = require('./src/services/telemetry');
+const {
+  MASTER_ROLE,
+  ROLE_LABELS,
+  ROLE_PERMISSIONS,
+  ALL_PERMISSIONS
+} = require('./src/security/permissions');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -152,101 +158,6 @@ async function geocodeAddress(query) {
   return await tryNominatim();
 }
 
-const MASTER_ROLE = 'dev';
-
-const ROLE_LABELS = {
-  [MASTER_ROLE]: 'Desenvolvedor',
-  rececao: 'Receção',
-  gestao: 'Gestão',
-  direcao: 'Direção',
-  limpeza: 'Limpeza',
-  owner: 'Owners (Portal)'
-};
-
-const ROLE_PERMISSIONS = {
-  rececao: new Set([
-    'dashboard.view',
-    'calendar.view',
-    'calendar.reschedule',
-    'calendar.cancel',
-    'calendar.block.create',
-    'calendar.block.delete',
-    'bookings.view',
-    'bookings.create',
-    'bookings.edit',
-    'bookings.cancel',
-    'bookings.notes',
-    'bookings.export',
-    'automation.view',
-    'housekeeping.view',
-    'housekeeping.manage',
-    'housekeeping.complete'
-  ]),
-  gestao: new Set([
-    'dashboard.view',
-    'calendar.view',
-    'calendar.reschedule',
-    'calendar.cancel',
-    'calendar.block.create',
-    'calendar.block.delete',
-    'calendar.block.manage',
-    'bookings.view',
-    'bookings.create',
-    'bookings.edit',
-    'bookings.cancel',
-    'bookings.notes',
-    'bookings.export',
-    'properties.manage',
-    'rates.manage',
-    'gallery.manage',
-    'automation.view',
-    'automation.export',
-    'audit.view',
-    'owners.portal.view',
-    'housekeeping.view',
-    'housekeeping.manage',
-    'housekeeping.complete'
-  ]),
-  direcao: new Set([
-    'dashboard.view',
-    'calendar.view',
-    'calendar.reschedule',
-    'calendar.cancel',
-    'calendar.block.create',
-    'calendar.block.delete',
-    'calendar.block.manage',
-    'bookings.view',
-    'bookings.create',
-    'bookings.edit',
-    'bookings.cancel',
-    'bookings.notes',
-    'bookings.export',
-    'properties.manage',
-    'rates.manage',
-    'gallery.manage',
-    'automation.view',
-    'automation.export',
-    'audit.view',
-    'users.manage',
-    'logs.view',
-    'owners.portal.view',
-    'housekeeping.view',
-    'housekeeping.manage',
-    'housekeeping.complete'
-  ]),
-  limpeza: new Set([
-    'housekeeping.view',
-    'housekeeping.complete'
-  ]),
-  owner: new Set(['owners.portal.view'])
-};
-
-const ALL_PERMISSIONS = new Set();
-Object.values(ROLE_PERMISSIONS).forEach(set => {
-  if (set && set.forEach) set.forEach(perm => ALL_PERMISSIONS.add(perm));
-});
-ROLE_PERMISSIONS[MASTER_ROLE] = new Set(ALL_PERMISSIONS);
-
 function normalizeRole(role) {
   const key = String(role || '').toLowerCase();
   if (key === MASTER_ROLE || key === 'developer' || key === 'devmaster') return MASTER_ROLE;
@@ -274,12 +185,51 @@ function normalizeRole(role) {
   return 'rececao';
 }
 
+function normalizeScopePropertyId(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return String(Math.trunc(value));
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && Number.isInteger(numeric)) {
+    return String(Math.trunc(numeric));
+  }
+  return raw;
+}
+
 function buildUserContext(sessRow) {
   const role = normalizeRole(sessRow.role);
   const permissions = new Set(ROLE_PERMISSIONS[role] || []);
-  if (sessRow && sessRow.user_id && role !== MASTER_ROLE) {
+  const propertyScopes = new Map();
+  const userId = sessRow && sessRow.user_id ? Number(sessRow.user_id) : null;
+
+  if (userId) {
     try {
-      const overrides = selectUserPermissionOverridesStmt.all(sessRow.user_id);
+      const scopedPermissions = selectUserRoleScopesStmt.all(userId);
+      scopedPermissions.forEach(entry => {
+        const permission = entry && entry.permission_key;
+        if (!permission) return;
+        const scopeKey = normalizeScopePropertyId(entry.property_id);
+        if (scopeKey === null) {
+          permissions.add(permission);
+          return;
+        }
+        if (!propertyScopes.has(scopeKey)) {
+          propertyScopes.set(scopeKey, new Set());
+        }
+        propertyScopes.get(scopeKey).add(permission);
+      });
+    } catch (err) {
+      console.warn('Falha ao carregar escopos do utilizador:', err.message);
+    }
+  }
+
+  if (userId && role !== MASTER_ROLE) {
+    try {
+      const overrides = selectUserPermissionOverridesStmt.all(userId);
       overrides.forEach(entry => {
         const permission = entry && entry.permission;
         if (!permission || !ALL_PERMISSIONS.has(permission)) return;
@@ -293,12 +243,14 @@ function buildUserContext(sessRow) {
       console.warn('Falha ao carregar privilégios personalizados:', err.message);
     }
   }
+
   return {
     id: sessRow.user_id,
     username: sessRow.username,
     role,
     role_label: ROLE_LABELS[role] || role,
-    permissions
+    permissions,
+    propertyScopes
   };
 }
 
@@ -306,6 +258,26 @@ function userCan(user, permission) {
   if (!user) return false;
   if (user.role === MASTER_ROLE) return true;
   return !!(user.permissions && user.permissions.has(permission));
+}
+
+function userHasScope(user, permission, propertyId) {
+  if (!user) return false;
+  if (!permission) return false;
+  if (user.role === MASTER_ROLE) return true;
+  const normalizedPermission = String(permission).trim();
+  if (!normalizedPermission) return false;
+  if (propertyId === undefined || propertyId === null || propertyId === '') {
+    return userCan(user, normalizedPermission);
+  }
+  if (userCan(user, normalizedPermission)) return true;
+  const scopeKey = normalizeScopePropertyId(propertyId);
+  if (scopeKey === null) {
+    return userCan(user, normalizedPermission);
+  }
+  const scopes = user && user.propertyScopes;
+  if (!scopes || typeof scopes.get !== 'function') return false;
+  const scopedSet = scopes.get(scopeKey) || scopes.get(String(scopeKey));
+  return !!(scopedSet && scopedSet.has(normalizedPermission));
 }
 
 const rescheduleBookingUpdateStmt = db.prepare(
@@ -349,6 +321,13 @@ const deletePermissionOverridesForUserStmt = db.prepare(
 );
 const insertPermissionOverrideStmt = db.prepare(
   'INSERT INTO user_permission_overrides(user_id, permission, is_granted, updated_at) VALUES (?,?,?,datetime(\'now\'))'
+);
+const selectUserRoleScopesStmt = db.prepare(
+  `SELECT ur.property_id AS property_id, perms.key AS permission_key
+     FROM user_roles ur
+     JOIN role_permissions rp ON rp.role_id = ur.role_id
+     JOIN permissions perms ON perms.id = rp.permission_id
+    WHERE ur.user_id = ?`
 );
 
 function logSessionEvent(userId, action, req) {
@@ -2112,6 +2091,37 @@ function requireAnyPermission(permissions = []) {
   };
 }
 
+function requireScope(resource, action, propertySelector) {
+  const resourcePart = typeof resource === 'string' ? resource.trim() : '';
+  const actionPart = typeof action === 'string' ? action.trim() : '';
+  const permission = [resourcePart, actionPart].filter(Boolean).join('.');
+  if (!permission) {
+    throw new Error('requireScope: é necessário definir recurso e ação.');
+  }
+  return (req, res, next) => {
+    if (!req.user) {
+      const sess = getSession(req.cookies.adm, req);
+      if (!sess) return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+      req.user = buildUserContext(sess);
+    }
+    let propertyId = null;
+    if (typeof propertySelector === 'function') {
+      try {
+        propertyId = propertySelector(req);
+      } catch (err) {
+        propertyId = null;
+      }
+    } else if (propertySelector !== undefined) {
+      propertyId = propertySelector;
+    }
+    if (!userHasScope(req.user, permission, propertyId)) {
+      if (wantsJson(req)) return res.status(403).json({ ok: false, message: 'Sem permissão' });
+      return res.status(403).send('Sem permissão');
+    }
+    next();
+  };
+}
+
 // Disponibilidade / Pricing
 function overlaps(aStart, aEnd, bStart, bEnd) {
   const aS = dayjs(aStart), aE = dayjs(aEnd);
@@ -3255,8 +3265,10 @@ const context = {
   requireBackofficeAccess,
   requirePermission,
   requireAnyPermission,
+  requireScope,
   requireAdmin,
   requireDev,
+  userHasScope,
   buildUserNotifications,
   overlaps,
   unitAvailable,

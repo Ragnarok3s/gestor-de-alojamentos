@@ -117,8 +117,10 @@ module.exports = function registerBackoffice(app, context) {
     requireBackofficeAccess,
     requirePermission,
     requireAnyPermission,
+    requireScope,
     requireAdmin,
     requireDev,
+    userHasScope,
     overlaps,
     unitAvailable,
     rateQuote,
@@ -158,6 +160,22 @@ module.exports = function registerBackoffice(app, context) {
     rescheduleBookingUpdateStmt,
     rescheduleBlockUpdateStmt
   } = context;
+
+  const selectUnitPropertyIdStmt = db.prepare('SELECT property_id FROM units WHERE id = ?');
+  const selectRoleByKeyStmt = db.prepare('SELECT id, key, name FROM roles WHERE key = ?');
+  const insertUserRoleAssignmentStmt = db.prepare(
+    'INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id) VALUES (?,?,?)'
+  );
+  const deleteUserRoleAssignmentStmt = db.prepare('DELETE FROM user_roles WHERE id = ?');
+  const deleteUserRolesByUserAndRoleKeyStmt = db.prepare(
+    'DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE key = ?)' 
+  );
+  const selectUserRoleAssignmentStmt = db.prepare(
+    `SELECT ur.id, ur.user_id, ur.property_id, r.key AS role_key, r.name AS role_name
+       FROM user_roles ur
+       JOIN roles r ON r.id = ur.role_id
+      WHERE ur.id = ?`
+  );
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
 
@@ -4333,17 +4351,26 @@ app.post('/admin/properties/create', requireLogin, requirePermission('properties
   res.redirect('/admin');
 });
 
-app.post('/admin/properties/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  const id = req.params.id;
-  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
-  if (!property) return res.status(404).send('Propriedade não encontrada');
-  db.prepare('DELETE FROM properties WHERE id = ?').run(id);
-  res.redirect('/admin');
-});
+app.post(
+  '/admin/properties/:id/delete',
+  requireLogin,
+  requireScope('properties', 'manage', req => req.params.id),
+  (req, res) => {
+    const id = req.params.id;
+    const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
+    if (!property) return res.status(404).send('Propriedade não encontrada');
+    db.prepare('DELETE FROM properties WHERE id = ?').run(id);
+    res.redirect('/admin');
+  }
+);
 
-app.get('/admin/properties/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
-  if (!p) return res.status(404).send('Propriedade não encontrada');
+app.get(
+  '/admin/properties/:id',
+  requireLogin,
+  requireScope('properties', 'manage', req => req.params.id),
+  (req, res) => {
+    const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
+    if (!p) return res.status(404).send('Propriedade não encontrada');
 
   const addressDisplay = typeof p.address === 'string' ? p.address.trim() : '';
   const locationDisplay = propertyLocationLabel(p);
@@ -4379,12 +4406,13 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
   const theme = resolveBrandingForRequest(req, { propertyId: p.id, propertyName: p.name });
   rememberActiveBrandingProperty(res, p.id);
 
-  res.send(layout({
-    title: p.name,
-    user: req.user,
-    activeNav: 'backoffice',
-    branding: theme,
-    body: html`
+    res.send(
+      layout({
+        title: p.name,
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        body: html`
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <div class="flex flex-col gap-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -4453,14 +4481,20 @@ app.get('/admin/properties/:id', requireLogin, requirePermission('properties.man
           </ul>
         </section>
       </div>
-    `
-  }));
-});
+        `
+      })
+    );
+  }
+);
 
-app.post('/admin/properties/:id/update', requireLogin, requirePermission('properties.manage'), async (req, res) => {
-  const propertyId = Number(req.params.id);
-  const existing = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
-  if (!existing) return res.status(404).send('Propriedade não encontrada');
+app.post(
+  '/admin/properties/:id/update',
+  requireLogin,
+  requireScope('properties', 'manage', req => req.params.id),
+  async (req, res) => {
+    const propertyId = Number(req.params.id);
+    const existing = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
+    if (!existing) return res.status(404).send('Propriedade não encontrada');
 
   const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
@@ -4494,24 +4528,33 @@ app.post('/admin/properties/:id/update', requireLogin, requirePermission('proper
   const finalLatitude = Number.isFinite(latitude) ? latitude : null;
   const finalLongitude = Number.isFinite(longitude) ? longitude : null;
 
-  db.prepare(
-    'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, address = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
-  ).run(
-    name,
-    locationLabel,
-    trimmedLocality || null,
-    trimmedDistrict || null,
-    trimmedAddress,
-    description ? String(description) : null,
-    finalLatitude,
-    finalLongitude,
-    propertyId
-  );
+    db.prepare(
+      'UPDATE properties SET name = ?, location = ?, locality = ?, district = ?, address = ?, description = ?, latitude = ?, longitude = ? WHERE id = ?'
+    ).run(
+      name,
+      locationLabel,
+      trimmedLocality || null,
+      trimmedDistrict || null,
+      trimmedAddress,
+      description ? String(description) : null,
+      finalLatitude,
+      finalLongitude,
+      propertyId
+    );
 
-  res.redirect(`/admin/properties/${propertyId}`);
-});
+    res.redirect(`/admin/properties/${propertyId}`);
+  }
+);
 
-app.post('/admin/units/create', requireLogin, requirePermission('properties.manage'), (req, res) => {
+app.post(
+  '/admin/units/create',
+  requireLogin,
+  requireScope('properties', 'manage', req => {
+    const raw = req.body ? req.body.property_id : null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) ? parsed : null;
+  }),
+  (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(property_id);
   if (!property) return res.status(400).send('Propriedade inválida');
@@ -4532,9 +4575,19 @@ app.post('/admin/units/create', requireLogin, requirePermission('properties.mana
     null
   );
   res.redirect('/admin');
-});
+}
+);
 
-app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage'), (req, res) => {
+app.get(
+  '/admin/units/:id',
+  requireLogin,
+  requireScope('properties', 'manage', req => {
+    const unitId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(unitId)) return null;
+    const row = selectUnitPropertyIdStmt.get(unitId);
+    return row ? row.property_id : null;
+  }),
+  (req, res) => {
   const u = db.prepare(
     `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district, p.address as property_address
        FROM units u
@@ -4542,6 +4595,9 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
       WHERE u.id = ?`
   ).get(req.params.id);
   if (!u) return res.status(404).send('Unidade não encontrada');
+  if (!userHasScope(req.user, 'properties.manage', u.property_id)) {
+    return res.status(403).send('Sem permissão para esta unidade.');
+  }
 
   const unitFeatures = parseFeaturesStored(u.features);
   const unitFeaturesTextarea = esc(featuresToTextarea(unitFeatures));
@@ -4800,10 +4856,22 @@ app.get('/admin/units/:id', requireLogin, requirePermission('properties.manage')
   }));
 });
 
-app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.manage'), (req, res) => {
+app.post(
+  '/admin/units/:id/update',
+  requireLogin,
+  requireScope('properties', 'manage', req => {
+    const unitId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(unitId)) return null;
+    const row = selectUnitPropertyIdStmt.get(unitId);
+    return row ? row.property_id : null;
+  }),
+  (req, res) => {
   const unitId = Number(req.params.id);
-  const existing = db.prepare('SELECT id FROM units WHERE id = ?').get(unitId);
+  const existing = db.prepare('SELECT id, property_id FROM units WHERE id = ?').get(unitId);
   if (!existing) return res.status(404).send('Unidade não encontrada');
+  if (!userHasScope(req.user, 'properties.manage', existing.property_id)) {
+    return res.status(403).send('Sem permissão para esta unidade.');
+  }
 
   const { name, capacity, base_price_eur, features_raw } = req.body;
   const cents = Math.round(parseFloat(String(base_price_eur || '0').replace(',', '.')) * 100);
@@ -4819,12 +4887,23 @@ app.post('/admin/units/:id/update', requireLogin, requirePermission('properties.
     unitId
   );
   res.redirect(`/admin/units/${unitId}`);
-});
+}
+);
 
-app.post('/admin/units/:id/delete', requireLogin, requirePermission('properties.manage'), (req, res) => {
-  db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
-  res.redirect('/admin');
-});
+app.post(
+  '/admin/units/:id/delete',
+  requireLogin,
+  requireScope('properties', 'manage', req => {
+    const unitId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(unitId)) return null;
+    const row = selectUnitPropertyIdStmt.get(unitId);
+    return row ? row.property_id : null;
+  }),
+  (req, res) => {
+    db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
+    res.redirect('/admin');
+  }
+);
 
 app.post('/admin/units/:id/block', requireLogin, requirePermission('calendar.block.create'), (req, res) => {
   const { start_date, end_date } = req.body;
@@ -6172,13 +6251,60 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
   }
   const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const scopeRoleOptions = db
+    .prepare('SELECT key, name FROM roles WHERE key != ? ORDER BY name COLLATE NOCASE')
+    .all(MASTER_ROLE)
+    .map(row => ({
+      key: row.key,
+      label: row.name || ROLE_LABELS[row.key] || row.key
+    }));
+  const scopeAssignments = db
+    .prepare(
+      `SELECT ur.id,
+              ur.user_id,
+              ur.property_id,
+              u.username,
+              r.key AS role_key,
+              COALESCE(r.name, r.key) AS role_name,
+              p.name AS property_name
+         FROM user_roles ur
+         JOIN users u ON u.id = ur.user_id
+         JOIN roles r ON r.id = ur.role_id
+    LEFT JOIN properties p ON p.id = ur.property_id
+        ORDER BY u.username COLLATE NOCASE,
+                 r.name COLLATE NOCASE,
+                 COALESCE(p.name, '') COLLATE NOCASE`
+    )
+    .all();
   const query = req.query || {};
-  const successMessage = query.updated === 'permissions' ? 'Permissões personalizadas atualizadas com sucesso.' : null;
+  let successMessage = null;
+  if (query.updated === 'permissions') {
+    successMessage = 'Permissões personalizadas atualizadas com sucesso.';
+  } else if (query.updated === 'scopes') {
+    successMessage = 'Escopos atualizados com sucesso.';
+  }
   let errorMessage = null;
-  if (query.error === 'permissions_forbidden') {
-    errorMessage = 'Não é possível alterar as permissões desse utilizador.';
-  } else if (query.error === 'permissions_invalid') {
-    errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+  switch (query.error) {
+    case 'permissions_forbidden':
+      errorMessage = 'Não é possível alterar as permissões desse utilizador.';
+      break;
+    case 'permissions_invalid':
+      errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+      break;
+    case 'scopes_invalid':
+      errorMessage = 'Selecione utilizador, perfil e propriedade válidos antes de guardar.';
+      break;
+    case 'scopes_exists':
+      errorMessage = 'O escopo selecionado já está atribuído a esse utilizador.';
+      break;
+    case 'scopes_not_found':
+      errorMessage = 'Escopo indicado não foi encontrado.';
+      break;
+    case 'scopes_forbidden':
+      errorMessage = 'Sem permissão para gerir escopos desse utilizador.';
+      break;
+    default:
+      break;
   }
 
   let permissionGroupEntries = [];
@@ -6367,6 +6493,77 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
             ${permissionPayload ? html`<script id="user-permissions-data" type="application/json">${permissionPayload}</script>` : ''}
           `
         : ''}
+
+      <section class="card p-4 md:col-span-2">
+        <h2 class="font-semibold mb-3">Escopos por propriedade</h2>
+        <form method="post" action="/admin/user-roles" class="grid gap-3 md:grid-cols-4">
+          <label class="grid gap-1 text-sm">
+            <span>Utilizador</span>
+            <select name="user_id" class="input" required>
+              <option value="">— Selecionar —</option>
+              ${users
+                .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                .join('')}
+            </select>
+          </label>
+          <label class="grid gap-1 text-sm">
+            <span>Perfil</span>
+            <select name="role_key" class="input" required>
+              <option value="">— Selecionar —</option>
+              ${scopeRoleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="grid gap-1 text-sm md:col-span-2">
+            <span>Propriedade</span>
+            <select name="property_id" class="input">
+              <option value="">Todas as propriedades</option>
+              ${propertyChoices.map(prop => `<option value="${prop.id}">${esc(prop.name)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="md:col-span-4 flex flex-wrap items-center justify-between gap-3">
+            <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+            <button class="btn btn-primary">Adicionar escopo</button>
+          </div>
+        </form>
+        <div class="responsive-table mt-4">
+          <table class="w-full text-sm">
+            <thead>
+              <tr>
+                <th class="text-left px-4 py-2">Utilizador</th>
+                <th class="text-left px-4 py-2">Perfil</th>
+                <th class="text-left px-4 py-2">Propriedade</th>
+                <th class="text-left px-4 py-2">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${scopeAssignments.length
+                ? scopeAssignments
+                    .map(scope => {
+                      const roleLabel = ROLE_LABELS[scope.role_key] || scope.role_name || scope.role_key;
+                      const propertyLabel = scope.property_id == null
+                        ? 'Todas as propriedades'
+                        : scope.property_name
+                        ? scope.property_name
+                        : `Propriedade #${scope.property_id}`;
+                      return `
+                        <tr>
+                          <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(scope.username)}</span></td>
+                          <td class="px-4 py-2" data-label="Perfil"><span class="table-cell-value">${esc(roleLabel)}</span></td>
+                          <td class="px-4 py-2" data-label="Propriedade"><span class="table-cell-value">${esc(propertyLabel)}</span></td>
+                          <td class="px-4 py-2" data-label="Ações">
+                            <form method="post" action="/admin/user-roles/${scope.id}/delete" class="inline">
+                              <button class="btn btn-light btn-xs" onclick="return confirm('Remover este escopo?');">Remover</button>
+                            </form>
+                          </td>
+                        </tr>
+                      `;
+                    })
+                    .join('')
+                : '<tr><td class="px-4 py-3 text-slate-500" colspan="4">Ainda não existem escopos atribuídos.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
 
     <section class="card p-4 mt-6">
@@ -6624,6 +6821,7 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const hash = bcrypt.hashSync(password, 10);
   const roleKey = normalizeRole(role);
   let ownerPropertyIds = [];
+  const ownerRoleRow = selectRoleByKeyStmt.get('owner');
   if (roleKey === 'owner') {
     const rawPropertyIds = req.body.property_ids;
     const selectable = new Set(
@@ -6657,6 +6855,9 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
     if (roleKey === 'owner' && ownerPropertyIds.length) {
       ownerPropertyIds.forEach(propertyId => {
         assignOwnerProperty.run(propertyId, newUserId);
+        if (ownerRoleRow && ownerRoleRow.id) {
+          insertUserRoleAssignmentStmt.run(newUserId, ownerRoleRow.id, propertyId);
+        }
       });
     }
   })();
@@ -6701,11 +6902,86 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
   if (currentRole === 'owner' && newRole !== 'owner') {
     db.prepare('DELETE FROM property_owners WHERE user_id = ?').run(target.id);
+    deleteUserRolesByUserAndRoleKeyStmt.run(target.id, 'owner');
   }
   revokeUserSessions(target.id);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/user-roles', requireAdmin, (req, res) => {
+  const { user_id, role_key, property_id } = req.body;
+  const userId = Number.parseInt(user_id, 10);
+  const normalizedRoleKey = typeof role_key === 'string' ? role_key.trim().toLowerCase() : '';
+  if (!Number.isInteger(userId) || !normalizedRoleKey) {
+    return res.redirect('/admin/utilizadores?error=scopes_invalid');
+  }
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=scopes_invalid');
+  }
+  const actorIsDev = req.user && req.user.role === MASTER_ROLE;
+  const targetRole = normalizeRole(target.role);
+  if (targetRole === MASTER_ROLE && !actorIsDev) {
+    return res.redirect('/admin/utilizadores?error=scopes_forbidden');
+  }
+  if (normalizedRoleKey === MASTER_ROLE && !actorIsDev) {
+    return res.redirect('/admin/utilizadores?error=scopes_forbidden');
+  }
+  const roleRow = selectRoleByKeyStmt.get(normalizedRoleKey);
+  if (!roleRow || !roleRow.id) {
+    return res.redirect('/admin/utilizadores?error=scopes_invalid');
+  }
+  let resolvedPropertyId = null;
+  if (property_id !== undefined && property_id !== null && String(property_id).trim() !== '') {
+    const parsedProperty = Number.parseInt(property_id, 10);
+    if (!Number.isInteger(parsedProperty)) {
+      return res.redirect('/admin/utilizadores?error=scopes_invalid');
+    }
+    const propertyExists = db.prepare('SELECT id FROM properties WHERE id = ?').get(parsedProperty);
+    if (!propertyExists) {
+      return res.redirect('/admin/utilizadores?error=scopes_invalid');
+    }
+    resolvedPropertyId = parsedProperty;
+  }
+  const result = insertUserRoleAssignmentStmt.run(userId, roleRow.id, resolvedPropertyId);
+  if (!result || result.changes === 0) {
+    return res.redirect('/admin/utilizadores?error=scopes_exists');
+  }
+  revokeUserSessions(userId);
+  logActivity(req.user.id, 'user:scope_grant', 'user_role', Number(result.lastInsertRowid), {
+    user_id: userId,
+    role_key: roleRow.key,
+    property_id: resolvedPropertyId
+  });
+  res.redirect('/admin/utilizadores?updated=scopes');
+});
+
+app.post('/admin/user-roles/:id/delete', requireAdmin, (req, res) => {
+  const assignmentId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(assignmentId)) {
+    return res.redirect('/admin/utilizadores?error=scopes_not_found');
+  }
+  const assignment = selectUserRoleAssignmentStmt.get(assignmentId);
+  if (!assignment) {
+    return res.redirect('/admin/utilizadores?error=scopes_not_found');
+  }
+  const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(assignment.user_id);
+  const actorIsDev = req.user && req.user.role === MASTER_ROLE;
+  if (target && normalizeRole(target.role) === MASTER_ROLE && !actorIsDev) {
+    return res.redirect('/admin/utilizadores?error=scopes_forbidden');
+  }
+  const outcome = deleteUserRoleAssignmentStmt.run(assignmentId);
+  if (outcome && outcome.changes > 0) {
+    revokeUserSessions(assignment.user_id);
+    logActivity(req.user.id, 'user:scope_revoke', 'user_role', assignmentId, {
+      user_id: assignment.user_id,
+      role_key: assignment.role_key,
+      property_id: assignment.property_id
+    });
+  }
+  res.redirect('/admin/utilizadores?updated=scopes');
 });
 
 app.post('/admin/users/permissions', requireDev, (req, res) => {
