@@ -33,6 +33,7 @@ const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 const { createChannelSync } = require('./src/services/channel-sync');
+const { createOtaDispatcher } = require('./src/services/ota-sync/dispatcher');
 const { createOverbookingGuard } = require('./src/services/overbooking-guard');
 const { createAutomationEngine } = require('./server/automations/engine');
 const emailAction = require('./server/automations/actions/email');
@@ -1599,6 +1600,13 @@ const channelIntegrations = createChannelIntegrationService({
 const channelSync = createChannelSync({ logger: console });
 const telemetry = createTelemetry({ logger: console });
 const overbookingGuard = createOverbookingGuard({ db, dayjs, logChange, channelSync, logger: console });
+const otaDispatcher = createOtaDispatcher({
+  db,
+  dayjs,
+  channelIntegrations,
+  overbookingGuard,
+  logger: console
+});
 
 const automationActionDrivers = {
   email: emailAction,
@@ -1640,56 +1648,13 @@ app.post('/api/ota/webhooks/:channelKey', async (req, res) => {
     return res.status(400).json({ error: 'Canal obrigatório' });
   }
 
-  const integration = channelIntegrations.getIntegration(channelKey);
-  if (!integration) {
-    return res.status(404).json({ error: 'Canal desconhecido' });
-  }
-
-  const expectedSecretSources = [];
-  if (integration.settings) {
-    if (integration.settings.webhookSecret) expectedSecretSources.push(integration.settings.webhookSecret);
-    if (integration.settings.webhookToken) expectedSecretSources.push(integration.settings.webhookToken);
-    if (integration.settings.secret) expectedSecretSources.push(integration.settings.secret);
-  }
-  if (integration.credentials) {
-    if (integration.credentials.webhookSecret) expectedSecretSources.push(integration.credentials.webhookSecret);
-    if (integration.credentials.webhookToken) expectedSecretSources.push(integration.credentials.webhookToken);
-    if (integration.credentials.secret) expectedSecretSources.push(integration.credentials.secret);
-  }
-  const expectedSecret = expectedSecretSources.find(value => typeof value === 'string' && value.trim());
-
-  const providedSecrets = [];
-  const headerNames = ['x-ota-secret', 'x-ota-signature', 'x-channel-signature', 'x-webhook-signature'];
-  for (const header of headerNames) {
-    const value = req.get(header);
-    if (typeof value === 'string' && value.trim()) {
-      providedSecrets.push(value.trim());
-    }
-  }
-  const queryNames = ['secret', 'signature', 'token'];
-  for (const key of queryNames) {
-    const value = req.query ? req.query[key] : undefined;
-    if (typeof value === 'string' && value.trim()) {
-      providedSecrets.push(value.trim());
-    }
-  }
-  if (req.body && typeof req.body.signature === 'string' && req.body.signature.trim()) {
-    providedSecrets.push(req.body.signature.trim());
-  }
-  const providedSecret = providedSecrets.find(Boolean);
-
-  if (expectedSecret && (!providedSecret || !timingSafeCompare(String(expectedSecret), String(providedSecret)))) {
-    return res.status(401).json({ error: 'Assinatura inválida' });
-  }
-
   try {
     const eventType = req.body && typeof req.body.event === 'string' ? req.body.event : null;
-    const sourceLabel = eventType ? `webhook:${eventType}` : 'webhook';
-    const result = await channelIntegrations.importFromWebhook({
+    const result = await otaDispatcher.ingest({
       channelKey,
       payload: req.body,
-      uploadedBy: null,
-      sourceLabel
+      headers: req.headers || {},
+      rawBody: JSON.stringify(req.body || {})
     });
     const summary = result && result.summary ? result.summary : {};
     const responseSummary = {
@@ -1709,7 +1674,8 @@ app.post('/api/ota/webhooks/:channelKey', async (req, res) => {
     res.status(200).json({ status: 'ok', ...responseSummary });
   } catch (err) {
     console.warn('Webhook OTA falhou:', err.message);
-    res.status(400).json({ error: err.message });
+    const status = err && (err.statusCode || err.status) ? err.statusCode || err.status : 400;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -3237,6 +3203,7 @@ const context = {
   resolveBrandingForRequest,
   channelIntegrations,
   channelSync,
+  otaDispatcher,
   telemetry,
   wantsJson,
   formatAuditValue,

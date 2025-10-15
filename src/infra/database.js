@@ -330,6 +330,19 @@ CREATE TABLE IF NOT EXISTS channel_integrations (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS channel_sync_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  payload TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_sync_status ON channel_sync_queue(status);
+
 CREATE TABLE IF NOT EXISTS housekeeping_tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,

@@ -27,6 +27,28 @@ const CHANNEL_DEFINITIONS = [
       'Sincroniza automaticamente calendários iCal ou processa exportações manuais de reservas provenientes do Airbnb.'
   },
   {
+    key: 'booking',
+    name: 'Booking.com (tempo real)',
+    defaultAgency: 'BOOKING',
+    supportsAuto: true,
+    supportsManual: false,
+    autoFormats: [],
+    manualFormats: [],
+    description:
+      'Canal em tempo real que utiliza a API do Booking.com para atualizar tarifas, disponibilidades e receber reservas instantaneamente.'
+  },
+  {
+    key: 'expedia',
+    name: 'Expedia',
+    defaultAgency: 'EXPEDIA',
+    supportsAuto: true,
+    supportsManual: false,
+    autoFormats: [],
+    manualFormats: [],
+    description:
+      'Integração direta com a Expedia Partner Central para sincronização de inventário e receção de reservas em tempo real.'
+  },
+  {
     key: 'i_escape',
     name: 'i-escape',
     defaultAgency: 'I-ESCAPE',

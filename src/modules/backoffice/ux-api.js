@@ -21,7 +21,8 @@ module.exports = function registerUxApi(app, context) {
     dayjs,
     db,
     logActivity,
-    telemetry
+    telemetry,
+    otaDispatcher
   } = context;
 
   const rateService = createRateManagementService({ db, dayjs });
@@ -63,6 +64,19 @@ module.exports = function registerUxApi(app, context) {
       };
       if (req.user && req.user.id) {
         logActivity(req.user.id, 'rates_bulk_updated', 'unit', null, meta);
+      }
+      if (otaDispatcher && typeof otaDispatcher.pushUpdate === 'function') {
+        payload.unitIds.forEach(unitId => {
+          otaDispatcher.pushUpdate({
+            unitId,
+            type: 'rate.change',
+            payload: {
+              startDate: payload.startDate,
+              endDateExclusive: payload.endDateExclusive,
+              priceCents: payload.priceCents
+            }
+          });
+        });
       }
       emitTelemetry('rates_bulk_updated', { req, startedAt, success: true, meta });
       return res.json({
@@ -120,6 +134,17 @@ module.exports = function registerUxApi(app, context) {
       };
       if (req.user && req.user.id) {
         logActivity(req.user.id, 'unit_block_created', 'unit', unitId, meta);
+      }
+      if (otaDispatcher && typeof otaDispatcher.pushUpdate === 'function') {
+        otaDispatcher.pushUpdate({
+          unitId,
+          type: 'block.create',
+          payload: {
+            startDate: payload.startDate,
+            endDateExclusive: payload.endDateExclusive,
+            reason: payload.reason
+          }
+        });
       }
       emitTelemetry('unit_block_created', { req, startedAt, success: true, meta });
       return res.status(201).json({

@@ -132,6 +132,7 @@ module.exports = function registerBackoffice(app, context) {
     bookingEmailer,
     overbookingGuard,
     channelIntegrations,
+    otaDispatcher,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
     ALL_PERMISSIONS,
@@ -4260,6 +4261,60 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
         res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
       } catch (err) {
         console.warn('Falha ao sincronizar canal:', err.message);
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-integrations/:key/test-connection',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    async (req, res) => {
+      const channelKey = String(req.params.key || '').trim();
+      try {
+        if (!otaDispatcher || typeof otaDispatcher.testConnection !== 'function') {
+          throw new Error('Dispatcher indisponível');
+        }
+        const result = await otaDispatcher.testConnection(channelKey);
+        if (wantsJson(req)) {
+          return res.json({ ok: true, result });
+        }
+        const payload = `test:${channelKey}:${result.ok ? 'ok' : 'fail'}`;
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(payload)}#channel-manager`);
+      } catch (err) {
+        console.warn('Teste de ligação OTA falhou:', err.message);
+        if (wantsJson(req)) {
+          return res.status(400).json({ ok: false, error: err.message });
+        }
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
+      }
+    }
+  );
+
+  app.post(
+    '/admin/channel-sync/flush',
+    requireLogin,
+    requirePermission('bookings.edit'),
+    async (req, res) => {
+      try {
+        if (!otaDispatcher || typeof otaDispatcher.flushQueue !== 'function') {
+          throw new Error('Dispatcher indisponível');
+        }
+        if (typeof otaDispatcher.flushPendingDebounce === 'function') {
+          otaDispatcher.flushPendingDebounce();
+        }
+        const limit = Number(req.body && req.body.limit);
+        const result = await otaDispatcher.flushQueue({ limit: Number.isFinite(limit) && limit > 0 ? limit : undefined });
+        if (wantsJson(req)) {
+          return res.json({ ok: true, result });
+        }
+        res.redirect(`/admin?channel_notice=${encodeURIComponent(`flush:${(result.processed || []).length}`)}#channel-manager`);
+      } catch (err) {
+        console.warn('Flush OTA falhou:', err.message);
+        if (wantsJson(req)) {
+          return res.status(400).json({ ok: false, error: err.message });
+        }
         res.redirect(`/admin?channel_notice=${encodeURIComponent(`error:${err.message}`)}#channel-manager`);
       }
     }
