@@ -17,9 +17,8 @@ module.exports = function registerAccountModule(app, context) {
     isFeatureEnabled
   } = context;
 
-  if (!twoFactorService) {
-    return;
-  }
+  const hasTwoFactorService = !!twoFactorService;
+  const activeTwoFactorService = twoFactorService || createDisabledTwoFactorService();
 
   function isFlagEnabled(flagName) {
     if (typeof isFeatureEnabled === 'function') {
@@ -40,8 +39,10 @@ module.exports = function registerAccountModule(app, context) {
   function loadSecurityData(userId, options = {}) {
     const issuer = 'Gestor de Alojamentos';
     const label = `${options.username || ''}`.trim() || undefined;
-    const setup = twoFactorService.getEnrollment(userId, { issuer, label });
-    const config = twoFactorService.getConfig(userId);
+    const setup = hasTwoFactorService
+      ? activeTwoFactorService.getEnrollment(userId, { issuer, label })
+      : null;
+    const config = hasTwoFactorService ? activeTwoFactorService.getConfig(userId) : null;
     const sessionLogs = db
       .prepare(
         `SELECT id, action, ip, user_agent, metadata_json, created_at
@@ -79,7 +80,7 @@ module.exports = function registerAccountModule(app, context) {
     const successMessage = options.successMessage || null;
     const errorMessage = options.errorMessage || null;
     const pendingCodes = setup ? setup.recoveryCodes : null;
-    const maskedCodes = config ? twoFactorService.maskRecoveryCodes(config.recovery_codes) : [];
+    const maskedCodes = config ? activeTwoFactorService.maskRecoveryCodes(config.recovery_codes) : [];
     const lastVerifiedLabel = config && config.last_verified_at ? dayjs(config.last_verified_at).format('DD/MM/YYYY HH:mm') : null;
     const enabledAtLabel = config && config.enabled_at ? dayjs(config.enabled_at).format('DD/MM/YYYY HH:mm') : null;
 
@@ -100,6 +101,10 @@ module.exports = function registerAccountModule(app, context) {
           <p class="text-slate-600">Proteja a sua conta com autenticação a dois fatores e consulte o histórico de acessos.</p>
         </header>
 
+        ${!hasTwoFactorService
+          ? '<div class="bo-alert bo-alert--error">A autenticação em dois fatores não está configurada neste ambiente. Contacte o administrador para ativar.</div>'
+          : ''}
+
         ${successMessage ? `<div class="bo-alert bo-alert--success">${esc(successMessage)}</div>` : ''}
         ${errorMessage ? `<div class="bo-alert bo-alert--error">${esc(errorMessage)}</div>` : ''}
 
@@ -114,7 +119,7 @@ module.exports = function registerAccountModule(app, context) {
             </span>
           </div>
 
-          ${setup
+          ${setup && hasTwoFactorService
             ? html`
                 <article class="rounded-lg border border-amber-200 bg-amber-50 p-4 grid gap-3">
                   <h3 class="font-semibold text-amber-800">Configuração pendente</h3>
@@ -154,7 +159,7 @@ module.exports = function registerAccountModule(app, context) {
                   </form>
                 </article>
               `
-            : config
+            : config && hasTwoFactorService
             ? html`
                 <article class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 grid gap-3">
                   <div>
@@ -186,13 +191,15 @@ module.exports = function registerAccountModule(app, context) {
                   </form>
                 </article>
               `
-            : html`
+            : hasTwoFactorService
+            ? html`
                 <form method="post" action="/account/seguranca/2fa/iniciar" class="rounded-lg border border-slate-200 bg-white p-4 grid gap-2">
                   <input type="hidden" name="_csrf" value="${csrfToken}" />
                   <p class="text-sm text-slate-600">Ative a verificação em dois passos para impedir acessos não autorizados mesmo com a password.</p>
                   <button class="btn btn-primary w-full md:w-auto">Ativar 2FA</button>
                 </form>
-              `}
+              `
+            : '<p class="text-sm text-slate-600">A autenticação em dois fatores ficará disponível assim que for configurada pelo administrador.</p>'}
 
           ${freshRecoveryCodes && freshRecoveryCodes.length
             ? html`<article class="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
@@ -272,16 +279,19 @@ module.exports = function registerAccountModule(app, context) {
   });
 
   app.post('/account/seguranca/2fa/iniciar', requireLogin, (req, res) => {
+    if (!hasTwoFactorService) {
+      return res.status(503).send('Autenticação a dois fatores indisponível.');
+    }
     if (!csrfProtection.validateRequest(req)) {
       csrfProtection.rotateToken(req, res);
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
     }
     const viewer = req.user;
-    if (twoFactorService.getConfig(viewer.id)) {
+    if (activeTwoFactorService.getConfig(viewer.id)) {
       csrfProtection.rotateToken(req, res);
       return renderSecurityPage(req, res, { errorMessage: 'A autenticação já se encontra ativa.' });
     }
-    twoFactorService.startEnrollment(viewer.id, {
+    activeTwoFactorService.startEnrollment(viewer.id, {
       issuer: 'Gestor de Alojamentos',
       label: `${viewer.username}@Gestor`
     });
@@ -293,18 +303,24 @@ module.exports = function registerAccountModule(app, context) {
   });
 
   app.post('/account/seguranca/2fa/cancelar', requireLogin, (req, res) => {
+    if (!hasTwoFactorService) {
+      return res.status(503).send('Autenticação a dois fatores indisponível.');
+    }
     if (!csrfProtection.validateRequest(req)) {
       csrfProtection.rotateToken(req, res);
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
     }
     const viewer = req.user;
-    twoFactorService.cancelEnrollment(viewer.id);
+    activeTwoFactorService.cancelEnrollment(viewer.id);
     logActivity(viewer.id, 'user:2fa_setup_cancel', 'user', viewer.id, {});
     csrfProtection.rotateToken(req, res);
     renderSecurityPage(req, res, { successMessage: 'Configuração cancelada.' });
   });
 
   app.post('/account/seguranca/2fa/confirmar', requireLogin, (req, res) => {
+    if (!hasTwoFactorService) {
+      return res.status(503).send('Autenticação a dois fatores indisponível.');
+    }
     if (!csrfProtection.validateRequest(req)) {
       csrfProtection.rotateToken(req, res);
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
@@ -315,7 +331,7 @@ module.exports = function registerAccountModule(app, context) {
       csrfProtection.rotateToken(req, res);
       return renderSecurityPage(req, res, { errorMessage: 'Indique o código temporário para confirmar.' });
     }
-    const result = twoFactorService.confirmEnrollment(viewer.id, token, {
+    const result = activeTwoFactorService.confirmEnrollment(viewer.id, token, {
       issuer: 'Gestor de Alojamentos',
       label: `${viewer.username}@Gestor`
     });
@@ -333,12 +349,15 @@ module.exports = function registerAccountModule(app, context) {
   });
 
   app.post('/account/seguranca/2fa/desativar', requireLogin, (req, res) => {
+    if (!hasTwoFactorService) {
+      return res.status(503).send('Autenticação a dois fatores indisponível.');
+    }
     if (!csrfProtection.validateRequest(req)) {
       csrfProtection.rotateToken(req, res);
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
     }
     const viewer = req.user;
-    twoFactorService.disable(viewer.id);
+    activeTwoFactorService.disable(viewer.id);
     logActivity(viewer.id, 'user:2fa_disabled', 'user', viewer.id, {});
     logSessionEvent(viewer.id, 'account_2fa_disabled', req, {});
     csrfProtection.rotateToken(req, res);
@@ -346,12 +365,15 @@ module.exports = function registerAccountModule(app, context) {
   });
 
   app.post('/account/seguranca/2fa/regenerar', requireLogin, (req, res) => {
+    if (!hasTwoFactorService) {
+      return res.status(503).send('Autenticação a dois fatores indisponível.');
+    }
     if (!csrfProtection.validateRequest(req)) {
       csrfProtection.rotateToken(req, res);
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
     }
     const viewer = req.user;
-    const result = twoFactorService.regenerateRecoveryCodes(viewer.id);
+    const result = activeTwoFactorService.regenerateRecoveryCodes(viewer.id);
     csrfProtection.rotateToken(req, res);
     if (!result.ok) {
       return renderSecurityPage(req, res, { errorMessage: 'Não foi possível regenerar os códigos. Confirme se o 2FA está ativo.' });
@@ -386,4 +408,32 @@ module.exports = function registerAccountModule(app, context) {
     res.setHeader('Content-Disposition', 'attachment; filename="logs_acesso.csv"');
     res.send([header.join(','), ...csvLines].join('\n'));
   });
+  function createDisabledTwoFactorService() {
+    return {
+      getEnrollment() {
+        return null;
+      },
+      getConfig() {
+        return null;
+      },
+      maskRecoveryCodes() {
+        return [];
+      },
+      startEnrollment() {
+        return { ok: false, reason: 'disabled' };
+      },
+      cancelEnrollment() {
+        return { ok: false, reason: 'disabled' };
+      },
+      confirmEnrollment() {
+        return { ok: false, reason: 'disabled' };
+      },
+      disable() {
+        return { ok: false, reason: 'disabled' };
+      },
+      regenerateRecoveryCodes() {
+        return { ok: false, reason: 'disabled' };
+      }
+    };
+  }
 };
