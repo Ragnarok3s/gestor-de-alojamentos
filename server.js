@@ -25,9 +25,11 @@ const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
+const registerAccountModule = require('./src/modules/account');
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
+const { createTwoFactorService } = require('./src/services/twoFactorService');
 const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
@@ -75,6 +77,7 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const twoFactorService = createTwoFactorService({ db, dayjs });
 const rateRuleService = createRateRuleService({ db, dayjs });
 const skipStartupTasks = process.env.SKIP_SERVER_START === '1';
 
@@ -3406,6 +3409,7 @@ const context = {
   mailer,
   bookingEmailer,
   rateRuleService,
+  twoFactorService,
   overbookingGuard,
   secureCookies,
   csrfProtection,
@@ -3449,6 +3453,7 @@ const context = {
 };
 
 registerAuthRoutes(app, context);
+registerAccountModule(app, context);
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerInternalTelemetry(app, context);
