@@ -15,6 +15,8 @@ const { ConflictError } = require('../src/services/errors');
 const { createOverbookingGuard } = require('../src/services/overbooking-guard');
 const { createChannelIntegrationService } = require('../src/services/channel-integrations');
 const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
+const { createI18nService } = require('../src/services/i18n');
+const { createMessageTemplateService } = require('../src/services/templates');
 
 const simpleSlugify = (value) =>
   String(value || '')
@@ -541,6 +543,117 @@ async function testOtaDispatcherQueue() {
   });
 }
 
+function testI18nService() {
+  const i18n = createI18nService();
+  assert.equal(i18n.normalizeLanguage('PT-pt'), 'pt', 'normalização deve reconhecer variantes de português');
+  assert.equal(i18n.normalizeLanguage('english'), 'en', 'normalização deve reconhecer inglês');
+  assert.equal(i18n.normalizeLanguage(''), null, 'valor vazio não deve ser aceite');
+
+  const detectedPt = i18n.detectLanguage('Olá, obrigado pela reserva!');
+  assert.ok(detectedPt && detectedPt.language === 'pt', 'deve detetar português em mensagens com contexto');
+  const detectedEn = i18n.detectLanguage('Hello, thank you for your help.');
+  assert.ok(detectedEn && detectedEn.language === 'en', 'deve detetar inglês em mensagens com contexto');
+  const neutral = i18n.detectLanguage('🙂🙂🙂');
+  assert.equal(neutral, null, 'mensagem neutra não deve indicar idioma');
+}
+
+function testMessageTemplateService() {
+  const db = createDatabase(':memory:');
+  const userId = db
+    .prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)')
+    .run('editor', 'hash', 'gestao').lastInsertRowid;
+
+  const i18n = createI18nService();
+  const service = createMessageTemplateService({ db, dayjs, i18n });
+
+  const templates = service.listTemplates();
+  assert.ok(Array.isArray(templates) && templates.length >= 1, 'deve listar templates de mensagens');
+
+  const previewEn = service.renderTemplate('booking_confirmation', {
+    sampleText: 'Hello, can we check in earlier?',
+    variables: {
+      guest_first_name: 'Alice',
+      property_name: 'Casa Azul',
+      unit_name: 'Suite Rio',
+      checkin: '10/08/2025',
+      checkout: '12/08/2025',
+      nights: 2,
+      door_code: '1357',
+      support_phone: '+44 20 0000 0000',
+      brand_name: 'Blue Stay'
+    }
+  });
+  assert.equal(previewEn.language, 'en', 'idioma deve ser inglês quando a mensagem é inglesa');
+  assert.ok(previewEn.body.includes('Hi Alice'), 'mensagem inglesa deve conter o primeiro nome');
+
+  const previewPt = service.renderTemplate('booking_confirmation', {
+    sampleText: 'Olá, podemos chegar às 14h?',
+    variables: {
+      guest_first_name: 'Beatriz',
+      property_name: 'Casa Azul',
+      unit_name: 'Suite Rio',
+      checkin: '10/08/2025',
+      checkout: '12/08/2025',
+      nights: 2,
+      door_code: '1357',
+      support_phone: '+351 910 000 000',
+      brand_name: 'Blue Stay'
+    }
+  });
+  assert.equal(previewPt.language, 'pt', 'idioma deve ser português quando a mensagem é portuguesa');
+  assert.ok(previewPt.body.includes('Olá Beatriz'), 'mensagem portuguesa deve conter o primeiro nome');
+
+  const fallbackPreview = service.renderTemplate('pre_checkin_reminder', {
+    sampleText: '🙂🙂',
+    variables: {
+      guest_first_name: 'Alex',
+      checkin_time: '16:00',
+      checkin: '20/08/2025',
+      support_phone: '+351 910 000 000',
+      unit_name: 'Suite Vista Rio',
+      welcome_link: 'https://example.com/info',
+      brand_name: 'Casas de Pousadouro'
+    }
+  });
+  assert.equal(fallbackPreview.language, 'en', 'quando não há idioma detetado deve usar fallback inglês');
+
+  const sanitized = service.renderTemplate('booking_confirmation', {
+    sampleText: 'Hello!',
+    variables: {
+      guest_first_name: '<script>alert(1)</script>Ana',
+      property_name: 'Casa <Test>',
+      unit_name: 'Suite',
+      checkin: '01/09/2025',
+      checkout: '05/09/2025',
+      nights: 4,
+      door_code: '<b>1234</b>',
+      support_phone: '+351 900 000 000',
+      brand_name: 'Test Brand'
+    }
+  });
+  assert.equal(sanitized.language, 'en');
+  assert.ok(!sanitized.body.includes('<script'), 'placeholders devem ser sanitizados');
+  assert.ok(!sanitized.body.includes('<b>'), 'tags HTML devem ser removidas');
+  assert.ok(sanitized.body.includes('Ana'), 'texto útil deve permanecer após sanitização');
+
+  const updated = service.updateTemplate('pre_checkin_reminder', 'pt', { body: 'Olá {{guest_first_name}}!' }, userId);
+  assert.equal(updated.body, 'Olá {{guest_first_name}}!');
+  const persisted = db
+    .prepare('SELECT body, updated_by FROM message_templates WHERE template_key = ? AND language = ?')
+    .get('pre_checkin_reminder', 'pt');
+  assert.equal(persisted.body, 'Olá {{guest_first_name}}!');
+  assert.equal(persisted.updated_by, userId);
+
+  const overridePreview = service.renderTemplate('pre_checkin_reminder', {
+    language: 'pt',
+    bodyOverride: 'Teste {{guest_first_name}}',
+    variables: { guest_first_name: 'Marta' }
+  });
+  assert.equal(overridePreview.body, 'Teste Marta');
+  const stored = service.getTemplate('pre_checkin_reminder', 'pt');
+  assert.equal(stored.body, 'Olá {{guest_first_name}}!');
+}
+
 function testReviewService() {
   const db = createDatabase(':memory:');
   const { propertyId, unitId } = seedPropertyAndUnit(db);
@@ -588,6 +701,8 @@ async function main() {
   await testOverbookingGuardService();
   await testOtaWebhookIngestion();
   await testOtaDispatcherQueue();
+  testI18nService();
+  testMessageTemplateService();
   testReviewService();
   testReportingService();
   console.log('Todos os testes passaram.');

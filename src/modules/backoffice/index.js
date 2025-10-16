@@ -129,6 +129,7 @@ module.exports = function registerBackoffice(app, context) {
     deletePermissionOverridesForUserStmt,
     insertPermissionOverrideStmt,
     emailTemplates,
+    messageTemplates,
     bookingEmailer,
     overbookingGuard,
     channelIntegrations,
@@ -2587,6 +2588,105 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<p class="bo-empty">Sem modelos de email configurados.</p>';
 
+    const messageTemplateRecords = messageTemplates.listTemplates();
+    const messageTemplateCards = messageTemplateRecords.length
+      ? messageTemplateRecords
+          .map(t => {
+            const placeholderList = t.placeholders && t.placeholders.length
+              ? `
+                <div class="text-xs text-slate-500 space-y-1">
+                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
+                  <ul class="flex flex-wrap gap-2">
+                    ${t.placeholders
+                      .map(
+                        p => `
+                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
+                            <code>${esc(`{{${p.key}}}`)}</code>
+                            <span>${esc(p.label)}</span>
+                          </li>`
+                      )
+                      .join('')}
+                  </ul>
+                </div>
+              `
+              : '';
+
+            const languagesHtml = t.languages && t.languages.length
+              ? t.languages
+                  .map(lang => {
+                    const updatedLabel = lang.updated_at ? dayjs(lang.updated_at).format('DD/MM/YYYY HH:mm') : '';
+                    const updatedMeta = lang.updated_at
+                      ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${lang.updated_by ? ` por ${esc(lang.updated_by)}` : ''}</p>`
+                      : '<p class="text-xs text-slate-400 mt-1">A usar texto padrão</p>';
+                    const statusTag = lang.is_default
+                      ? '<span class="text-xs font-semibold text-amber-600">Padrão</span>'
+                      : '<span class="text-xs font-semibold text-emerald-600">Personalizado</span>';
+                    const sampleVariables = lang.sampleVariables && Object.keys(lang.sampleVariables).length
+                      ? lang.sampleVariables
+                      : t.sampleVariables || {};
+                    const sampleJson = JSON.stringify(sampleVariables, null, 2);
+                    const guestPlaceholder = lang.language === 'pt'
+                      ? 'Ex.: Olá, podemos chegar mais cedo?'
+                      : 'Ex.: Hello, can we arrive earlier?';
+                    return `
+                      <form method="post" action="/admin/messages/templates/${t.key}/${lang.language}" class="grid gap-3 rounded-xl border border-amber-200 bg-white/80 p-4" data-message-template data-template-key="${esc(t.key)}" data-template-language="${esc(lang.language)}" data-template-language-label="${esc(lang.label)}">
+                        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 class="font-semibold text-slate-800">${esc(lang.label)}</h4>
+                            ${updatedMeta}
+                          </div>
+                          ${statusTag}
+                        </div>
+                        <label class="form-field">
+                          <span class="form-label">Mensagem</span>
+                          <textarea name="body" class="input" rows="6" required>${esc(lang.body)}</textarea>
+                        </label>
+                        <label class="form-field">
+                          <span class="form-label">Mensagem recente do hóspede (opcional)</span>
+                          <textarea class="input" rows="2" data-template-sample placeholder="${esc(guestPlaceholder)}"></textarea>
+                        </label>
+                        <div class="grid gap-3 md:grid-cols-2">
+                          <label class="form-field">
+                            <span class="form-label">Idioma preferido (opcional)</span>
+                            <input class="input" data-template-guest-language placeholder="Ex.: pt, en" />
+                          </label>
+                          <label class="form-field">
+                            <span class="form-label">Modo de pré-visualização</span>
+                            <select class="input" data-template-mode>
+                              <option value="auto" selected>Detetar automaticamente</option>
+                              <option value="language">Forçar ${esc(lang.label)}</option>
+                            </select>
+                          </label>
+                        </div>
+                        <label class="form-field">
+                          <span class="form-label">Dados de exemplo (JSON)</span>
+                          <textarea class="input font-mono text-xs" rows="4" data-template-vars>${esc(sampleJson)}</textarea>
+                          <p class="text-xs text-slate-500">Edite os dados para testar substituições diferentes.</p>
+                        </label>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <button class="btn btn-primary">Guardar ${esc(lang.label)}</button>
+                          <button type="button" class="btn btn-light" data-template-test>Testar modelo</button>
+                          <span class="text-xs text-slate-500" data-template-status hidden></span>
+                        </div>
+                        <pre class="text-xs text-slate-700 bg-slate-100/80 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap" data-template-preview hidden></pre>
+                      </form>`;
+                  })
+                  .join('')
+              : '<p class="text-sm text-slate-500">Sem idiomas configurados.</p>';
+
+            return `
+              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-4">
+                <header class="space-y-1">
+                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
+                  ${t.description ? `<p class="text-sm text-slate-500">${esc(t.description)}</p>` : ''}
+                </header>
+                <div class="space-y-4" data-message-templates>${languagesHtml}</div>
+                ${placeholderList}
+              </article>`;
+          })
+          .join('')
+      : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
+
     const broomIconSvg = `
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M3 21h4l7-7"></path>
@@ -2605,6 +2705,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
       { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
+      { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates },
       ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
       { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
       { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
@@ -3952,6 +4053,18 @@ module.exports = function registerBackoffice(app, context) {
                   : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
               </section>
 
+              <section class="bo-pane" data-bo-pane="messages">
+                ${canManageEmailTemplates
+                  ? html`
+                      <div class="bo-card" data-message-templates-root>
+                        <h2>Mensagens automáticas</h2>
+                        <p class="bo-subtitle">Personalize respostas rápidas para WhatsApp, SMS ou chat com os hóspedes.</p>
+                        <div class="space-y-6">${messageTemplateCards}</div>
+                      </div>
+                    `
+                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
+              </section>
+
               ${canViewHistory
                 ? html`
                     <section class="bo-pane" data-bo-pane="history">
@@ -4354,19 +4467,36 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
   );
 
   app.post('/admin/emails/templates/:key', requireLogin, requirePermission('bookings.edit'), (req, res) => {
-  const key = String(req.params.key || '').trim();
-  try {
-    const updated = emailTemplates.updateTemplate(key, { subject: req.body.subject, body: req.body.body }, req.user.id);
-    logActivity(req.user.id, 'email_template.update', 'email_template', updated && updated.id ? updated.id : null, {
-      key,
-      subject: updated ? updated.subject : req.body.subject
-    });
-    res.redirect('/admin#emails');
-  } catch (err) {
-    console.warn('Falha ao atualizar modelo de email:', err.message);
-    res.status(400).send(err.message);
-  }
-});
+    const key = String(req.params.key || '').trim();
+    try {
+      const updated = emailTemplates.updateTemplate(key, { subject: req.body.subject, body: req.body.body }, req.user.id);
+      logActivity(req.user.id, 'email_template.update', 'email_template', updated && updated.id ? updated.id : null, {
+        key,
+        subject: updated ? updated.subject : req.body.subject
+      });
+      res.redirect('/admin#emails');
+    } catch (err) {
+      console.warn('Falha ao atualizar modelo de email:', err.message);
+      res.status(400).send(err.message);
+    }
+  });
+
+  app.post('/admin/messages/templates/:key/:language', requireLogin, requirePermission('bookings.edit'), (req, res) => {
+    const key = String(req.params.key || '').trim();
+    const language = String(req.params.language || '').trim();
+    try {
+      const updated = messageTemplates.updateTemplate(key, language, { body: req.body.body }, req.user.id);
+      logActivity(req.user.id, 'message_template.update', 'message_template', null, {
+        key,
+        language,
+        preview: updated ? updated.body.slice(0, 80) : null
+      });
+      res.redirect('/admin#messages');
+    } catch (err) {
+      console.warn('Falha ao atualizar modelo de mensagem:', err.message);
+      res.status(400).send(err.message);
+    }
+  });
 
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
   const { name, locality, district, address, description } = req.body;
