@@ -3812,12 +3812,15 @@ module.exports = function registerBackoffice(app, context) {
                       <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
                       <p class="text-sm text-slate-600">Aplica tarifas por intervalo com filtros por unidade, tipologia e fins-de-semana.</p>
                     </div>
-                    <div
-                      class="text-xs text-slate-500"
-                      data-rate-feedback
-                      role="status"
-                      aria-live="polite"
-                    >Seleciona datas e unidades para pré-visualizar o impacto.</div>
+                    <div class="flex flex-col items-start gap-2 md:items-end md:text-right">
+                      <a class="btn btn-light" href="/admin/rates/rules">Abrir regras automáticas de tarifas</a>
+                      <div
+                        class="text-xs text-slate-500"
+                        data-rate-feedback
+                        role="status"
+                        aria-live="polite"
+                      >Seleciona datas e unidades para pré-visualizar o impacto.</div>
+                    </div>
                   </div>
                   <form class="grid gap-3 md:grid-cols-5" data-rates-form novalidate>
                     <label class="form-field" data-field>
