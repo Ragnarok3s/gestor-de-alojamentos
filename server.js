@@ -24,6 +24,7 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
@@ -2323,8 +2324,13 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         </div>`
     : '';
 
+  const navSecurityHtml =
+    hasUser && isFeatureEnabled('FEATURE_NAV_SECURITY_LINK')
+      ? `<a class="nav-secure-link" href="/account/seguranca">Segurança</a>`
+      : '';
+
   const navActionsHtml = hasUser
-    ? `${notificationsMarkup}<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
+    ? `${notificationsMarkup}${navSecurityHtml}<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
         <form method="post" action="/logout" class="logout-form">
           <button type="submit">Log-out</button>
         </form>`
@@ -2480,6 +2486,8 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .logout-form{margin:0;}
         .logout-form button,.login-link{background:none;border:none;color:var(--nav-button,#7a7b88);font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
         .logout-form button:hover,.login-link:hover{color:var(--nav-button-hover,#2f3140);}
+        .nav-secure-link{color:var(--nav-link,#7a7b88);text-decoration:none;font-size:.85rem;}
+        .nav-secure-link:hover{color:var(--nav-link-hover,#424556);text-decoration:underline;}
         .nav-accent-bar{height:3px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));opacity:.55;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
         .footer{background:var(--brand-surface);border-top:1px solid var(--brand-surface-border);color:#8c8d97;font-size:.875rem;}
@@ -3278,6 +3286,8 @@ const context = {
   channelSync,
   otaDispatcher,
   telemetry,
+  featureFlags,
+  isFeatureEnabled,
   wantsJson,
   formatAuditValue,
   renderAuditDiff,

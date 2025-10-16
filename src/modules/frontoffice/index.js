@@ -1,4 +1,5 @@
 const { ConflictError } = require('../../services/errors');
+const { setNoIndex } = require('../../middlewares/security');
 
 module.exports = function registerFrontoffice(app, context) {
   const {
@@ -33,8 +34,26 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBlockUpdateStmt,
     bookingEmailer,
     overbookingGuard,
-    otaDispatcher
+    otaDispatcher,
+    featureFlags,
+    isFeatureEnabled
   } = context;
+
+  function isFlagEnabled(flagName) {
+    if (typeof isFeatureEnabled === 'function') {
+      return isFeatureEnabled(flagName);
+    }
+    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      return !!featureFlags[flagName];
+    }
+    return false;
+  }
+
+  function ensureNoIndexHeader(res) {
+    if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
+      setNoIndex(res);
+    }
+  }
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
 
@@ -966,6 +985,8 @@ app.get('/booking/:id', (req, res) => {
      WHERE b.id = ?`
   ).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
+
+  ensureNoIndexHeader(res);
 
   const viewerCanSeeBooking = viewer && userCan(viewer, 'bookings.view');
   if (requestedToken) {
@@ -2136,6 +2157,7 @@ function unitCalendarCard(u, month) {
 
 // ===================== Export Excel (privado) =====================
 app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (req,res)=>{
+  ensureNoIndexHeader(res);
   const ymDefault = dayjs().format('YYYY-MM');
   res.send(layout({
     title: 'Exportar Mapa (Excel)',
@@ -2163,6 +2185,7 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
 
 // Excel estilo Gantt + tabela de detalhes
 app.get('/admin/export/download', requireLogin, requirePermission('bookings.export'), async (req, res) => {
+  ensureNoIndexHeader(res);
   const ym = String(req.query.ym || '').trim();
   const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
   if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');

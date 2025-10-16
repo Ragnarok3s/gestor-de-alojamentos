@@ -1,5 +1,6 @@
 const registerUxApi = require('./ux-api');
 const { ConflictError } = require('../../services/errors');
+const { setNoIndex } = require('../../middlewares/security');
 
 const FEATURE_PRESETS = [
   {
@@ -170,7 +171,9 @@ module.exports = function registerBackoffice(app, context) {
     insertBlockStmt,
     adminBookingUpdateStmt,
     rescheduleBookingUpdateStmt,
-    rescheduleBlockUpdateStmt
+    rescheduleBlockUpdateStmt,
+    featureFlags,
+    isFeatureEnabled
   } = context;
 
   const selectUnitPropertyIdStmt = db.prepare('SELECT property_id FROM units WHERE id = ?');
@@ -191,7 +194,55 @@ module.exports = function registerBackoffice(app, context) {
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
 
+  const breadcrumbsTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'breadcrumbs.ejs');
+  let breadcrumbsTemplate = '';
+  try {
+    breadcrumbsTemplate = fs.readFileSync(breadcrumbsTemplatePath, 'utf8');
+  } catch (err) {
+    breadcrumbsTemplate = '';
+  }
+
+  function isFlagEnabled(flagName) {
+    if (typeof isFeatureEnabled === 'function') {
+      return isFeatureEnabled(flagName);
+    }
+    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      return !!featureFlags[flagName];
+    }
+    return false;
+  }
+
+  function ensureNoIndex(res) {
+    if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
+      setNoIndex(res);
+    }
+  }
+
+  function renderBreadcrumbs(trail) {
+    if (!isFlagEnabled('FEATURE_BREADCRUMBS')) return '';
+    if (!Array.isArray(trail) || trail.length === 0) return '';
+    if (!breadcrumbsTemplate) return '';
+    const items = trail
+      .map((item, index) => {
+        if (!item || !item.label) return '';
+        const label = esc(item.label);
+        const isLast = index === trail.length - 1;
+        if (!isLast && item.href) {
+          return `<li class="bo-breadcrumbs__item"><a class="bo-breadcrumbs__link" href="${esc(item.href)}">${label}</a></li>`;
+        }
+        return `<li class="bo-breadcrumbs__item"><span class="bo-breadcrumbs__current" aria-current="page">${label}</span></li>`;
+      })
+      .filter(Boolean)
+      .join('');
+    if (!items) return '';
+    return breadcrumbsTemplate.replace('<!--BREADCRUMB_ITEMS-->', items);
+  }
+
   app.use('/admin', requireLogin, requireBackofficeAccess);
+  app.use('/admin', (req, res, next) => {
+    ensureNoIndex(res);
+    next();
+  });
 
   registerUxApi(app, context);
 
@@ -1620,6 +1671,10 @@ module.exports = function registerBackoffice(app, context) {
       : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
     const body = html`
       <div class="hk-dashboard space-y-8">
+        ${renderBreadcrumbs([
+          { label: 'Backoffice', href: '/admin' },
+          { label: 'Limpezas' }
+        ])}
         <header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
           <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
@@ -2347,6 +2402,101 @@ module.exports = function registerBackoffice(app, context) {
       automationCache,
       ensureAutomationFresh
     });
+
+    const canExportBookings = userCan(req.user, 'bookings.export');
+    const canManageRates = userCan(req.user, 'rates.manage');
+    const canAccessAudit = userCan(req.user, 'audit.view') || userCan(req.user, 'logs.view');
+
+    const quickLinks = [];
+    if (canManageHousekeeping) {
+      quickLinks.push({
+        title: 'Limpezas',
+        description: 'Planeia e acompanha tarefas de housekeeping avançadas.',
+        href: '/admin/limpeza',
+        cta: 'Abrir limpezas'
+      });
+    }
+    if (canExportBookings) {
+      quickLinks.push({
+        title: 'Exportar calendário',
+        description: 'Gera ficheiros Excel com reservas confirmadas.',
+        href: '/admin/export',
+        cta: 'Exportar reservas'
+      });
+    }
+    if (canManageRates) {
+      quickLinks.push({
+        title: 'Regras de tarifas',
+        description: 'Configura regras automáticas e ajustes dinâmicos de preço.',
+        href: '/admin/rates/rules',
+        cta: 'Gerir tarifas'
+      });
+    }
+    if (canManageProperties) {
+      const managedProperty =
+        props.find(p => userHasScope(req.user, 'properties.manage', p.id)) || props[0] || null;
+      if (managedProperty) {
+        quickLinks.push({
+          title: 'Propriedades',
+          description: `Abrir ${managedProperty.name}`,
+          href: `/admin/properties/${managedProperty.id}`,
+          cta: 'Abrir propriedade'
+        });
+      } else {
+        quickLinks.push({
+          title: 'Propriedades',
+          description: 'Sem propriedades atribuídas. Adicione uma para começar.',
+          href: null,
+          locked: true
+        });
+      }
+    }
+    if (canManageUsers) {
+      quickLinks.push({
+        title: 'Utilizadores',
+        description: 'Gerir contas internas, perfis e permissões.',
+        href: '/admin/utilizadores',
+        cta: 'Gerir utilizadores'
+      });
+    }
+    if (isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit) {
+      quickLinks.push({
+        title: 'Auditoria',
+        description: 'Consulta logs de alterações, sessões e acessos sensíveis.',
+        href: '/admin/auditoria',
+        cta: 'Abrir auditoria'
+      });
+    }
+
+    const quickAccessHtml = quickLinks.length
+      ? html`<section class="bo-card space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
+            <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            ${quickLinks
+              .map(link => {
+                if (!link.href) {
+                  const desc = link.description ? `<p class="text-sm text-slate-500">${esc(link.description)}</p>` : '';
+                  return `<article class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                    <h3 class="font-semibold text-slate-700">${esc(link.title)}</h3>
+                    ${desc}
+                    <p class="text-xs text-slate-400">Atualize permissões ou dados para ativar este atalho.</p>
+                  </article>`;
+                }
+                return `<article class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3">
+                  <div>
+                    <h3 class="font-semibold text-slate-800">${esc(link.title)}</h3>
+                    <p class="text-sm text-slate-600">${esc(link.description)}</p>
+                  </div>
+                  <a class="btn btn-light" href="${esc(link.href)}">${esc(link.cta || 'Abrir')}</a>
+                </article>`;
+              })
+              .join('')}
+          </div>
+        </section>`
+      : '';
 
     const channelRecords = channelIntegrations.listIntegrations();
     const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
@@ -3803,6 +3953,8 @@ module.exports = function registerBackoffice(app, context) {
                 <p>Todos os dados essenciais de gestão em formato compacto.</p>
               </header>
 
+              ${quickAccessHtml}
+
               <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
               <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
@@ -4785,6 +4937,11 @@ app.get(
         activeNav: 'backoffice',
         branding: theme,
         body: html`
+      ${renderBreadcrumbs([
+        { label: 'Backoffice', href: '/admin' },
+        { label: 'Propriedades', href: '/admin#overview' },
+        { label: p.name }
+      ])}
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <div class="flex flex-col gap-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -4835,7 +4992,7 @@ app.get(
           </form>
         </section>
 
-        <section class="card p-4">
+        <section id="property-units" class="card p-4">
           <h2 class="font-semibold mb-2">Unidades</h2>
           <ul class="space-y-2">${unitsListHtml}</ul>
         </section>
@@ -5039,6 +5196,13 @@ app.get(
     activeNav: 'backoffice',
     branding: theme,
     body: html`
+      ${renderBreadcrumbs([
+        { label: 'Backoffice', href: '/admin' },
+        { label: 'Propriedades', href: '/admin#overview' },
+        { label: u.property_name, href: `/admin/properties/${u.property_id}` },
+        { label: 'Unidades', href: `/admin/properties/${u.property_id}#property-units` },
+        { label: u.name }
+      ])}
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
       <div class="text-sm text-slate-500 mb-4 leading-relaxed">
@@ -5495,6 +5659,10 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
       user: req.user,
       activeNav: 'backoffice',
       body: html`
+        ${renderBreadcrumbs([
+          { label: 'Backoffice', href: '/admin' },
+          { label: 'Regras de tarifas' }
+        ])}
         <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
         <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
         <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>

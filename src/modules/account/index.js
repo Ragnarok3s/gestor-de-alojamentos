@@ -1,3 +1,5 @@
+const { setNoIndex } = require('../../middlewares/security');
+
 module.exports = function registerAccountModule(app, context) {
   const {
     layout,
@@ -10,11 +12,29 @@ module.exports = function registerAccountModule(app, context) {
     resolveBrandingForRequest,
     logActivity,
     logSessionEvent,
-    twoFactorService
+    twoFactorService,
+    featureFlags,
+    isFeatureEnabled
   } = context;
 
   if (!twoFactorService) {
     return;
+  }
+
+  function isFlagEnabled(flagName) {
+    if (typeof isFeatureEnabled === 'function') {
+      return isFeatureEnabled(flagName);
+    }
+    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      return !!featureFlags[flagName];
+    }
+    return false;
+  }
+
+  function ensureNoIndexHeader(res) {
+    if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
+      setNoIndex(res);
+    }
   }
 
   function loadSecurityData(userId, options = {}) {
@@ -50,6 +70,7 @@ module.exports = function registerAccountModule(app, context) {
   }
 
   function renderSecurityPage(req, res, options = {}) {
+    ensureNoIndexHeader(res);
     const viewer = req.user;
     const csrfToken = csrfProtection.ensureToken(req, res);
     const data = loadSecurityData(viewer.id, { username: viewer.username });

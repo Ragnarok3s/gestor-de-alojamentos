@@ -1,0 +1,42 @@
+<style data-breadcrumbs-styles>
+  .bo-breadcrumbs {
+    margin-bottom: 1.5rem;
+    font-size: 0.85rem;
+    color: #475569;
+  }
+  .bo-breadcrumbs__list {
+    display: flex;
+    flex-wrap: wrap;
+    list-style: none;
+    gap: 0.25rem;
+    padding: 0;
+    margin: 0;
+  }
+  .bo-breadcrumbs__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .bo-breadcrumbs__item:not(:last-child)::after {
+    content: '›';
+    color: #94a3b8;
+    font-size: 0.75rem;
+    margin-left: 0.25rem;
+  }
+  .bo-breadcrumbs__link {
+    color: #1e293b;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .bo-breadcrumbs__link:hover,
+  .bo-breadcrumbs__link:focus {
+    text-decoration: underline;
+  }
+  .bo-breadcrumbs__current {
+    color: #0f172a;
+    font-weight: 600;
+  }
+</style>
+<nav class="bo-breadcrumbs" aria-label="Breadcrumb">
+  <ol class="bo-breadcrumbs__list"><!--BREADCRUMB_ITEMS--></ol>
+</nav>
