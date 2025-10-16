@@ -180,7 +180,7 @@ module.exports = function registerBackoffice(app, context) {
   );
   const deleteUserRoleAssignmentStmt = db.prepare('DELETE FROM user_roles WHERE id = ?');
   const deleteUserRolesByUserAndRoleKeyStmt = db.prepare(
-    'DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE key = ?)' 
+    'DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE key = ?)'
   );
   const selectUserRoleAssignmentStmt = db.prepare(
     `SELECT ur.id, ur.user_id, ur.property_id, r.key AS role_key, r.name AS role_name
@@ -5618,7 +5618,7 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
             <ul class="space-y-4">${ruleItems}</ul>
           </section>
         </div>
-        ${ruleFormScript}
+        <script>${ruleFormScript}</script>
       `,
     })
   );
