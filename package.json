@@ -22,6 +22,7 @@
     "dayjs": "^1.11.18",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "express-rate-limit": "file:vendor/express-rate-limit",
     "multer": "^2.0.2",
     "sharp": "^0.33.4"
   }
