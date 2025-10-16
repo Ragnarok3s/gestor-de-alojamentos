@@ -1,4 +1,5 @@
 const dayjs = require('dayjs');
+const { applyRateRules, normalizeRuleRow } = require('./pricing/rules');
 
 function clamp(value, min, max) {
   let result = value;
@@ -123,7 +124,26 @@ function parseRules(ratePlan) {
   return {};
 }
 
-function suggestPrice({ unit, targetDate, history = {}, ratePlan = {}, marketRows = [] }) {
+function computeHistoryOccupancy(history = {}) {
+  if (!history) return null;
+  if (typeof history.currentOccupancy === 'number' && !Number.isNaN(history.currentOccupancy)) {
+    return history.currentOccupancy;
+  }
+  if (typeof history.occupancy === 'number' && !Number.isNaN(history.occupancy)) {
+    return history.occupancy;
+  }
+  if (history.occupancy && typeof history.occupancy === 'object') {
+    const values = Object.values(history.occupancy)
+      .map(value => Number(value))
+      .filter(value => Number.isFinite(value));
+    if (values.length) {
+      return values.reduce((sum, value) => sum + value, 0) / values.length;
+    }
+  }
+  return null;
+}
+
+function suggestPrice({ unit, targetDate, history = {}, ratePlan = {}, marketRows = [], rateRules = [] }) {
   if (!unit) {
     throw new Error('Unit is required');
   }
@@ -158,18 +178,71 @@ function suggestPrice({ unit, targetDate, history = {}, ratePlan = {}, marketRow
     leadDays,
   };
 
+  const normalizedRules = Array.isArray(rateRules)
+    ? rateRules
+        .map(rule =>
+          rule && rule.normalizedCurrency === 'eur' ? rule : normalizeRuleRow(rule, { currency: 'eur' })
+        )
+        .filter(rule => rule && rule.active)
+    : [];
+
+  if (normalizedRules.length) {
+    const occupancyForRules = computeHistoryOccupancy(history);
+    const unitOccupancy =
+      typeof history.unitOccupancy === 'number' && !Number.isNaN(history.unitOccupancy)
+        ? history.unitOccupancy
+        : null;
+    const ruleOutcome = applyRateRules({
+      rules: normalizedRules,
+      context: {
+        date: day,
+        weekday: Number(weekdayKey),
+        leadDays,
+        occupancy: occupancyForRules,
+        unitOccupancy,
+      },
+    });
+    if (ruleOutcome.applied.length) {
+      breakdown.ruleMultiplier = ruleOutcome.multiplier;
+      breakdown.rulesApplied = ruleOutcome.applied;
+    }
+    if (ruleOutcome.minPrice != null) breakdown.ruleMinPrice = ruleOutcome.minPrice;
+    if (ruleOutcome.maxPrice != null) breakdown.ruleMaxPrice = ruleOutcome.maxPrice;
+    suggested *= ruleOutcome.multiplier;
+    if (ruleOutcome.applied.length) {
+      breakdown.ruleAdjustedPrice = Number(suggested.toFixed(2));
+    }
+    breakdown._ruleMinCandidate = ruleOutcome.minPrice;
+    breakdown._ruleMaxCandidate = ruleOutcome.maxPrice;
+  }
+
   suggested = applyTemporalAdjustments(suggested, leadDays, breakdown);
 
-  const minPrice = Number.isFinite(ratePlan.min_price) ? ratePlan.min_price : null;
-  const maxPrice = Number.isFinite(ratePlan.max_price) ? ratePlan.max_price : null;
+  const ruleMinCandidate = breakdown._ruleMinCandidate;
+  const ruleMaxCandidate = breakdown._ruleMaxCandidate;
 
-  const clamped = clamp(suggested, minPrice, maxPrice);
-  breakdown.clamped = clamped !== suggested;
+  const minCandidates = [
+    Number.isFinite(ratePlan.min_price) ? ratePlan.min_price : null,
+    Number.isFinite(ruleMinCandidate) ? ruleMinCandidate : null,
+  ].filter(value => value != null);
+  const maxCandidates = [
+    Number.isFinite(ratePlan.max_price) ? ratePlan.max_price : null,
+    Number.isFinite(ruleMaxCandidate) ? ruleMaxCandidate : null,
+  ].filter(value => value != null);
+
+  const minPrice = minCandidates.length ? minCandidates.reduce((acc, value) => Math.max(acc, value)) : null;
+  const maxPrice = maxCandidates.length ? maxCandidates.reduce((acc, value) => Math.min(acc, value)) : null;
+
   if (minPrice != null) breakdown.minPrice = minPrice;
   if (maxPrice != null) breakdown.maxPrice = maxPrice;
 
+  const clamped = clamp(suggested, minPrice, maxPrice);
+  breakdown.clamped = clamped !== suggested;
+
   const finalPrice = charmPrice(clamped);
   breakdown.finalPrice = finalPrice;
+  delete breakdown._ruleMinCandidate;
+  delete breakdown._ruleMaxCandidate;
 
   return {
     price: finalPrice,
@@ -183,6 +256,7 @@ function bulkSuggest(unitIds, fromDate, toDate, options = {}) {
     historiesByUnit = new Map(),
     ratePlansByUnit = new Map(),
     competitorRowsByUnit = new Map(),
+    rateRulesByUnit = new Map(),
     generateId,
     reasonBuilder,
     now = dayjs(),
@@ -211,6 +285,17 @@ function bulkSuggest(unitIds, fromDate, toDate, options = {}) {
     const history = historiesByUnit.get(unitId) || {};
     const ratePlan = ratePlansByUnit.get(unitId) || {};
     const marketRows = competitorRowsByUnit.get(unitId) || [];
+    const candidateRulesRaw =
+      rateRulesByUnit.get(unitId) || rateRulesByUnit.get(String(unitId)) || [];
+    const candidateRules = Array.isArray(candidateRulesRaw)
+      ? candidateRulesRaw
+          .map(rule =>
+            rule && rule.normalizedCurrency === 'eur'
+              ? rule
+              : normalizeRuleRow(rule, { currency: 'eur' })
+          )
+          .filter(rule => rule && rule.active)
+      : [];
 
     let cursor = start.clone();
     while (cursor.isSameOrBefore(end)) {
@@ -221,6 +306,7 @@ function bulkSuggest(unitIds, fromDate, toDate, options = {}) {
         history,
         ratePlan,
         marketRows,
+        rateRules: candidateRules,
       });
       snapshots.push({
         id: createId(unitId, dateStr, { unit, date: dateStr, now }),

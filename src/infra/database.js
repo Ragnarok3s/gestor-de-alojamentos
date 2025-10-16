@@ -129,6 +129,25 @@ CREATE TABLE IF NOT EXISTS rates (
   min_stay INTEGER DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS rate_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER REFERENCES units(id) ON DELETE CASCADE,
+  property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('occupancy','lead_time','weekday','event')),
+  name TEXT NOT NULL,
+  config TEXT NOT NULL,
+  adjustment_percent REAL NOT NULL DEFAULT 0,
+  min_price_cents INTEGER,
+  max_price_cents INTEGER,
+  priority INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_rules_unit ON rate_rules(unit_id);
+CREATE INDEX IF NOT EXISTS idx_rate_rules_property ON rate_rules(property_id);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
