@@ -29,6 +29,8 @@ const { createSessionService } = require('./src/services/session');
 const { buildUserNotifications } = require('./src/services/notifications');
 const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
+const { createI18nService } = require('./src/services/i18n');
+const { createMessageTemplateService } = require('./src/services/templates');
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
@@ -1586,7 +1588,9 @@ function timingSafeCompare(expected, actual) {
   }
 }
 
+const i18n = createI18nService();
 const emailTemplates = createEmailTemplateService({ db, dayjs });
+const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
 const mailer = createMailer({ logger: console });
 const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
 const channelIntegrations = createChannelIntegrationService({
@@ -3221,7 +3225,9 @@ const context = {
   getSession,
   destroySession,
   revokeUserSessions,
+  i18n,
   emailTemplates,
+  messageTemplates,
   mailer,
   bookingEmailer,
   overbookingGuard,

@@ -22,7 +22,8 @@ module.exports = function registerUxApi(app, context) {
     db,
     logActivity,
     telemetry,
-    otaDispatcher
+    otaDispatcher,
+    messageTemplates
   } = context;
 
   const rateService = createRateManagementService({ db, dayjs });
@@ -208,6 +209,57 @@ module.exports = function registerUxApi(app, context) {
           reviewId: Number.isInteger(Number(req.params.id)) ? Number(req.params.id) : null
         }
       });
+      return handleError(res, err);
+    }
+  });
+
+  router.post('/templates/test', (req, res) => {
+    try {
+      const key = String(req.body && req.body.templateKey ? req.body.templateKey : '').trim();
+      if (!key) {
+        throw new ValidationError('Modelo obrigatório.');
+      }
+      const language = typeof req.body.language === 'string' ? req.body.language : '';
+      const guestLanguage = typeof req.body.guestLanguage === 'string' ? req.body.guestLanguage : '';
+      const guestMessage = typeof req.body.guestMessage === 'string' ? req.body.guestMessage : '';
+      const fallbackLanguages = Array.isArray(req.body.fallbackLanguages)
+        ? req.body.fallbackLanguages.map(value => String(value || '')).filter(Boolean)
+        : undefined;
+      const rawVariables = req.body && typeof req.body.variables === 'object' && !Array.isArray(req.body.variables)
+        ? req.body.variables
+        : {};
+      const variables = {};
+      Object.keys(rawVariables || {}).forEach(name => {
+        variables[name] = rawVariables[name];
+      });
+      const bodyOverride = typeof req.body.body === 'string' ? req.body.body : undefined;
+
+      const result = messageTemplates.renderTemplate(key, {
+        language,
+        guestLanguage,
+        sampleText: guestMessage,
+        fallbackLanguages,
+        variables,
+        bodyOverride
+      });
+      if (!result) {
+        throw new ValidationError('Modelo desconhecido.');
+      }
+
+      return res.json({
+        ok: true,
+        preview: result.body,
+        language: result.language,
+        languageLabel: messageTemplates.languageLabel(result.language),
+        languageSource: result.languageSource,
+        detectedLanguage: result.detectedLanguage ? result.detectedLanguage.language : null,
+        detectedLanguageLabel:
+          result.detectedLanguage && result.detectedLanguage.language
+            ? messageTemplates.languageLabel(result.detectedLanguage.language)
+            : null,
+        detectedLanguageScore: result.detectedLanguage ? result.detectedLanguage.score : null
+      });
+    } catch (err) {
       return handleError(res, err);
     }
   });

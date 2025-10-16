@@ -314,6 +314,18 @@ CREATE TABLE IF NOT EXISTS email_templates (
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS message_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_key TEXT NOT NULL,
+  language TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE(template_key, language)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_templates_key ON message_templates(template_key);
+
 CREATE TABLE IF NOT EXISTS channel_integrations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_key TEXT UNIQUE NOT NULL,

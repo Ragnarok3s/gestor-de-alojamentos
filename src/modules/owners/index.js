@@ -418,14 +418,14 @@ module.exports = function registerOwnersPortal(app, context) {
                   ${upcomingPreview
                     .map(item => {
                       return `<tr>
-                        <td>${esc(item.checkinLabel)}</td>
-                        <td>${esc(item.propertyName)}</td>
-                        <td>${esc(item.unitName)}</td>
-                        <td>${esc(item.guestName || '—')}</td>
-                        <td>${integerFormatter.format(item.nights)}</td>
-                        <td>${esc(item.channelLabel)}</td>
-                        <td>€ ${eur(item.totalCents)}</td>
-                        <td>${buildStatusPill(item.status)}</td>
+                        <td data-label="Check-in">${esc(item.checkinLabel)}</td>
+                        <td data-label="Propriedade">${esc(item.propertyName)}</td>
+                        <td data-label="Unidade">${esc(item.unitName)}</td>
+                        <td data-label="Hóspede">${esc(item.guestName || '—')}</td>
+                        <td data-label="Noites">${integerFormatter.format(item.nights)}</td>
+                        <td data-label="Canal">${esc(item.channelLabel)}</td>
+                        <td data-label="Total">€ ${eur(item.totalCents)}</td>
+                        <td data-label="Estado">${buildStatusPill(item.status)}</td>
                       </tr>`;
                     })
                     .join('')}
@@ -455,17 +455,26 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const pageStyles = html`
       <style>
-        .page-backoffice.page-owners .owners-main{display:grid;gap:24px;}
+        .page-backoffice.page-owners .owners-main{display:grid;gap:24px;max-width:1100px;margin:0 auto;padding:0 16px 32px;}
+        .page-backoffice.page-owners .bo-header{display:grid;gap:12px;text-align:left;}
         .page-backoffice.page-owners .owners-filter{display:grid;gap:18px;align-items:end;}
         @media (min-width:720px){.page-backoffice.page-owners .owners-filter{grid-template-columns:minmax(0,1fr) auto;}}
         .page-backoffice.page-owners .owners-filter__actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;}
+        @media (max-width:639px){
+          .page-backoffice.page-owners .owners-filter{align-items:start;}
+          .page-backoffice.page-owners .owners-filter__actions{justify-content:stretch;}
+          .page-backoffice.page-owners .owners-filter__actions .btn{flex:1 1 100%;}
+        }
         .page-backoffice.page-owners .owners-metric-label{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;font-weight:600;}
         .page-backoffice.page-owners .owners-metric-hint{margin:6px 0 0;font-size:.8rem;color:#b45309;}
+        .page-backoffice.page-owners .bo-metrics{display:grid;gap:16px;}
+        @media (min-width:640px){.page-backoffice.page-owners .bo-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        @media (min-width:1024px){.page-backoffice.page-owners .bo-metrics{grid-template-columns:repeat(4,minmax(0,1fr));}}
         .page-backoffice.page-owners .owners-alert{background:#fff7ed;border:1px solid #fcd34d;box-shadow:0 14px 28px rgba(251,191,36,.22);display:grid;gap:6px;}
         .page-backoffice.page-owners .owners-alert h2{margin:0;font-size:1rem;color:#92400e;}
         .page-backoffice.page-owners .owners-alert p{margin:0;font-size:.85rem;color:#b45309;}
         .page-backoffice.page-owners .owners-property{display:grid;gap:18px;}
-        .page-backoffice.page-owners .owners-property__header{display:grid;gap:8px;}
+        .page-backoffice.page-owners .owners-property__header{display:grid;gap:12px;}
         @media (min-width:640px){.page-backoffice.page-owners .owners-property__header{grid-template-columns:minmax(0,1fr) auto;align-items:flex-start;}}
         .page-backoffice.page-owners .owners-property__meta{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;font-weight:600;}
         .page-backoffice.page-owners .owners-property__stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
@@ -474,10 +483,11 @@ module.exports = function registerOwnersPortal(app, context) {
         .page-backoffice.page-owners .owners-property__stat strong{font-size:1.2rem;color:#9a3412;}
         .page-backoffice.page-owners .owners-property__stat small{font-size:.75rem;color:#b45309;opacity:.85;}
         .page-backoffice.page-owners .owners-property__content{display:grid;gap:18px;}
-        @media (min-width:960px){.page-backoffice.page-owners .owners-property__content{grid-template-columns:repeat(2,minmax(0,1fr));}}
+        @media (min-width:768px){.page-backoffice.page-owners .owners-property__content{grid-template-columns:repeat(2,minmax(0,1fr));}}
         .page-backoffice.page-owners .owners-list{margin:0;padding:0;list-style:none;display:grid;gap:12px;}
         .page-backoffice.page-owners .owners-list-item{border-radius:18px;border:1px solid rgba(148,163,184,.28);background:#fff;box-shadow:0 12px 26px rgba(15,23,42,.08);padding:14px 16px;display:grid;gap:6px;}
         .page-backoffice.page-owners .owners-list-item__header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;}
+        @media (max-width:480px){.page-backoffice.page-owners .owners-list-item__header{flex-direction:column;align-items:flex-start;gap:6px;}}
         .page-backoffice.page-owners .owners-list-item__guest{font-weight:600;color:#1f2937;}
         .page-backoffice.page-owners .owners-list-item__meta{font-size:.78rem;color:#475569;}
         .page-backoffice.page-owners .owners-list-empty{font-size:.85rem;color:#64748b;}
@@ -489,11 +499,21 @@ module.exports = function registerOwnersPortal(app, context) {
         .page-backoffice.page-owners .owners-status--pending{background:rgba(250,204,21,.24);color:#92400e;}
         .page-backoffice.page-owners .owners-status--cancelled{background:rgba(248,113,113,.22);color:#b91c1c;}
         .page-backoffice.page-owners .owners-status--default{background:rgba(148,163,184,.22);color:#334155;}
-        .page-backoffice.page-owners .owners-table{overflow:auto;}
+        .page-backoffice.page-owners .owners-table{overflow:auto;border-radius:18px;border:1px solid rgba(148,163,184,.25);}
         .page-backoffice.page-owners .owners-table table{width:100%;border-collapse:collapse;min-width:720px;}
         .page-backoffice.page-owners .owners-table th{background:#fff7ed;text-transform:uppercase;font-size:.7rem;letter-spacing:.08em;color:#b45309;padding:12px;text-align:left;}
         .page-backoffice.page-owners .owners-table td{padding:12px;border-bottom:1px solid rgba(148,163,184,.25);font-size:.85rem;color:#334155;}
         .page-backoffice.page-owners .owners-table tbody tr:nth-child(even){background:rgba(254,243,199,.35);}
+        @media (max-width:720px){
+          .page-backoffice.page-owners .owners-table{border:none;overflow:visible;}
+          .page-backoffice.page-owners .owners-table table{min-width:0;}
+          .page-backoffice.page-owners .owners-table thead{display:none;}
+          .page-backoffice.page-owners .owners-table tbody{display:grid;gap:12px;}
+          .page-backoffice.page-owners .owners-table tr{display:grid;gap:12px;background:#fff;border:1px solid rgba(148,163,184,.25);border-radius:16px;padding:12px;box-shadow:0 12px 24px rgba(15,23,42,.08);}
+          .page-backoffice.page-owners .owners-table td{display:flex;justify-content:space-between;gap:12px;padding:0;border:none;font-size:.82rem;}
+          .page-backoffice.page-owners .owners-table td::before{content:attr(data-label);font-weight:600;color:#b45309;text-transform:uppercase;letter-spacing:.05em;font-size:.7rem;}
+          .page-backoffice.page-owners .owners-table tbody tr:nth-child(even){background:#fff;}
+        }
         .page-backoffice.page-owners .owners-empty{display:grid;gap:8px;color:#b45309;}
         .page-backoffice.page-owners .owners-channel-card ul{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
         .page-backoffice.page-owners .owners-channel-card li{display:flex;justify-content:space-between;gap:12px;font-size:.85rem;color:#334155;}
