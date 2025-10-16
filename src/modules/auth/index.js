@@ -1,3 +1,5 @@
+const { setNoIndex } = require('../../middlewares/security');
+
 module.exports = function registerAuthRoutes(app, context) {
   const {
     layout,
@@ -17,14 +19,34 @@ module.exports = function registerAuthRoutes(app, context) {
     resolveBrandingForRequest,
     isSafeRedirectTarget,
     csrfProtection,
-    secureCookies
+    secureCookies,
+    featureFlags,
+    isFeatureEnabled
   } = context;
+
+  function isFlagEnabled(flagName) {
+    if (typeof isFeatureEnabled === 'function') {
+      return isFeatureEnabled(flagName);
+    }
+    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      return !!featureFlags[flagName];
+    }
+    return false;
+  }
+
+  function ensureNoIndexHeader(res) {
+    if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
+      setNoIndex(res);
+    }
+  }
 
   app.get('/login', (req, res) => {
     const csrfToken = csrfProtection.ensureToken(req, res);
     const { error, next: nxt } = req.query;
     const safeError = error ? esc(error) : '';
     const safeNext = nxt && isSafeRedirectTarget(nxt) ? esc(nxt) : '';
+
+    ensureNoIndexHeader(res);
 
     res.send(
       layout({
