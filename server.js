@@ -23,6 +23,7 @@ const path = require('path');
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
+const registerAccountModule = require('./src/modules/account');
 const registerOwnersPortal = require('./src/modules/owners');
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
@@ -3355,6 +3356,7 @@ const context = {
 registerAuthRoutes(app, context);
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
+registerAccountModule(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================
