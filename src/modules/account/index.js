@@ -268,6 +268,9 @@ module.exports = function registerAccountModule(app, context) {
   }
 
   app.get(['/account/seguranca', '/account/security'], requireLogin, (req, res) => {
+    if (req.path === '/account/security' && isFlagEnabled('FEATURE_ALIAS_ACCOUNT_SECURITY_REDIRECT')) {
+      return res.redirect(302, '/account/seguranca');
+    }
     renderSecurityPage(req, res);
   });
 

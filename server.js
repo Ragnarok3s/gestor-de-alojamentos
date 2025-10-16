@@ -60,6 +60,10 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
+const PUBLIC_DIR = path.join(__dirname, 'public');
+if (fs.existsSync(PUBLIC_DIR)) {
+  app.use('/public', express.static(PUBLIC_DIR, { fallthrough: false }));
+}
 const secureCookies =
   !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
 const csrfProtection = createCsrfProtection({ secureCookies });
@@ -2324,16 +2328,38 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         </div>`
     : '';
 
-  const navSecurityHtml =
+  const navSecurityMenuItem =
     hasUser && isFeatureEnabled('FEATURE_NAV_SECURITY_LINK')
-      ? `<a class="nav-secure-link" href="/account/seguranca">Segurança</a>`
+      ? `<li class="nav-user__item"><a class="nav-user__link" href="/account/seguranca">Security / Segurança</a></li>`
       : '';
 
+  const navUserMenuHtml = hasUser
+    ? `
+        <div class="nav-user" data-user-menu>
+          <button type="button" class="nav-user__trigger" data-user-menu-toggle aria-haspopup="true" aria-expanded="false">
+            <span class="nav-user__name">${esc(user.username)}</span>
+            ${userRoleLabel ? `<span class="nav-user__role">${esc(userRoleLabel)}</span>` : ''}
+            <i aria-hidden="true" data-lucide="chevron-down" class="w-4 h-4"></i>
+          </button>
+          <div class="nav-user__panel" data-user-menu-panel hidden>
+            <div class="nav-user__summary">
+              <span class="nav-user__summary-name">${esc(user.username)}</span>
+              ${userRoleLabel ? `<span class="nav-user__summary-role">${esc(userRoleLabel)}</span>` : ''}
+            </div>
+            <ul class="nav-user__list">
+              ${navSecurityMenuItem}
+              <li class="nav-user__item">
+                <form method="post" action="/logout" class="nav-user__logout">
+                  <button type="submit">Terminar sessão</button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </div>`
+    : '';
+
   const navActionsHtml = hasUser
-    ? `${notificationsMarkup}${navSecurityHtml}<div class="pill-indicator">${esc(user.username)}${userRoleLabel ? ` · ${esc(userRoleLabel)}` : ''}</div>
-        <form method="post" action="/logout" class="logout-form">
-          <button type="submit">Log-out</button>
-        </form>`
+    ? `${notificationsMarkup}${navUserMenuHtml}`
     : '<a class="login-link" href="/login">Login</a>';
 
   const navLinks = [];
@@ -2483,11 +2509,25 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .nav-notifications__footer{margin-top:12px;text-align:right;}
         .nav-notifications__footer-link{font-size:.78rem;color:#64748b;text-decoration:none;}
         .nav-notifications__footer-link:hover{color:var(--nav-highlight,#1d4ed8);}
-        .logout-form{margin:0;}
-        .logout-form button,.login-link{background:none;border:none;color:var(--nav-button,#7a7b88);font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
-        .logout-form button:hover,.login-link:hover{color:var(--nav-button-hover,#2f3140);}
-        .nav-secure-link{color:var(--nav-link,#7a7b88);text-decoration:none;font-size:.85rem;}
-        .nav-secure-link:hover{color:var(--nav-link-hover,#424556);text-decoration:underline;}
+        .nav-user{position:relative;display:flex;align-items:center;}
+        .nav-user__trigger{display:inline-flex;align-items:center;gap:8px;padding:.45rem .85rem;border-radius:999px;border:1px solid rgba(148,163,184,.45);background:#fff;color:var(--nav-link,#475569);font-weight:500;cursor:pointer;transition:all .2s ease;box-shadow:0 6px 16px rgba(15,23,42,.08);}
+        .nav-user__trigger:hover,.nav-user__trigger.is-open{color:#0f172a;border-color:rgba(148,163,184,.85);background:rgba(248,250,252,.95);}
+        .nav-user__name{font-weight:600;}
+        .nav-user__role{font-size:.75rem;color:#64748b;}
+        .nav-user__panel{position:absolute;top:calc(100% + 12px);right:0;min-width:220px;background:#fff;border-radius:16px;border:1px solid rgba(148,163,184,.25);box-shadow:0 18px 40px rgba(15,23,42,.2);padding:16px;z-index:55;}
+        .nav-user__panel[hidden]{display:none;}
+        .nav-user__summary{display:flex;flex-direction:column;gap:2px;margin-bottom:12px;}
+        .nav-user__summary-name{font-weight:600;color:#0f172a;}
+        .nav-user__summary-role{font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em;}
+        .nav-user__list{margin:0;padding:0;list-style:none;display:grid;gap:8px;}
+        .nav-user__link{display:flex;align-items:center;gap:8px;padding:.45rem .6rem;border-radius:10px;text-decoration:none;color:#1e293b;font-size:.9rem;transition:background .15s ease;}
+        .nav-user__link:hover{background:rgba(248,250,252,.95);}
+        .nav-user__item{margin:0;}
+        .nav-user__logout{margin:0;}
+        .nav-user__logout button{width:100%;border:none;background:#f1f5f9;color:#0f172a;font-weight:500;padding:.5rem .75rem;border-radius:10px;cursor:pointer;transition:background .15s ease;}
+        .nav-user__logout button:hover{background:#e2e8f0;}
+        .login-link{background:none;border:none;color:var(--nav-button,#7a7b88);font-weight:500;cursor:pointer;padding:0;text-decoration:none;}
+        .login-link:hover{color:var(--nav-button-hover,#2f3140);}
         .nav-accent-bar{height:3px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));opacity:.55;}
         .main-content{flex:1;max-width:1120px;margin:0 auto;padding:56px 32px 64px;width:100%;}
         .footer{background:var(--brand-surface);border-top:1px solid var(--brand-surface-border);color:#8c8d97;font-size:.875rem;}
@@ -2879,6 +2919,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         window.addEventListener('load', refreshIcons);
         document.addEventListener('htmx:afterSwap', refreshIcons);
         let notificationsInitialized = false;
+        let userMenuInitialized = false;
         function initNotificationsPopover(){
           if (notificationsInitialized) return;
           const trigger = document.querySelector('[data-notifications-toggle]');
@@ -2920,12 +2961,57 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
             if (event.key === 'Escape') closePanel();
           });
         }
+        function initUserMenu(){
+          if (userMenuInitialized) return;
+          const container = document.querySelector('[data-user-menu]');
+          if (!container) return;
+          const trigger = container.querySelector('[data-user-menu-toggle]');
+          const panel = container.querySelector('[data-user-menu-panel]');
+          if (!trigger || !panel) return;
+          userMenuInitialized = true;
+          function closeMenu(){
+            panel.hidden = true;
+            trigger.classList.remove('is-open');
+            trigger.setAttribute('aria-expanded','false');
+          }
+          trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+            const isHidden = panel.hidden;
+            document.querySelectorAll('[data-user-menu-panel]').forEach((otherPanel) => {
+              if (otherPanel !== panel) otherPanel.hidden = true;
+            });
+            document.querySelectorAll('[data-user-menu-toggle]').forEach((otherTrigger) => {
+              if (otherTrigger !== trigger) {
+                otherTrigger.classList.remove('is-open');
+                otherTrigger.setAttribute('aria-expanded','false');
+              }
+            });
+            if (isHidden) {
+              panel.hidden = false;
+              trigger.classList.add('is-open');
+              trigger.setAttribute('aria-expanded','true');
+            } else {
+              closeMenu();
+            }
+          });
+          document.addEventListener('click', (event) => {
+            if (panel.hidden) return;
+            if (event.target.closest('[data-user-menu-toggle]') === trigger) return;
+            if (event.target.closest('[data-user-menu-panel]') === panel) return;
+            closeMenu();
+          });
+          document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeMenu();
+          });
+        }
         if (document.readyState !== 'loading') {
           initNotificationsPopover();
+          initUserMenu();
         } else {
           document.addEventListener('DOMContentLoaded', initNotificationsPopover);
+          document.addEventListener('DOMContentLoaded', initUserMenu);
         }
-        document.addEventListener('htmx:afterSwap', () => { notificationsInitialized = false; initNotificationsPopover(); });
+        document.addEventListener('htmx:afterSwap', () => { notificationsInitialized = false; initNotificationsPopover(); userMenuInitialized = false; initUserMenu(); });
         function syncCheckout(e){
           const ci = e.target.value; const co = document.getElementById('checkout');
           if (co && co.value && co.value <= ci) { co.value = ci; }

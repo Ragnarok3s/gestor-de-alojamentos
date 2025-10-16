@@ -202,6 +202,34 @@ module.exports = function registerBackoffice(app, context) {
     breadcrumbsTemplate = '';
   }
 
+  const modalTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'modal.ejs');
+  let modalTemplate = '';
+  try {
+    modalTemplate = fs.readFileSync(modalTemplatePath, 'utf8');
+  } catch (err) {
+    modalTemplate = '';
+  }
+
+  function sanitizeId(value, fallback) {
+    const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    return safe || fallback;
+  }
+
+  function renderModalShell({ id, title, body = '', closeLabel = 'Fechar', extraRootAttr = '' }) {
+    if (!modalTemplate) return '';
+    const modalId = sanitizeId(id, 'modal');
+    const labelId = `${modalId}-title`;
+    const replacements = [
+      ['__ID__', modalId],
+      ['__LABEL_ID__', sanitizeId(labelId, `${modalId}-label`)],
+      ['__TITLE__', esc(title || 'Detalhes')],
+      ['__BODY__', body || ''],
+      ['__CLOSE_LABEL__', esc(closeLabel || 'Fechar')],
+      ['__ROOT_ATTR__', extraRootAttr ? String(extraRootAttr) : '']
+    ];
+    return replacements.reduce((output, [token, value]) => output.split(token).join(value), modalTemplate);
+  }
+
   function isFlagEnabled(flagName) {
     if (typeof isFeatureEnabled === 'function') {
       return isFeatureEnabled(flagName);
@@ -2403,7 +2431,8 @@ module.exports = function registerBackoffice(app, context) {
       ensureAutomationFresh
     });
 
-    const canExportBookings = userCan(req.user, 'bookings.export');
+    const enableExportShortcuts = isFlagEnabled('FEATURE_NAV_EXPORT_SHORTCUTS');
+    const canExportBookings = enableExportShortcuts && userCan(req.user, 'bookings.export');
     const canManageRates = userCan(req.user, 'rates.manage');
     const canAccessAudit = userCan(req.user, 'audit.view') || userCan(req.user, 'logs.view');
 
@@ -5190,6 +5219,20 @@ app.get(
   const theme = resolveBrandingForRequest(req, { propertyId: u.property_id, propertyName: u.property_name });
   rememberActiveBrandingProperty(res, u.property_id);
 
+  const enableUnitCardModal = isFlagEnabled('FEATURE_CALENDAR_UNIT_CARD_MODAL');
+  const unitCardButton = enableUnitCardModal
+    ? `<button type="button" class="btn btn-light" data-unit-card-trigger data-unit-card-title="Cartão da unidade" data-unit-card-loading="A preparar o cartão da unidade..." data-unit-id="${u.id}" data-unit-card-name="${esc(u.name)}" data-unit-card-fetch="/calendar/unit/${u.id}/card">Cartão da unidade</button>`
+    : '';
+  const unitCardModalShell = enableUnitCardModal
+    ? html`${renderModalShell({
+        id: 'unit-card-modal',
+        title: 'Cartão da unidade',
+        body: '<div class="bo-modal__placeholder">A carregar cartão da unidade…</div>',
+        extraRootAttr: 'data-unit-card-modal'
+      })}`
+    : '';
+  const unitCardScriptTag = enableUnitCardModal ? html`<script src="/public/js/card-modal.js"></script>` : '';
+
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
     user: req.user,
@@ -5204,7 +5247,10 @@ app.get(
         { label: u.name }
       ])}
       <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-      <h1 class="text-2xl font-semibold mb-4">${esc(u.property_name)} - ${esc(u.name)}</h1>
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+        <h1 class="text-2xl font-semibold">${esc(u.property_name)} - ${esc(u.name)}</h1>
+        ${unitCardButton ? `<div class="flex items-center justify-end">${unitCardButton}</div>` : ''}
+      </div>
       <div class="text-sm text-slate-500 mb-4 leading-relaxed">
         ${propertyAddress ? esc(propertyAddress) : 'Morada do alojamento não definida'}
         ${propertyLocation ? `<br/><span>${esc(`Localidade: ${propertyLocation}`)}</span>` : ''}
@@ -5389,7 +5435,8 @@ app.get(
 
       <script>${featureBuilderScript}</script>
       <script>${galleryManagerScript}</script>
-      </script>
+      ${unitCardModalShell}
+      ${unitCardScriptTag}
 
     `
   }));

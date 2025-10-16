@@ -8,6 +8,8 @@ module.exports = function registerFrontoffice(app, context) {
     layout,
     esc,
     crypto,
+    fs,
+    path,
     dayjs,
     eur,
     getSession,
@@ -53,6 +55,34 @@ module.exports = function registerFrontoffice(app, context) {
     if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
       setNoIndex(res);
     }
+  }
+
+  const modalTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'modal.ejs');
+  let modalTemplate = '';
+  try {
+    modalTemplate = fs.readFileSync(modalTemplatePath, 'utf8');
+  } catch (err) {
+    modalTemplate = '';
+  }
+
+  function sanitizeId(value, fallback) {
+    const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    return safe || fallback;
+  }
+
+  function renderModalShell({ id, title, body = '', closeLabel = 'Fechar', extraRootAttr = '' }) {
+    if (!modalTemplate) return '';
+    const modalId = sanitizeId(id, 'modal');
+    const labelId = `${modalId}-title`;
+    const replacements = [
+      ['__ID__', modalId],
+      ['__LABEL_ID__', sanitizeId(labelId, `${modalId}-label`)],
+      ['__TITLE__', esc(title || 'Detalhes')],
+      ['__BODY__', body || ''],
+      ['__CLOSE_LABEL__', esc(closeLabel || 'Fechar')],
+      ['__ROOT_ATTR__', extraRootAttr ? String(extraRootAttr) : '']
+    ];
+    return replacements.reduce((output, [token, value]) => output.split(token).join(value), modalTemplate);
   }
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
@@ -1027,6 +1057,17 @@ app.get('/booking/:id', (req, res) => {
           <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
         </div>`;
 
+  const confirmationLink = requestedToken
+    ? `/booking/${b.id}?token=${encodeURIComponent(requestedToken)}`
+    : `/booking/${b.id}`;
+  const myReservationsShortcut = viewerCanSeeBooking || requestedToken
+    ? `<aside class="card p-4 mt-6 bg-slate-50/70 border border-slate-200">
+        <h2 class="text-base font-semibold text-slate-800">As minhas reservas</h2>
+        <p class="text-sm text-slate-600 mb-2">Guarde este atalho para rever a confirmação sempre que precisar.</p>
+        <a class="text-sm text-indigo-600 hover:text-indigo-800 underline" href="${esc(confirmationLink)}">Ver confirmação</a>
+      </aside>`
+    : '';
+
   res.send(layout({
     title: headerTitle,
     user,
@@ -1064,6 +1105,7 @@ app.get('/booking/:id', (req, res) => {
         </div>
         <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
       </div>
+      ${myReservationsShortcut}
     `
   }));
 });
@@ -1080,6 +1122,11 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const propertyMap = new Map(properties.map(p => [p.id, p.name]));
   let propertyId = req.query.property ? Number(req.query.property) : (properties[0] ? properties[0].id : null);
   if (Number.isNaN(propertyId)) propertyId = properties[0] ? properties[0].id : null;
+
+  ensureNoIndexHeader(res);
+
+  const enableUnitCardModal = isFlagEnabled('FEATURE_CALENDAR_UNIT_CARD_MODAL');
+  const enableExportShortcuts = isFlagEnabled('FEATURE_NAV_EXPORT_SHORTCUTS');
 
   const units = propertyId
     ? db.prepare('SELECT id, name FROM units WHERE property_id = ? ORDER BY name').all(propertyId)
@@ -1120,6 +1167,10 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   }
 
   const searchTerm = rawFilters.q ? rawFilters.q.toLowerCase() : '';
+
+  const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
+  const safeSelectedUnitName = selectedUnit ? esc(selectedUnit.name) : '';
+  const unitCardFetchHref = selectedUnit ? `/calendar/unit/${selectedUnit.id}/card` : '';
 
   let bookings = [];
   if (propertyId) {
@@ -1195,7 +1246,20 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const nextLink = '/calendar' + buildQuery({ ym: next, start: '', end: '' });
 
   const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
-  const canExportCalendar = userCan(req.user, 'bookings.export');
+  const canExportCalendar = enableExportShortcuts && userCan(req.user, 'bookings.export');
+  const calendarExportShortcut = canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : '';
+  const unitCardButton = enableUnitCardModal
+    ? `<button type="button" class="btn btn-light" data-unit-card-trigger data-unit-card-title="Cartão da unidade" data-unit-card-loading="A preparar o cartão da unidade..." ${selectedUnit ? `data-unit-id="${selectedUnit.id}" data-unit-card-name="${safeSelectedUnitName}" data-unit-card-fetch="${esc(unitCardFetchHref)}"` : 'disabled aria-disabled="true" title="Selecione uma unidade nos filtros"'} data-unit-card-ym="${esc(activeYm)}">Cartão da unidade</button>`
+    : '';
+  const unitCardModalShell = enableUnitCardModal
+    ? html`${renderModalShell({
+        id: 'unit-card-modal',
+        title: 'Cartão da unidade',
+        body: '<div class="bo-modal__placeholder">Selecione uma unidade para consultar o cartão.</div>',
+        extraRootAttr: 'data-unit-card-modal'
+      })}`
+    : '';
+  const unitCardScriptTag = enableUnitCardModal ? html`<script src="/public/js/card-modal.js"></script>` : '';
   const canRescheduleCalendar = userCan(req.user, 'calendar.reschedule');
 
   const activeFilters = ['start', 'end', 'unit', 'q'].filter(key => rawFilters[key]);
@@ -1302,7 +1366,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
             <span class="bo-calendar-legend__item bo-calendar-legend__item--confirmed"><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
             <span class="bo-calendar-legend__item bo-calendar-legend__item--pending"><span class="bo-dot bo-dot--pending"></span>Pendente</span>
           </div>
-          ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
+          ${unitCardButton}
+          ${calendarExportShortcut}
         </div>
       </div>
       ${canRescheduleCalendar ? '<p class="bo-calendar-hint">Arraste uma reserva confirmada para reagendar rapidamente.</p>' : ''}
@@ -1439,6 +1504,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         ${calendarFiltersCard}
         ${calendarBoard}
         ${calendarDragScript}
+        ${unitCardModalShell}
+        ${unitCardScriptTag}
       </div>
     `
   }));
@@ -1762,6 +1829,7 @@ app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.vie
      WHERE u.id = ?
   `).get(req.params.id);
   if (!unit) return res.status(404).send('');
+  ensureNoIndexHeader(res);
   res.send(unitCalendarCard(unit, month));
 });
 

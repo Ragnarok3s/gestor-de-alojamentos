@@ -1,0 +1,29 @@
+<style data-modal-styles>
+  .bo-modal[data-modal-root] { position: relative; }
+  .bo-modal__backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(3px); z-index: 80; }
+  .bo-modal__dialog { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: min(720px, 92vw); max-height: calc(100vh - 4rem); overflow: hidden; background: #fff; border-radius: 1rem; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35); z-index: 90; display: grid; grid-template-rows: auto 1fr auto; border: 1px solid rgba(148, 163, 184, 0.35); }
+  .bo-modal__dialog[hidden] { display: none; }
+  .bo-modal__header { display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem 1rem; border-bottom: 1px solid #e2e8f0; gap: 1rem; }
+  .bo-modal__title { margin: 0; font-size: 1.1rem; font-weight: 600; color: #0f172a; }
+  .bo-modal__close { border: none; background: transparent; color: #475569; cursor: pointer; border-radius: 999px; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; font-size: 1.35rem; }
+  .bo-modal__close:hover, .bo-modal__close:focus { background: rgba(248, 250, 252, 0.95); color: #0f172a; }
+  .bo-modal__body { padding: 1.25rem 1.5rem; overflow-y: auto; }
+  .bo-modal__footer { padding: 1rem 1.5rem; border-top: 1px solid #e2e8f0; text-align: right; background: #f8fafc; }
+  .bo-modal__footer[hidden] { display: none; }
+  .bo-modal__placeholder { display: grid; place-items: center; min-height: 120px; color: #64748b; font-size: 0.95rem; }
+  @media (max-width: 640px) {
+    .bo-modal__dialog { width: min(96vw, 420px); max-height: calc(100vh - 2rem); border-radius: 0.85rem; }
+    .bo-modal__header, .bo-modal__body, .bo-modal__footer { padding-inline: 1.1rem; }
+  }
+</style>
+<div class="bo-modal" data-modal-root __ROOT_ATTR__ data-modal-id="__ID__">
+  <div class="bo-modal__backdrop" data-modal-backdrop hidden></div>
+  <div class="bo-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="__LABEL_ID__" data-modal-dialog tabindex="-1" hidden>
+    <div class="bo-modal__header">
+      <h2 class="bo-modal__title" id="__LABEL_ID__" data-modal-title>__TITLE__</h2>
+      <button type="button" class="bo-modal__close" data-modal-close aria-label="__CLOSE_LABEL__"><span aria-hidden="true">&times;</span></button>
+    </div>
+    <div class="bo-modal__body" data-modal-body>__BODY__</div>
+    <div class="bo-modal__footer" data-modal-footer hidden></div>
+  </div>
+</div>
