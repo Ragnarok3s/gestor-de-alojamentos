@@ -2621,6 +2621,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-shell{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;align-items:start;}
         .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:grid;gap:12px;position:sticky;top:108px;}
         .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#c2410c;font-weight:600;}
+        .page-backoffice .bo-sidebar__footer{margin-top:4px;padding-top:12px;border-top:1px solid rgba(251,191,36,.45);}
+        .page-backoffice .bo-sidebar__footer-link{display:inline-flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:#b45309;text-decoration:none;}
+        .page-backoffice .bo-sidebar__footer-link:hover{color:#9a3412;}
         .page-backoffice .bo-nav{display:grid;gap:10px;}
         .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:#c2410c;cursor:pointer;transition:all .2s ease;}
         .page-backoffice .bo-tab.bo-tab--compact{gap:8px;}

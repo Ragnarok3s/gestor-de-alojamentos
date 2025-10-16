@@ -2497,6 +2497,18 @@ module.exports = function registerBackoffice(app, context) {
       });
     }
 
+    const auditSidebarLink =
+      isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit
+        ? html`
+            <div class="bo-sidebar__footer">
+              <a class="bo-sidebar__footer-link" href="/admin/auditoria">
+                <i data-lucide="clipboard-list" class="w-4 h-4" aria-hidden="true"></i>
+                <span>Auditoria</span>
+              </a>
+            </div>
+          `
+        : '';
+
     const quickAccessHtml = quickLinks.length
       ? html`<section class="bo-card space-y-4">
           <div>
@@ -3975,6 +3987,7 @@ module.exports = function registerBackoffice(app, context) {
             <aside class="bo-sidebar">
               <div class="bo-sidebar__title">Menu principal</div>
               <div class="bo-nav">${navButtonsHtml}</div>
+              ${auditSidebarLink}
             </aside>
             <div class="bo-main">
               <header class="bo-header">
