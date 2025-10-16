@@ -33,6 +33,7 @@ const { createI18nService } = require('./src/services/i18n');
 const { createMessageTemplateService } = require('./src/services/templates');
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
+const { createRateRuleService } = require('./src/services/rate-rules');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 const { createChannelSync } = require('./src/services/channel-sync');
 const { createOtaDispatcher } = require('./src/services/ota-sync/dispatcher');
@@ -45,6 +46,7 @@ const createHousekeepingTaskAction = require('./server/automations/actions/creat
 const priceOverrideAction = require('./server/automations/actions/price.override');
 const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
+const { applyRateRules } = require('./server/services/pricing/rules');
 const { createTelemetry } = require('./src/services/telemetry');
 const {
   MASTER_ROLE,
@@ -67,6 +69,7 @@ const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
+const rateRuleService = createRateRuleService({ db, dayjs });
 const skipStartupTasks = process.env.SKIP_SERVER_START === '1';
 
 async function geocodeAddress(query) {
@@ -2123,20 +2126,86 @@ function unitAvailable(unitId, checkin, checkout) {
 function isWeekendDate(d){ const dow = dayjs(d).day(); return dow === 0 || dow === 6; }
 function rateQuote(unit_id, checkin, checkout, base_price_cents){
   const nights = dateRangeNights(checkin, checkout);
-  const rows = db.prepare('SELECT * FROM rates WHERE unit_id = ?').all(unit_id);
-  let total = 0; let minStayReq = 1;
-  nights.forEach(d => {
-    const r = rows.find(x => !dayjs(d).isBefore(x.start_date) && dayjs(d).isBefore(x.end_date));
-    if (r){
-      minStayReq = Math.max(minStayReq, r.min_stay || 1);
-      const price = isWeekendDate(d)
-        ? (r.weekend_price_cents ?? r.weekday_price_cents ?? base_price_cents)
-        : (r.weekday_price_cents ?? r.weekend_price_cents ?? base_price_cents);
-      total += price;
-    } else {
-      total += base_price_cents;
+  const rates = db.prepare('SELECT * FROM rates WHERE unit_id = ?').all(unit_id);
+  const unitRow = db.prepare('SELECT id, property_id FROM units WHERE id = ?').get(unit_id);
+  const rules = rateRuleService ? rateRuleService.loadRulesForUnit(unit_id, { currency: 'eur' }) : [];
+  const occupancySets = new Map();
+  let propertyUnitsCount = 0;
+  if (unitRow && unitRow.property_id) {
+    const propertyId = unitRow.property_id;
+    const countRow = db.prepare('SELECT COUNT(*) AS c FROM units WHERE property_id = ?').get(propertyId);
+    propertyUnitsCount = countRow ? Number(countRow.c || 0) : 0;
+    if (propertyUnitsCount > 0) {
+      const bookings = db
+        .prepare(
+          `SELECT b.unit_id, b.checkin, b.checkout
+             FROM bookings b
+             JOIN units u ON u.id = b.unit_id
+            WHERE u.property_id = ?
+              AND b.status IN ('CONFIRMED','PENDING')`
+        )
+        .all(propertyId);
+      const nightSet = new Set(nights);
+      bookings.forEach(row => {
+        const start = dayjs(row.checkin);
+        const end = dayjs(row.checkout);
+        if (!start.isValid() || !end.isValid()) return;
+        for (let cursor = start; cursor.isBefore(end); cursor = cursor.add(1, 'day')) {
+          const dateStr = cursor.format('YYYY-MM-DD');
+          if (!nightSet.has(dateStr)) continue;
+          if (!occupancySets.has(dateStr)) {
+            occupancySets.set(dateStr, new Set());
+          }
+          occupancySets.get(dateStr).add(row.unit_id);
+        }
+      });
     }
+  }
+
+  const occupancyByDate = new Map();
+  const unitOccupancyByDate = new Map();
+  if (propertyUnitsCount > 0) {
+    for (const [dateStr, set] of occupancySets.entries()) {
+      occupancyByDate.set(dateStr, set.size / propertyUnitsCount);
+      unitOccupancyByDate.set(dateStr, set.has(unit_id) ? 1 : 0);
+    }
+  }
+
+  let total = 0;
+  let minStayReq = 1;
+  const today = dayjs().startOf('day');
+
+  nights.forEach(dateStr => {
+    const rateRow = rates.find(x => !dayjs(dateStr).isBefore(x.start_date) && dayjs(dateStr).isBefore(x.end_date));
+    let priceCents;
+    if (rateRow) {
+      minStayReq = Math.max(minStayReq, rateRow.min_stay || 1);
+      priceCents = isWeekendDate(dateStr)
+        ? rateRow.weekend_price_cents ?? rateRow.weekday_price_cents ?? base_price_cents
+        : rateRow.weekday_price_cents ?? rateRow.weekend_price_cents ?? base_price_cents;
+    } else {
+      priceCents = base_price_cents;
+    }
+    let priceEur = priceCents / 100;
+    if (rules.length) {
+      const ruleOutcome = applyRateRules({
+        rules,
+        context: {
+          date: dateStr,
+          weekday: dayjs(dateStr).day(),
+          leadDays: Math.max(0, dayjs(dateStr).diff(today, 'day')),
+          occupancy: occupancyByDate.has(dateStr) ? occupancyByDate.get(dateStr) : null,
+          unitOccupancy: unitOccupancyByDate.has(dateStr) ? unitOccupancyByDate.get(dateStr) : null,
+        },
+      });
+      priceEur *= ruleOutcome.multiplier;
+      if (ruleOutcome.minPrice != null) priceEur = Math.max(priceEur, ruleOutcome.minPrice);
+      if (ruleOutcome.maxPrice != null) priceEur = Math.min(priceEur, ruleOutcome.maxPrice);
+    }
+    const adjustedCents = Math.max(0, Math.round(priceEur * 100));
+    total += adjustedCents;
   });
+
   return { total_cents: total, nights: nights.length, minStayReq };
 }
 
@@ -3230,6 +3299,7 @@ const context = {
   messageTemplates,
   mailer,
   bookingEmailer,
+  rateRuleService,
   overbookingGuard,
   secureCookies,
   csrfProtection,
@@ -3320,6 +3390,10 @@ if (!global.__SERVER_STARTED__ && process.env.SKIP_SERVER_START !== '1') {
     app.listen(PORT, () => console.log(`Booking Engine (HTTP) http://localhost:${PORT}`));
   }
   global.__SERVER_STARTED__ = true;
+}
+
+if (process.env.SKIP_SERVER_START === '1') {
+  Object.assign(app, { db, requireScope, buildUserContext });
 }
 
 module.exports = app;

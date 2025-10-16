@@ -7,6 +7,7 @@ const { createDatabase } = require('../src/infra/database');
 const { createSessionService } = require('../src/services/session');
 const { createCsrfProtection } = require('../src/security/csrf');
 const { suggestPrice } = require('../server/services/pricing');
+const { applyRateRules, normalizeRuleRow } = require('../server/services/pricing/rules');
 const { createRateManagementService } = require('../src/services/rate-management');
 const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
@@ -285,6 +286,80 @@ function testPricingService() {
   const { price: clamped } = suggestPrice({ unit, targetDate, history, ratePlan: clampRatePlan });
   assert.ok(clamped <= 160, 'clamp máximo deve aplicar-se');
   assert.ok(clamped >= 150, 'clamp mínimo deve aplicar-se com valores altos');
+
+  const weekdayRuleRow = {
+    id: 101,
+    type: 'weekday',
+    name: 'Ajuste dia específico',
+    adjustment_percent: 50,
+    min_price_cents: 10000,
+    max_price_cents: 20000,
+    config: JSON.stringify({ weekdays: [dayjs(targetDate).day()] }),
+    active: 1,
+  };
+  const leadRuleRow = {
+    id: 102,
+    type: 'lead_time',
+    name: 'Promo last-minute',
+    adjustment_percent: -20,
+    max_price_cents: 15000,
+    config: JSON.stringify({ maxLead: 3 }),
+    active: 1,
+  };
+  const rateRules = [
+    normalizeRuleRow(weekdayRuleRow, { currency: 'eur' }),
+    normalizeRuleRow(leadRuleRow, { currency: 'eur' }),
+  ];
+  const { price: ruledPrice, breakdown: ruledBreakdown } = suggestPrice({
+    unit,
+    targetDate,
+    history,
+    ratePlan,
+    rateRules,
+  });
+  assert.ok(Array.isArray(ruledBreakdown.rulesApplied) && ruledBreakdown.rulesApplied.length === 2, 'regras devem ser aplicadas');
+  assert.ok(Math.abs(ruledBreakdown.ruleMultiplier - 1.2) < 0.0001, 'multiplicador combinado deve refletir regras');
+  assert.ok(ruledPrice >= 100 && ruledPrice <= 150, 'limites das regras devem ser respeitados');
+}
+
+function testRateRuleEngine() {
+  const targetDate = dayjs().add(5, 'day');
+  const weekdayRule = normalizeRuleRow(
+    {
+      id: 201,
+      type: 'weekday',
+      name: 'Boost fim-de-semana',
+      adjustment_percent: 10,
+      min_price_cents: 9000,
+      config: JSON.stringify({ weekdays: [targetDate.day()] }),
+      active: 1,
+    },
+    { currency: 'eur' }
+  );
+  const occupancyRule = normalizeRuleRow(
+    {
+      id: 202,
+      type: 'occupancy',
+      name: 'Alta procura',
+      adjustment_percent: 15,
+      max_price_cents: 20000,
+      config: JSON.stringify({ minOccupancy: 0.7 }),
+      active: 1,
+    },
+    { currency: 'eur' }
+  );
+  const outcome = applyRateRules({
+    rules: [weekdayRule, occupancyRule],
+    context: {
+      date: targetDate,
+      weekday: targetDate.day(),
+      occupancy: 0.75,
+    },
+  });
+  assert.ok(Math.abs(outcome.multiplier - 1.265) < 0.0001, 'multiplicador deve combinar ajustes');
+  assert.equal(outcome.minPrice, 90, 'mínimo em euros deve ser respeitado');
+  assert.equal(outcome.maxPrice, 200, 'máximo em euros deve ser respeitado');
+  assert.equal(outcome.applied.length, 2, 'ambas as regras devem ser consideradas');
 }
 
 function seedPropertyAndUnit(db) {
@@ -696,6 +771,7 @@ async function main() {
   testCsrfProtection();
   testRequireScopeMiddleware();
   testPricingService();
+  testRateRuleEngine();
   testRateManagementService();
   testUnitBlockService();
   await testOverbookingGuardService();

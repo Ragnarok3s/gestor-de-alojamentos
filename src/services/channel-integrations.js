@@ -673,6 +673,29 @@ const webhookFieldSynonyms = {
   ]
 };
 
+function normalizeRecord(record, channelKey, definition, dayjs) {
+  const checkin = normalizeDate(dayjs, record.checkin || record.arrival || record.start_date);
+  const checkout = normalizeDate(dayjs, record.checkout || record.departure || record.end_date);
+  return {
+    raw: record,
+    channelKey,
+    externalRef: normalizeString(record.externalRef || record.reference || record.booking_reference),
+    guestName: normalizeWhitespace(record.guestName || record.guest || record.name),
+    guestEmail: normalizeString(record.guestEmail || record.email),
+    guestPhone: normalizeString(record.guestPhone || record.phone || record.telephone),
+    propertyName: normalizeWhitespace(record.propertyName || record.property || record.hotel),
+    unitName: normalizeWhitespace(record.unitName || record.unit || record.room || record.roomName),
+    checkin,
+    checkout,
+    adults: Number.isFinite(record.adults) ? record.adults : parseInteger(record.adults, 1),
+    children: Number.isFinite(record.children) ? record.children : parseInteger(record.children, 0),
+    totalCents: Number.isFinite(record.totalCents) ? record.totalCents : parseInteger(record.totalCents, 0),
+    currency: record.currency || definition?.defaultCurrency || 'EUR',
+    status: record.status ? String(record.status).toUpperCase() : undefined,
+    notes: normalizeString(record.notes)
+  };
+}
+
 function normalizeWebhookEntry(entry, channelKey, definition, dayjs) {
   if (!isPlainObject(entry)) return null;
   const propertyName = pickValue(entry, webhookFieldSynonyms.property);
@@ -954,29 +977,6 @@ function createChannelIntegrationService({
     if (ext === '.ics' || ext === '.ical') return 'ics';
     if (ext === '.json') return 'json';
     return ext.replace('.', '');
-  }
-
-  function normalizeRecord(record, channelKey, definition, dayjs) {
-    const checkin = normalizeDate(dayjs, record.checkin || record.arrival || record.start_date);
-    const checkout = normalizeDate(dayjs, record.checkout || record.departure || record.end_date);
-    return {
-      raw: record,
-      channelKey,
-      externalRef: normalizeString(record.externalRef || record.reference || record.booking_reference),
-      guestName: normalizeWhitespace(record.guestName || record.guest || record.name),
-      guestEmail: normalizeString(record.guestEmail || record.email),
-      guestPhone: normalizeString(record.guestPhone || record.phone || record.telephone),
-      propertyName: normalizeWhitespace(record.propertyName || record.property || record.hotel),
-      unitName: normalizeWhitespace(record.unitName || record.unit || record.room || record.roomName),
-      checkin,
-      checkout,
-      adults: Number.isFinite(record.adults) ? record.adults : parseInteger(record.adults, 1),
-      children: Number.isFinite(record.children) ? record.children : parseInteger(record.children, 0),
-      totalCents: Number.isFinite(record.totalCents) ? record.totalCents : parseInteger(record.totalCents, 0),
-      currency: record.currency || definition?.defaultCurrency || 'EUR',
-      status: record.status ? String(record.status).toUpperCase() : undefined,
-      notes: normalizeString(record.notes)
-    };
   }
 
   function mapTabularRow(row, channelKey, definition, dayjs) {
