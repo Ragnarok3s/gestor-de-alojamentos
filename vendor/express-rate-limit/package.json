@@ -1,0 +1,5 @@
+{
+  "name": "express-rate-limit",
+  "version": "0.0.0-local",
+  "main": "index.js"
+}

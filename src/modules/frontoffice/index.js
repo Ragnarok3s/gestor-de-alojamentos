@@ -1,5 +1,6 @@
 const { ConflictError } = require('../../services/errors');
-const { setNoIndex } = require('../../middlewares/security');
+const { setNoIndex, verifySignedQuery, rateLimitByUserRoute } = require('../../middlewares/security');
+const { serverRender } = require('../../middlewares/telemetry');
 
 module.exports = function registerFrontoffice(app, context) {
   const {
@@ -8,6 +9,8 @@ module.exports = function registerFrontoffice(app, context) {
     layout,
     esc,
     crypto,
+    fs,
+    path,
     dayjs,
     eur,
     getSession,
@@ -53,6 +56,121 @@ module.exports = function registerFrontoffice(app, context) {
     if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
       setNoIndex(res);
     }
+  }
+
+  function logExportActivity(user, action, metadata = {}) {
+    if (typeof logActivity === 'function' && user && user.id) {
+      try {
+        logActivity(user.id, action, 'user', user.id, metadata);
+        return;
+      } catch (err) {
+        // fallback to console
+      }
+    }
+    console.info(`[${action}]`, {
+      userId: user && user.id ? user.id : null,
+      ...metadata
+    });
+  }
+
+  const exportRateLimiter = rateLimitByUserRoute({
+    featureFlag: 'FEATURE_EXPORT_RATE_LIMIT',
+    isEnabled: isFlagEnabled,
+    windowMs: 60_000,
+    max: 5,
+    message: () => 'Demasiados pedidos de exportação. Aguarde um minuto antes de tentar novamente.',
+    onLimit: req => {
+      logExportActivity(req.user, 'export:download_rate_limited', {
+        ym: req.query.ym,
+        months: req.query.months
+      });
+    }
+  });
+
+  const verifyExportSignature = verifySignedQuery({
+    featureFlag: 'FEATURE_SIGNED_EXPORT_DOWNLOAD',
+    isEnabled: isFlagEnabled,
+    maxAgeMs: 60_000,
+    getSecret: () => process.env.EXPORT_SIGNING_KEY,
+    onFailure: (req, _res, reason) => {
+      logExportActivity(req.user, 'export:download_denied', {
+        reason,
+        ym: req.query.ym,
+        months: req.query.months
+      });
+    },
+    assign: (req, payload) => {
+      req.exportDownloadParams = payload;
+    }
+  });
+
+  function logExportAttempt(req, _res, next) {
+    logExportActivity(req.user, 'export:download_attempt', {
+      ym: req.query.ym,
+      months: req.query.months
+    });
+    next();
+  }
+
+  function sanitizeMonths(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 1;
+    }
+    const integer = Math.floor(parsed);
+    return Math.min(12, Math.max(1, integer));
+  }
+
+  function buildSignedExportLink(ym, months) {
+    const safeYm = /^\d{4}-\d{2}$/.test(ym) ? ym : dayjs().format('YYYY-MM');
+    const safeMonths = sanitizeMonths(months);
+    if (isFlagEnabled('FEATURE_SIGNED_EXPORT_DOWNLOAD')) {
+      const signingKey = process.env.EXPORT_SIGNING_KEY;
+      if (!signingKey) {
+        return { url: null, error: 'Chave de assinatura não configurada.' };
+      }
+      const ts = Date.now();
+      const payload = `ym=${safeYm}&months=${safeMonths}&ts=${ts}`;
+      const sig = crypto.createHmac('sha256', signingKey).update(payload).digest('hex');
+      return {
+        url: `/admin/export/download?${payload}&sig=${sig}`,
+        error: null,
+        ts
+      };
+    }
+    return {
+      url: `/admin/export/download?ym=${encodeURIComponent(safeYm)}&months=${safeMonths}`,
+      error: null,
+      ts: null
+    };
+  }
+
+  const modalTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'modal.ejs');
+  let modalTemplate = '';
+  try {
+    modalTemplate = fs.readFileSync(modalTemplatePath, 'utf8');
+  } catch (err) {
+    modalTemplate = '';
+  }
+
+  function sanitizeId(value, fallback) {
+    const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    return safe || fallback;
+  }
+
+  function renderModalShell({ id, title, body = '', closeLabel = 'Fechar', extraRootAttr = '' }) {
+    if (!modalTemplate) return '';
+    const modalId = sanitizeId(id, 'modal');
+    const labelId = `${modalId}-title`;
+    const replacements = [
+      ['__ID__', modalId],
+      ['__LABEL_ID__', sanitizeId(labelId, `${modalId}-label`)],
+      ['__TITLE__', esc(title || 'Detalhes')],
+      ['__BODY__', body || ''],
+      ['__CLOSE_LABEL__', esc(closeLabel || 'Fechar')],
+      ['__ROOT_ATTR__', extraRootAttr ? String(extraRootAttr) : '']
+    ];
+    return replacements.reduce((output, [token, value]) => output.split(token).join(value), modalTemplate);
   }
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
@@ -758,7 +876,7 @@ app.get('/book/:unitId', (req, res) => {
   rememberActiveBrandingProperty(res, u.property_id);
 
   const csrfToken = csrfProtection.ensureToken(req, res);
-
+  serverRender('route:/book/:unitId');
   res.send(layout({
     title: 'Confirmar Reserva',
     user,
@@ -1027,6 +1145,17 @@ app.get('/booking/:id', (req, res) => {
           <div><strong>Reserva garantida!</strong><br/>A unidade ficou bloqueada para si e pode preparar a chegada com tranquilidade.</div>
         </div>`;
 
+  const confirmationLink = requestedToken
+    ? `/booking/${b.id}?token=${encodeURIComponent(requestedToken)}`
+    : `/booking/${b.id}`;
+  const myReservationsShortcut = viewerCanSeeBooking || requestedToken
+    ? `<aside class="card p-4 mt-6 bg-slate-50/70 border border-slate-200">
+        <h2 class="text-base font-semibold text-slate-800">As minhas reservas</h2>
+        <p class="text-sm text-slate-600 mb-2">Guarde este atalho para rever a confirmação sempre que precisar.</p>
+        <a class="text-sm text-indigo-600 hover:text-indigo-800 underline" href="${esc(confirmationLink)}">Ver confirmação</a>
+      </aside>`
+    : '';
+
   res.send(layout({
     title: headerTitle,
     user,
@@ -1064,6 +1193,7 @@ app.get('/booking/:id', (req, res) => {
         </div>
         <div class="mt-2"><a class="btn btn-primary" href="/">Nova pesquisa</a></div>
       </div>
+      ${myReservationsShortcut}
     `
   }));
 });
@@ -1080,6 +1210,11 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const propertyMap = new Map(properties.map(p => [p.id, p.name]));
   let propertyId = req.query.property ? Number(req.query.property) : (properties[0] ? properties[0].id : null);
   if (Number.isNaN(propertyId)) propertyId = properties[0] ? properties[0].id : null;
+
+  ensureNoIndexHeader(res);
+
+  const enableUnitCardModal = isFlagEnabled('FEATURE_CALENDAR_UNIT_CARD_MODAL');
+  const enableExportShortcuts = isFlagEnabled('FEATURE_NAV_EXPORT_SHORTCUTS');
 
   const units = propertyId
     ? db.prepare('SELECT id, name FROM units WHERE property_id = ? ORDER BY name').all(propertyId)
@@ -1120,6 +1255,10 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   }
 
   const searchTerm = rawFilters.q ? rawFilters.q.toLowerCase() : '';
+
+  const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
+  const safeSelectedUnitName = selectedUnit ? esc(selectedUnit.name) : '';
+  const unitCardFetchHref = selectedUnit ? `/calendar/unit/${selectedUnit.id}/card` : '';
 
   let bookings = [];
   if (propertyId) {
@@ -1195,7 +1334,20 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const nextLink = '/calendar' + buildQuery({ ym: next, start: '', end: '' });
 
   const propertyLabel = propertyId ? propertyMap.get(propertyId) : null;
-  const canExportCalendar = userCan(req.user, 'bookings.export');
+  const canExportCalendar = enableExportShortcuts && userCan(req.user, 'bookings.export');
+  const calendarExportShortcut = canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : '';
+  const unitCardButton = enableUnitCardModal
+    ? `<button type="button" class="btn btn-light" data-unit-card-trigger data-unit-card-title="Cartão da unidade" data-unit-card-loading="A preparar o cartão da unidade..." ${selectedUnit ? `data-unit-id="${selectedUnit.id}" data-unit-card-name="${safeSelectedUnitName}" data-unit-card-fetch="${esc(unitCardFetchHref)}"` : 'disabled aria-disabled="true" title="Selecione uma unidade nos filtros"'} data-unit-card-ym="${esc(activeYm)}">Cartão da unidade</button>`
+    : '';
+  const unitCardModalShell = enableUnitCardModal
+    ? html`${renderModalShell({
+        id: 'unit-card-modal',
+        title: 'Cartão da unidade',
+        body: '<div class="bo-modal__placeholder">Selecione uma unidade para consultar o cartão.</div>',
+        extraRootAttr: 'data-unit-card-modal'
+      })}`
+    : '';
+  const unitCardScriptTag = enableUnitCardModal ? html`<script src="/public/js/card-modal.js"></script>` : '';
   const canRescheduleCalendar = userCan(req.user, 'calendar.reschedule');
 
   const activeFilters = ['start', 'end', 'unit', 'q'].filter(key => rawFilters[key]);
@@ -1302,7 +1454,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
             <span class="bo-calendar-legend__item bo-calendar-legend__item--confirmed"><span class="bo-dot bo-dot--confirmed"></span>Confirmada</span>
             <span class="bo-calendar-legend__item bo-calendar-legend__item--pending"><span class="bo-dot bo-dot--pending"></span>Pendente</span>
           </div>
-          ${canExportCalendar ? '<a class="btn btn-primary" href="/admin/export">Exportar Excel</a>' : ''}
+          ${unitCardButton}
+          ${calendarExportShortcut}
         </div>
       </div>
       ${canRescheduleCalendar ? '<p class="bo-calendar-hint">Arraste uma reserva confirmada para reagendar rapidamente.</p>' : ''}
@@ -1423,6 +1576,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     `)}</script>
   `;
 
+  serverRender('route:/calendar');
   res.send(layout({
     title: 'Mapa de Reservas',
     user: req.user,
@@ -1439,6 +1593,8 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
         ${calendarFiltersCard}
         ${calendarBoard}
         ${calendarDragScript}
+        ${unitCardModalShell}
+        ${unitCardScriptTag}
       </div>
     `
   }));
@@ -1762,6 +1918,7 @@ app.get('/calendar/unit/:id/card', requireLogin, requirePermission('calendar.vie
      WHERE u.id = ?
   `).get(req.params.id);
   if (!unit) return res.status(404).send('');
+  ensureNoIndexHeader(res);
   res.send(unitCalendarCard(unit, month));
 });
 
@@ -2156,41 +2313,77 @@ function unitCalendarCard(u, month) {
 }
 
 // ===================== Export Excel (privado) =====================
-app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (req,res)=>{
+app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (req, res) => {
   ensureNoIndexHeader(res);
   const ymDefault = dayjs().format('YYYY-MM');
-  res.send(layout({
-    title: 'Exportar Mapa (Excel)',
-    user: req.user,
-    activeNav: 'export',
-    branding: resolveBrandingForRequest(req),
-    body: html`
-      <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
-      <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
-      <form method="get" action="/admin/export/download" class="card p-4 grid gap-3 max-w-md">
-        <div>
-          <label class="text-sm">Mês inicial</label>
-          <input type="month" name="ym" value="${ymDefault}" class="input" required />
+  const rawYm = typeof req.query.ym === 'string' ? req.query.ym : ymDefault;
+  const ymSelected = /^\d{4}-\d{2}$/.test(rawYm) ? rawYm : ymDefault;
+  const rawMonths = req.query.months !== undefined ? req.query.months : 1;
+  const monthsSelected = sanitizeMonths(rawMonths);
+  const linkData = buildSignedExportLink(ymSelected, monthsSelected);
+  const downloadUrl = linkData.url;
+  const signingError = linkData.error;
+  const linkNotice = signingError
+    ? `<p class="text-sm text-rose-600 mt-2">${esc(signingError)}</p>`
+    : isFlagEnabled('FEATURE_SIGNED_EXPORT_DOWNLOAD')
+    ? '<p class="text-xs text-slate-500 mt-2">Link válido durante 60 segundos. Utilize o formulário acima para gerar um novo.</p>'
+    : '';
+  const generatedAt = linkData.ts
+    ? `<p class="text-xs text-slate-400">Assinado às ${dayjs(linkData.ts).format('HH:mm:ss')}.</p>`
+    : '';
+  const downloadCta = downloadUrl
+    ? `<a class="btn btn-primary" data-export-download href="${esc(downloadUrl)}">Descarregar Excel</a>`
+    : '<button class="btn btn-primary" type="button" disabled>Configuração indisponível</button>';
+
+  res.send(
+    layout({
+      title: 'Exportar Mapa (Excel)',
+      user: req.user,
+      activeNav: 'export',
+      branding: resolveBrandingForRequest(req),
+      body: html`
+        <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
+        <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
+        <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
+          <div>
+            <label class="text-sm">Mês inicial</label>
+            <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
+          </div>
+          <div>
+            <label class="text-sm">Quantos meses (1–12)</label>
+            <input type="number" min="1" max="12" name="months" value="${monthsSelected}" class="input" required />
+          </div>
+          <button class="btn btn-light" type="submit">Atualizar link</button>
+        </form>
+        <div class="mt-4 space-y-2">
+          ${downloadCta}
+          ${linkNotice}
+          ${generatedAt}
         </div>
-        <div>
-          <label class="text-sm">Quantos meses (1–12)</label>
-          <input type="number" min="1" max="12" name="months" value="1" class="input" required />
-        </div>
-        <button class="btn btn-primary">Descarregar Excel</button>
-      </form>
-      <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
-    `
-  }));
+        <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
+      `
+    })
+  );
 });
 
 // Excel estilo Gantt + tabela de detalhes
-app.get('/admin/export/download', requireLogin, requirePermission('bookings.export'), async (req, res) => {
-  ensureNoIndexHeader(res);
-  const ym = String(req.query.ym || '').trim();
-  const months = Math.min(12, Math.max(1, Number(req.query.months || 1)));
-  if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');
-  const start = dayjs(ym + '-01');
-  if (!start.isValid()) return res.status(400).send('Data inválida.');
+app.get(
+  '/admin/export/download',
+  requireLogin,
+  requirePermission('bookings.export'),
+  logExportAttempt,
+  verifyExportSignature,
+  exportRateLimiter,
+  async (req, res) => {
+    ensureNoIndexHeader(res);
+    const signedParams = req.exportDownloadParams || {};
+    const ym = typeof signedParams.ym === 'string' ? signedParams.ym : String(req.query.ym || '').trim();
+    const months = sanitizeMonths(
+      typeof signedParams.months === 'number' ? signedParams.months : req.query.months || 1
+    );
+    if (!/^\d{4}-\d{2}$/.test(ym)) return res.status(400).send('Parâmetro ym inválido (YYYY-MM)');
+    const start = dayjs(`${ym}-01`);
+    if (!start.isValid()) return res.status(400).send('Data inválida.');
 
   const wb = new ExcelJS.Workbook();
 
@@ -2499,16 +2692,17 @@ app.get('/admin/export/download', requireLogin, requirePermission('bookings.expo
     });
   }
 
-  const filename =
-    months === 1
-      ? `mapa_${start.format('YYYY_MM')}.xlsx`
-      : `mapa_${start.format('YYYY_MM')}_+${months - 1}m.xlsx`;
+    const filename =
+      months === 1
+        ? `mapa_${start.format('YYYY_MM')}.xlsx`
+        : `mapa_${start.format('YYYY_MM')}_+${months - 1}m.xlsx`;
 
-  logActivity(req.user.id, 'export:calendar_excel', null, null, { ym, months });
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  await wb.xlsx.write(res);
-  res.end();
-});
+    logExportActivity(req.user, 'export:download_success', { ym, months });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  }
+);
 
 };

@@ -1,4 +1,5 @@
 const { setNoIndex } = require('../../middlewares/security');
+const { serverRender } = require('../../middlewares/telemetry');
 
 module.exports = function registerAccountModule(app, context) {
   const {
@@ -35,6 +36,100 @@ module.exports = function registerAccountModule(app, context) {
     if (isFlagEnabled('FEATURE_META_NOINDEX_BACKOFFICE')) {
       setNoIndex(res);
     }
+  }
+
+  const TWO_FACTOR_BACKOFF_WINDOWS = [5, 10, 20];
+  const TWO_FACTOR_BACKOFF_THRESHOLD = 5;
+  const twoFactorBackoff = new Map();
+
+  function isTwoFactorBackoffEnabled() {
+    return isFlagEnabled('FEATURE_BACKOFF_2FA');
+  }
+
+  function getBackoffKey(userId) {
+    return String(userId);
+  }
+
+  function getBackoffEntry(userId) {
+    const key = getBackoffKey(userId);
+    const entry = twoFactorBackoff.get(key);
+    if (!entry) {
+      return null;
+    }
+    if (entry.lockUntil && entry.lockUntil <= Date.now()) {
+      entry.lockUntil = 0;
+      entry.attempts = entry.attempts || 0;
+      twoFactorBackoff.set(key, entry);
+    }
+    return entry;
+  }
+
+  function clearBackoff(userId) {
+    twoFactorBackoff.delete(getBackoffKey(userId));
+  }
+
+  function getActiveLock(userId) {
+    if (!isTwoFactorBackoffEnabled()) {
+      return null;
+    }
+    const entry = getBackoffEntry(userId);
+    if (entry && entry.lockUntil && entry.lockUntil > Date.now()) {
+      return { lockUntil: entry.lockUntil, level: entry.level || 0 };
+    }
+    return null;
+  }
+
+  function registerTwoFactorFailure(userId) {
+    if (!isTwoFactorBackoffEnabled()) {
+      return null;
+    }
+    const now = Date.now();
+    const key = getBackoffKey(userId);
+    const current = getBackoffEntry(userId) || { attempts: 0, lockUntil: 0, level: 0 };
+
+    if (current.lockUntil && current.lockUntil > now) {
+      return { locked: true, lockUntil: current.lockUntil, attemptsRemaining: 0, level: current.level || 0 };
+    }
+
+    current.attempts = (current.attempts || 0) + 1;
+
+    if (current.attempts >= TWO_FACTOR_BACKOFF_THRESHOLD) {
+      const levelIndex = Math.min(current.level || 0, TWO_FACTOR_BACKOFF_WINDOWS.length - 1);
+      const durationMinutes = TWO_FACTOR_BACKOFF_WINDOWS[levelIndex];
+      current.lockUntil = now + durationMinutes * 60_000;
+      current.level = Math.min((current.level || 0) + 1, TWO_FACTOR_BACKOFF_WINDOWS.length - 1);
+      current.attempts = 0;
+      twoFactorBackoff.set(key, current);
+      return { locked: true, lockUntil: current.lockUntil, attemptsRemaining: 0, level: current.level };
+    }
+
+    twoFactorBackoff.set(key, current);
+    return {
+      locked: false,
+      lockUntil: 0,
+      attemptsRemaining: Math.max(TWO_FACTOR_BACKOFF_THRESHOLD - current.attempts, 0),
+      level: current.level || 0
+    };
+  }
+
+  function formatLockDuration(lockUntil) {
+    const remainingMs = Math.max(lockUntil - Date.now(), 0);
+    const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+    return `${minutes} minuto${minutes === 1 ? '' : 's'}`;
+  }
+
+  function buildBackoffErrorMessage(state, fallbackMessage) {
+    if (!state) {
+      return fallbackMessage;
+    }
+    if (state.locked && state.lockUntil) {
+      return `Demasiadas tentativas falhadas. Aguarde ${formatLockDuration(state.lockUntil)} antes de tentar novamente.`;
+    }
+    if (typeof state.attemptsRemaining === 'number' && state.attemptsRemaining > 0 && state.attemptsRemaining <= 2) {
+      const attemptsLabel = state.attemptsRemaining === 1 ? '1 tentativa' : `${state.attemptsRemaining} tentativas`;
+      return `${fallbackMessage} Restam ${attemptsLabel} antes de bloqueio temporário.`;
+    }
+    return fallbackMessage;
   }
 
   function loadSecurityData(userId, options = {}) {
@@ -245,6 +340,7 @@ module.exports = function registerAccountModule(app, context) {
       </div>
     `;
 
+    serverRender('route:/account/seguranca');
     res.send(
       layout({
         title: 'Segurança da Conta',
@@ -268,6 +364,9 @@ module.exports = function registerAccountModule(app, context) {
   }
 
   app.get(['/account/seguranca', '/account/security'], requireLogin, (req, res) => {
+    if (req.path === '/account/security' && isFlagEnabled('FEATURE_ALIAS_ACCOUNT_SECURITY_REDIRECT')) {
+      return res.redirect(302, '/account/seguranca');
+    }
     renderSecurityPage(req, res);
   });
 
@@ -285,6 +384,7 @@ module.exports = function registerAccountModule(app, context) {
       issuer: 'Gestor de Alojamentos',
       label: `${viewer.username}@Gestor`
     });
+    clearBackoff(viewer.id);
     logActivity(viewer.id, 'user:2fa_setup_start', 'user', viewer.id, {});
     csrfProtection.rotateToken(req, res);
     renderSecurityPage(req, res, {
@@ -299,6 +399,7 @@ module.exports = function registerAccountModule(app, context) {
     }
     const viewer = req.user;
     twoFactorService.cancelEnrollment(viewer.id);
+    clearBackoff(viewer.id);
     logActivity(viewer.id, 'user:2fa_setup_cancel', 'user', viewer.id, {});
     csrfProtection.rotateToken(req, res);
     renderSecurityPage(req, res, { successMessage: 'Configuração cancelada.' });
@@ -310,6 +411,16 @@ module.exports = function registerAccountModule(app, context) {
       return res.status(403).send('Pedido rejeitado: token CSRF inválido.');
     }
     const viewer = req.user;
+    const activeLock = getActiveLock(viewer.id);
+    if (activeLock) {
+      csrfProtection.rotateToken(req, res);
+      logSessionEvent(viewer.id, 'account_2fa_confirm_rate_limited', req, {
+        lock_expires_at: new Date(activeLock.lockUntil).toISOString()
+      });
+      return renderSecurityPage(req, res, {
+        errorMessage: `Demasiadas tentativas falhadas. Aguarde ${formatLockDuration(activeLock.lockUntil)} antes de tentar novamente.`
+      });
+    }
     const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
     if (!token) {
       csrfProtection.rotateToken(req, res);
@@ -321,9 +432,12 @@ module.exports = function registerAccountModule(app, context) {
     });
     csrfProtection.rotateToken(req, res);
     if (!result.ok) {
+      const backoffState = registerTwoFactorFailure(viewer.id);
       logSessionEvent(viewer.id, 'account_2fa_confirm_failed', req, { reason: result.reason || 'invalid' });
-      return renderSecurityPage(req, res, { errorMessage: 'Código inválido. Tente novamente.' });
+      const errorMessage = buildBackoffErrorMessage(backoffState, 'Código inválido. Tente novamente.');
+      return renderSecurityPage(req, res, { errorMessage });
     }
+    clearBackoff(viewer.id);
     logActivity(viewer.id, 'user:2fa_enabled', 'user', viewer.id, {});
     logSessionEvent(viewer.id, 'account_2fa_enabled', req, {});
     renderSecurityPage(req, res, {
@@ -339,6 +453,7 @@ module.exports = function registerAccountModule(app, context) {
     }
     const viewer = req.user;
     twoFactorService.disable(viewer.id);
+    clearBackoff(viewer.id);
     logActivity(viewer.id, 'user:2fa_disabled', 'user', viewer.id, {});
     logSessionEvent(viewer.id, 'account_2fa_disabled', req, {});
     csrfProtection.rotateToken(req, res);
