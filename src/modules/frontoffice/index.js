@@ -1,5 +1,6 @@
 const { ConflictError } = require('../../services/errors');
 const { setNoIndex, verifySignedQuery, rateLimitByUserRoute } = require('../../middlewares/security');
+const { serverRender } = require('../../middlewares/telemetry');
 
 module.exports = function registerFrontoffice(app, context) {
   const {
@@ -875,7 +876,7 @@ app.get('/book/:unitId', (req, res) => {
   rememberActiveBrandingProperty(res, u.property_id);
 
   const csrfToken = csrfProtection.ensureToken(req, res);
-
+  serverRender('route:/book/:unitId');
   res.send(layout({
     title: 'Confirmar Reserva',
     user,
@@ -1575,6 +1576,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     `)}</script>
   `;
 
+  serverRender('route:/calendar');
   res.send(layout({
     title: 'Mapa de Reservas',
     user: req.user,

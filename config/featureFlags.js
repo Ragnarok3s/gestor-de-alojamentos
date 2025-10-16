@@ -8,7 +8,8 @@ const DEFAULT_FLAGS = {
   FEATURE_BREADCRUMBS: true,
   FEATURE_SIGNED_EXPORT_DOWNLOAD: true,
   FEATURE_EXPORT_RATE_LIMIT: true,
-  FEATURE_BACKOFF_2FA: true
+  FEATURE_BACKOFF_2FA: true,
+  FEATURE_TELEMETRY_LINKS: true
 };
 
 function parseFlag(value, defaultValue) {

@@ -24,6 +24,7 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
@@ -2384,6 +2385,10 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
   }
   // intentionally restrict the top navigation to the primary shortcuts only
 
+  const telemetryFeatureEnabled = isFeatureEnabled('FEATURE_TELEMETRY_LINKS');
+  const telemetryBootstrapScript = `<script>window.__FEATURE_TELEMETRY_LINKS__ = ${telemetryFeatureEnabled ? 'true' : 'false'};</script>`;
+  const telemetryClientScript = telemetryFeatureEnabled ? '<script defer src="/public/js/telemetry.js"></script>' : '';
+
   return html`<!doctype html>
   <html lang="pt">
     <head>
@@ -2394,6 +2399,8 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+      ${telemetryBootstrapScript}
+      ${telemetryClientScript}
       <style>
         :root{
           --brand-primary:${baseTheme.primaryColor};
@@ -3444,6 +3451,7 @@ const context = {
 registerAuthRoutes(app, context);
 registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
+registerInternalTelemetry(app, context);
 registerBackoffice(app, context);
 
 // ===================== Debug Rotas + 404 =====================

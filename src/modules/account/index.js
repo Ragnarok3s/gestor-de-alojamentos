@@ -1,4 +1,5 @@
 const { setNoIndex } = require('../../middlewares/security');
+const { serverRender } = require('../../middlewares/telemetry');
 
 module.exports = function registerAccountModule(app, context) {
   const {
@@ -339,6 +340,7 @@ module.exports = function registerAccountModule(app, context) {
       </div>
     `;
 
+    serverRender('route:/account/seguranca');
     res.send(
       layout({
         title: 'Segurança da Conta',

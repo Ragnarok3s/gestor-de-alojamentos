@@ -92,6 +92,16 @@
         openModal();
         return;
       }
+      if (window.__telemetry && typeof window.__telemetry.track === 'function') {
+        try {
+          window.__telemetry.track({
+            route: url,
+            referrer: window.location.pathname + window.location.search
+          });
+        } catch (err) {
+          // ignore telemetry errors
+        }
+      }
       setLoading(trigger.getAttribute('data-unit-card-loading') || 'A preparar o cartão da unidade...');
       openModal();
       var controller = window.AbortController ? new AbortController() : null;

@@ -1,6 +1,7 @@
 const registerUxApi = require('./ux-api');
 const { ConflictError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
+const { serverRender } = require('../../middlewares/telemetry');
 
 const FEATURE_PRESETS = [
   {
@@ -3974,6 +3975,7 @@ module.exports = function registerBackoffice(app, context) {
 
     const theme = resolveBrandingForRequest(req);
 
+    serverRender('route:/admin');
     res.send(
       layout({
         title: 'Backoffice',
@@ -5246,6 +5248,7 @@ app.get(
     : '';
   const unitCardScriptTag = enableUnitCardModal ? html`<script src="/public/js/card-modal.js"></script>` : '';
 
+  serverRender('route:/admin/units/:id');
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
     user: req.user,
