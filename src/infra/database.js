@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   imported_at TEXT,
   source_payload TEXT,
   import_notes TEXT,
+  rate_plan_id INTEGER REFERENCES rate_plans(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -147,6 +148,34 @@ CREATE TABLE IF NOT EXISTS rate_rules (
 
 CREATE INDEX IF NOT EXISTS idx_rate_rules_unit ON rate_rules(unit_id);
 CREATE INDEX IF NOT EXISTS idx_rate_rules_property ON rate_rules(property_id);
+
+CREATE TABLE IF NOT EXISTS rate_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  min_price REAL DEFAULT NULL,
+  max_price REAL DEFAULT NULL,
+  rules TEXT DEFAULT '{}' CHECK (json_valid(rules)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS rate_restrictions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rate_plan_id INTEGER NOT NULL REFERENCES rate_plans(id) ON DELETE CASCADE,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  closed_to_arrival INTEGER NOT NULL DEFAULT 0,
+  closed_to_departure INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_restrictions_plan_dates ON rate_restrictions(rate_plan_id, start_date, end_date);
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -577,6 +606,40 @@ function runLightMigrations(db) {
     ensureColumn('bookings', 'imported_at', 'TEXT');
     ensureColumn('bookings', 'source_payload', 'TEXT');
     ensureColumn('bookings', 'import_notes', 'TEXT');
+    ensureColumn('bookings', 'rate_plan_id', 'INTEGER REFERENCES rate_plans(id) ON DELETE SET NULL');
+
+    ensureTable(
+      'rate_plans',
+      `CREATE TABLE IF NOT EXISTS rate_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        min_price REAL DEFAULT NULL,
+        max_price REAL DEFAULT NULL,
+        rules TEXT DEFAULT '{}' CHECK (json_valid(rules)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    ensureTable(
+      'rate_restrictions',
+      `CREATE TABLE IF NOT EXISTS rate_restrictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rate_plan_id INTEGER NOT NULL REFERENCES rate_plans(id) ON DELETE CASCADE,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        closed_to_arrival INTEGER NOT NULL DEFAULT 0,
+        closed_to_departure INTEGER NOT NULL DEFAULT 0,
+        reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_rate_restrictions_plan_dates ON rate_restrictions(rate_plan_id, start_date, end_date);`
+    );
 
     ensureTable(
       'unit_blocks',
@@ -634,6 +697,16 @@ function runLightMigrations(db) {
     ensureColumn('rate_plans', 'min_price', 'REAL DEFAULT NULL');
     ensureColumn('rate_plans', 'max_price', 'REAL DEFAULT NULL');
     ensureColumn('rate_plans', 'rules', "TEXT DEFAULT '{}' CHECK (json_valid(rules))");
+    ensureColumn('rate_plans', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn('rate_plans', 'active', 'INTEGER NOT NULL DEFAULT 1');
+    ensureColumn('rate_plans', 'description', 'TEXT');
+    ensureColumn('rate_plans', 'property_id', 'INTEGER REFERENCES properties(id) ON DELETE CASCADE');
+    ensureColumn('rate_plans', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))");
+    ensureColumn('rate_plans', 'updated_at', "TEXT NOT NULL DEFAULT (datetime('now'))");
+
+    ensureColumn('rate_restrictions', 'reason', 'TEXT');
+    ensureColumn('rate_restrictions', 'closed_to_arrival', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn('rate_restrictions', 'closed_to_departure', 'INTEGER NOT NULL DEFAULT 0');
 
     ensureTable(
       'pricing_snapshots',

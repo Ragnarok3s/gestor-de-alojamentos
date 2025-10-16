@@ -23,7 +23,9 @@ module.exports = function registerUxApi(app, context) {
     logActivity,
     telemetry,
     otaDispatcher,
-    messageTemplates
+    messageTemplates,
+    ratePlanService,
+    userCan
   } = context;
 
   const rateService = createRateManagementService({ db, dayjs });
@@ -49,6 +51,13 @@ module.exports = function registerUxApi(app, context) {
       success,
       meta
     });
+  }
+
+  function ensureCanManageRates(req, res) {
+    if (!userCan || typeof userCan !== 'function') return true;
+    if (userCan(req.user, 'rates.manage')) return true;
+    res.status(403).json({ ok: false, error: 'Sem permissão para gerir tarifários.' });
+    return false;
   }
 
   router.put('/rates/bulk', (req, res) => {
@@ -106,6 +115,87 @@ module.exports = function registerUxApi(app, context) {
   router.post('/rates/bulk/undo', (req, res) => {
     try {
       const removed = rateService.undoBulkUpdate(req.body?.rateIds || []);
+      return res.json({ ok: true, removed });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.get('/rate-plans', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const propertyId = req.query && req.query.propertyId != null ? req.query.propertyId : null;
+      const plans = ratePlanService.listPlans({ propertyId, includeInactive: true });
+      return res.json({ ok: true, plans });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.post('/rate-plans', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const plan = ratePlanService.createPlan(req.body || {});
+      return res.status(201).json({ ok: true, plan });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.put('/rate-plans/:id', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const plan = ratePlanService.updatePlan(req.params.id, req.body || {});
+      return res.json({ ok: true, plan });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.delete('/rate-plans/:id', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const removed = ratePlanService.deletePlan(req.params.id);
+      return res.json({ ok: true, removed });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.get('/rate-plans/:id/restrictions', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const restrictions = ratePlanService.listRestrictions(req.params.id);
+      return res.json({ ok: true, restrictions });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.post('/rate-plans/:id/restrictions', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const restriction = ratePlanService.createRestriction({ ...req.body, ratePlanId: req.params.id });
+      return res.status(201).json({ ok: true, restriction });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.put('/rate-restrictions/:id', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const restriction = ratePlanService.updateRestriction(req.params.id, req.body || {});
+      return res.json({ ok: true, restriction });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.delete('/rate-restrictions/:id', (req, res) => {
+    if (!ensureCanManageRates(req, res)) return;
+    try {
+      const removed = ratePlanService.deleteRestriction(req.params.id);
       return res.json({ ok: true, removed });
     } catch (err) {
       return handleError(res, err);

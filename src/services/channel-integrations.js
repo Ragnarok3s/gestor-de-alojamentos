@@ -860,9 +860,10 @@ function createChannelIntegrationService({
         import_source,
         imported_at,
         source_payload,
-        import_notes
+        import_notes,
+        rate_plan_id
       )
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
 
   function getChannelDefinition(channelKey) {
@@ -1250,7 +1251,8 @@ function createChannelIntegrationService({
             source,
             dayjs().format('YYYY-MM-DD HH:mm:ss'),
             payload,
-            record.notes || null
+            record.notes || null,
+            Number.isInteger(record.ratePlanId) && record.ratePlanId > 0 ? record.ratePlanId : null
           );
           const lastId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
           inserted.push({ record, booking_id: lastId, unit });
