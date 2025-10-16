@@ -965,6 +965,154 @@
     });
   }
 
+  function setupMessageTemplateTester(toast) {
+    var roots = Array.from(document.querySelectorAll('[data-message-templates-root]'));
+    if (!roots.length) return;
+
+    roots.forEach(function (root) {
+      Array.from(root.querySelectorAll('[data-message-template]')).forEach(function (form) {
+        var testButton = form.querySelector('[data-template-test]');
+        if (!testButton) return;
+
+        testButton.addEventListener('click', function (event) {
+          event.preventDefault();
+
+          var key = form.getAttribute('data-template-key');
+          if (!key) return;
+          var languageAttr = form.getAttribute('data-template-language') || '';
+          var languageLabel = form.getAttribute('data-template-language-label') || '';
+
+          var bodyField = form.querySelector('textarea[name="body"]');
+          var sampleField = form.querySelector('[data-template-sample]');
+          var variablesField = form.querySelector('[data-template-vars]');
+          var guestLanguageField = form.querySelector('[data-template-guest-language]');
+          var modeField = form.querySelector('[data-template-mode]');
+          var statusEl = form.querySelector('[data-template-status]');
+          var previewEl = form.querySelector('[data-template-preview]');
+
+          if (statusEl) {
+            statusEl.hidden = true;
+            statusEl.textContent = '';
+            statusEl.classList.remove('text-rose-600');
+            statusEl.classList.add('text-slate-500');
+          }
+          if (previewEl) {
+            previewEl.hidden = true;
+            previewEl.textContent = '';
+          }
+          if (variablesField) {
+            variablesField.removeAttribute('aria-invalid');
+          }
+
+          var variables = {};
+          if (variablesField) {
+            var rawVars = variablesField.value.trim();
+            if (rawVars) {
+              try {
+                variables = JSON.parse(rawVars);
+              } catch (err) {
+                variablesField.setAttribute('aria-invalid', 'true');
+                if (statusEl) {
+                  statusEl.classList.remove('text-slate-500');
+                  statusEl.classList.add('text-rose-600');
+                  statusEl.hidden = false;
+                  statusEl.textContent = 'JSON de exemplo inválido.';
+                }
+                if (toast) {
+                  toast.show({ type: 'error', message: 'JSON de exemplo inválido.' });
+                }
+                return;
+              }
+            }
+          }
+
+          var payload = {
+            templateKey: key,
+            language: modeField && modeField.value === 'language' ? languageAttr : '',
+            guestLanguage: guestLanguageField ? guestLanguageField.value.trim() : '',
+            guestMessage: sampleField ? sampleField.value : '',
+            variables: variables,
+            body: bodyField ? bodyField.value : ''
+          };
+
+          testButton.disabled = true;
+
+          fetch('/admin/api/templates/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
+            .then(function (resp) {
+              if (!resp.ok) {
+                return resp
+                  .json()
+                  .catch(function () {
+                    return { error: 'Não foi possível gerar a pré-visualização.' };
+                  })
+                  .then(function (payload) {
+                    throw payload;
+                  });
+              }
+              return resp.json();
+            })
+            .then(function (data) {
+              var previewText = data && data.preview ? String(data.preview) : '';
+              if (previewEl) {
+                previewEl.textContent = previewText;
+                previewEl.hidden = false;
+              }
+              if (statusEl) {
+                var langLabel = data && data.languageLabel ? data.languageLabel : languageLabel || (data && data.language ? data.language.toUpperCase() : '');
+                var message = 'Pré-visualização em ' + (langLabel || 'idioma desconhecido');
+                if (data && data.languageSource) {
+                  if (data.languageSource === 'detected') {
+                    message += ' (detetado automaticamente';
+                    if (data.detectedLanguageLabel && data.detectedLanguageLabel !== langLabel) {
+                      message += ' como ' + data.detectedLanguageLabel.toLowerCase();
+                    }
+                    message += ').';
+                  } else if (data.languageSource === 'guest') {
+                    message += ' (preferência do hóspede).';
+                  } else if (data.languageSource === 'fallback') {
+                    message += ' (idioma por omissão).';
+                  } else if (data.languageSource === 'explicit') {
+                    message += ' (selecionado manualmente).';
+                  } else {
+                    message += '.';
+                  }
+                } else {
+                  message += '.';
+                }
+                statusEl.classList.remove('text-rose-600');
+                statusEl.classList.add('text-slate-500');
+                statusEl.textContent = message;
+                statusEl.hidden = false;
+              }
+              if (toast) {
+                var toastLabel = data && data.languageLabel ? data.languageLabel : languageLabel || (data && data.language ? data.language.toUpperCase() : 'idioma');
+                toast.show({ type: 'success', message: 'Pré-visualização em ' + toastLabel + '.' });
+              }
+            })
+            .catch(function (err) {
+              var errorMessage = (err && err.error) || 'Não foi possível gerar a pré-visualização.';
+              if (statusEl) {
+                statusEl.classList.remove('text-slate-500');
+                statusEl.classList.add('text-rose-600');
+                statusEl.textContent = errorMessage;
+                statusEl.hidden = false;
+              }
+              if (toast) {
+                toast.show({ type: 'error', message: errorMessage });
+              }
+            })
+            .finally(function () {
+              testButton.disabled = false;
+            });
+        });
+      });
+    });
+  }
+
   function initKpiCard(config, toast) {
     var card = document.querySelector('[data-kpi-card]');
     if (!card) return;
@@ -1059,5 +1207,6 @@
     setupBlockModal(config, toast);
     setupReviews(toast);
     setupWeeklyExport(config, toast);
+    setupMessageTemplateTester(toast);
   });
 })();
