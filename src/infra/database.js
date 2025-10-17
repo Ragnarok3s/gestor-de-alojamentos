@@ -1080,6 +1080,22 @@ function runLightMigrations(db) {
     );
 
     ensureTable(
+      'guest_portal_events',
+      `CREATE TABLE IF NOT EXISTS guest_portal_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        token TEXT,
+        event_type TEXT NOT NULL,
+        payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
+        ip TEXT,
+        user_agent TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_guest_portal_events_booking ON guest_portal_events(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_guest_portal_events_created ON guest_portal_events(created_at);`
+    );
+
+    ensureTable(
       'kb_articles',
       `CREATE TABLE IF NOT EXISTS kb_articles (
         id TEXT PRIMARY KEY,

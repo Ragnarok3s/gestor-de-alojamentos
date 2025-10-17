@@ -38,11 +38,13 @@ module.exports = function registerFrontoffice(app, context) {
     rescheduleBookingUpdateStmt,
     rescheduleBlockUpdateStmt,
     bookingEmailer,
+    guestPortalService,
     overbookingGuard,
     otaDispatcher,
     featureFlags,
     isFeatureEnabled,
-    ratePlanService
+    ratePlanService,
+    slugify
   } = context;
 
   function summarizePaymentDetailsForBooking(booking, summary) {
@@ -109,6 +111,230 @@ module.exports = function registerFrontoffice(app, context) {
     }
 
     return lines.length ? lines : ['Sem movimentos registados'];
+  }
+
+  function normalizeGuestToken(token) {
+    return typeof token === 'string' ? token.trim() : '';
+  }
+
+  function safeParseJson(value, fallback = null) {
+    if (!value || typeof value !== 'string') return fallback;
+    try {
+      return JSON.parse(value);
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function parsePolicyExtras(rawExtras) {
+    const parsed = safeParseJson(rawExtras, []);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item, index) => {
+        if (!item) return null;
+        const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim() : `Extra ${index + 1}`;
+        const description = typeof item.description === 'string' ? item.description.trim() : '';
+        const codeSource = item.code || item.id || name;
+        const code = slugify ? slugify(String(codeSource)) : String(codeSource || `extra-${index + 1}`).toLowerCase();
+        if (!code) return null;
+
+        let priceCents = null;
+        if (item.price_cents != null && Number.isFinite(Number(item.price_cents))) {
+          priceCents = Math.round(Number(item.price_cents));
+        } else if (item.price != null && Number.isFinite(Number(item.price))) {
+          priceCents = Math.round(Number(item.price) * 100);
+        }
+
+        return {
+          code,
+          name,
+          description,
+          priceCents: priceCents != null ? priceCents : null,
+          priceFormatted: priceCents != null ? `€ ${eur(priceCents)}` : null
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function listExtraRequests(bookingId) {
+    const rows = db
+      .prepare(
+        `SELECT payload_json, created_at
+           FROM guest_portal_events
+          WHERE booking_id = ?
+            AND event_type = 'extra_requested'
+          ORDER BY created_at ASC`
+      )
+      .all(bookingId);
+
+    return rows.map(row => {
+      const payload = safeParseJson(row.payload_json, {});
+      const quantityRaw = payload && payload.quantity != null ? Number(payload.quantity) : 1;
+      const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.round(quantityRaw) : 1;
+      return {
+        code: payload && typeof payload.code === 'string' ? payload.code : null,
+        name: payload && typeof payload.name === 'string' ? payload.name : 'Extra',
+        quantity,
+        createdAt: row.created_at || null,
+        createdAtLabel: row.created_at && dayjs(row.created_at).isValid()
+          ? dayjs(row.created_at).format('DD/MM/YYYY HH:mm')
+          : null
+      };
+    });
+  }
+
+  function loadGuestBookingRow(bookingId) {
+    return db
+      .prepare(
+        `SELECT b.*, u.name AS unit_name, u.property_id, p.name AS property_name, p.address AS property_address,
+                p.locality AS property_locality, p.district AS property_district,
+                pol.checkin_from, pol.checkout_until, pol.pets_allowed, pol.pets_fee,
+                pol.cancellation_policy, pol.parking_info, pol.children_policy,
+                pol.payment_methods, pol.quiet_hours, pol.extras AS policy_extras
+           FROM bookings b
+           JOIN units u ON u.id = b.unit_id
+           JOIN properties p ON p.id = u.property_id
+      LEFT JOIN property_policies pol ON pol.property_id = p.id
+          WHERE b.id = ?`
+      )
+      .get(bookingId);
+  }
+
+  function buildGuestPortalPayload(bookingRow) {
+    if (!bookingRow) return null;
+
+    const nights = dateRangeNights(bookingRow.checkin, bookingRow.checkout).length;
+    const checkinDate = bookingRow.checkin && dayjs(bookingRow.checkin).isValid()
+      ? dayjs(bookingRow.checkin)
+      : null;
+    const checkoutDate = bookingRow.checkout && dayjs(bookingRow.checkout).isValid()
+      ? dayjs(bookingRow.checkout)
+      : null;
+    const checkinLabel = checkinDate ? checkinDate.format('DD/MM/YYYY') : bookingRow.checkin;
+    const checkoutLabel = checkoutDate ? checkoutDate.format('DD/MM/YYYY') : bookingRow.checkout;
+    const statusRaw = (bookingRow.status || '').toUpperCase();
+    const statusLabel =
+      statusRaw === 'CONFIRMED'
+        ? 'Confirmada'
+        : statusRaw === 'PENDING'
+          ? 'Pendente'
+          : statusRaw === 'CANCELLED'
+            ? 'Cancelada'
+            : statusRaw || 'Reserva';
+
+    const payments = db
+      .prepare(
+        `SELECT id, status, amount_cents, currency, created_at
+           FROM payments
+          WHERE booking_id = ?
+          ORDER BY created_at ASC`
+      )
+      .all(bookingRow.id);
+
+    const paymentIds = payments.map(p => p.id).filter(Boolean);
+    const refunds = paymentIds.length
+      ? db
+          .prepare(
+            `SELECT payment_id, amount_cents, status, created_at
+               FROM refunds
+              WHERE payment_id IN (${paymentIds.map(() => '?').join(',')})`
+          )
+          .all(...paymentIds)
+      : [];
+
+    const { bookingSummaries } = aggregatePaymentData({ payments, refunds });
+    const paymentSummary = bookingSummaries.get(bookingRow.id) || null;
+    const outstandingCents = computeOutstandingCents(paymentSummary, bookingRow.total_cents);
+    const paymentLines = summarizePaymentDetailsForBooking(bookingRow, paymentSummary);
+
+    const paymentEntries = payments.map(payment => {
+      const descriptor = describePaymentStatus(payment.status);
+      const createdAtLabel = payment.created_at && dayjs(payment.created_at).isValid()
+        ? dayjs(payment.created_at).format('DD/MM/YYYY HH:mm')
+        : null;
+      return {
+        id: payment.id,
+        status: payment.status,
+        statusLabel: descriptor.label,
+        statusTone: descriptor.tone,
+        amountCents: payment.amount_cents,
+        amountFormatted: `€ ${eur(payment.amount_cents || 0)}`,
+        createdAt: payment.created_at || null,
+        createdAtLabel
+      };
+    });
+
+    const instructionsAddressParts = [bookingRow.property_address, bookingRow.property_locality, bookingRow.property_district]
+      .map(part => (part || '').trim())
+      .filter(Boolean);
+
+    const extrasAvailable = parsePolicyExtras(bookingRow.policy_extras);
+    const extraRequests = listExtraRequests(bookingRow.id);
+
+    return {
+      booking: {
+        id: bookingRow.id,
+        status: statusRaw,
+        statusLabel,
+        propertyName: bookingRow.property_name || '',
+        unitName: bookingRow.unit_name || '',
+        guestName: bookingRow.guest_name || '',
+        guestEmail: bookingRow.guest_email || '',
+        guestPhone: bookingRow.guest_phone || '',
+        guestNationality: bookingRow.guest_nationality || '',
+        guestCount: (Number(bookingRow.adults) || 0) + (Number(bookingRow.children) || 0),
+        adults: Number(bookingRow.adults) || 0,
+        children: Number(bookingRow.children) || 0,
+        agency: bookingRow.agency || '',
+        checkin: bookingRow.checkin,
+        checkinLabel,
+        checkout: bookingRow.checkout,
+        checkoutLabel,
+        nights,
+        totalCents: Number(bookingRow.total_cents) || 0,
+        totalFormatted: `€ ${eur(bookingRow.total_cents || 0)}`,
+        propertyId: bookingRow.property_id,
+        propertyAddress: instructionsAddressParts.join(' · ')
+      },
+      instructions: {
+        address: instructionsAddressParts.join('\n'),
+        checkinFrom: bookingRow.checkin_from || null,
+        checkoutUntil: bookingRow.checkout_until || null,
+        parkingInfo: bookingRow.parking_info || null,
+        quietHours: bookingRow.quiet_hours || null,
+        cancellationPolicy: bookingRow.cancellation_policy || null,
+        paymentMethods: bookingRow.payment_methods || null,
+        childrenPolicy: bookingRow.children_policy || null,
+        petsAllowed:
+          bookingRow.pets_allowed == null
+            ? null
+            : Number(bookingRow.pets_allowed) === 1,
+        petsFee: bookingRow.pets_fee != null && Number.isFinite(Number(bookingRow.pets_fee))
+          ? Number(bookingRow.pets_fee)
+          : null
+      },
+      payments: {
+        totalCents: Number(bookingRow.total_cents) || 0,
+        totalFormatted: `€ ${eur(bookingRow.total_cents || 0)}`,
+        outstandingCents,
+        outstandingFormatted: `€ ${eur(outstandingCents || 0)}`,
+        summaryLines: paymentLines,
+        entries: paymentEntries
+      },
+      extras: {
+        available: extrasAvailable,
+        requests: extraRequests
+      }
+    };
+  }
+
+  function serializeGuestPortalState(value) {
+    try {
+      return JSON.stringify(value).replace(/</g, '\\u003c');
+    } catch (err) {
+      return '{}';
+    }
   }
 
   function isFlagEnabled(flagName) {
@@ -1116,7 +1342,9 @@ app.post('/book', (req, res) => {
   }
 
   const trx = db.transaction(() => {
-    const confirmationToken = crypto.randomBytes(16).toString('hex');
+    const confirmationToken = guestPortalService
+      ? guestPortalService.generateToken({ length: 10 })
+      : crypto.randomBytes(16).toString('hex');
     const conflicts = db.prepare(
       `SELECT 1 FROM bookings WHERE unit_id = ? AND status IN ('CONFIRMED','PENDING') AND NOT (checkout <= ? OR checkin >= ?)
        UNION ALL
@@ -1207,7 +1435,7 @@ app.post('/book', (req, res) => {
     }
 
     csrfProtection.rotateToken(req, res);
-    res.redirect(`/booking/${id}?token=${confirmationToken}`);
+    res.redirect(`/guest/${id}?token=${confirmationToken}`);
   } catch (e) {
     csrfProtection.rotateToken(req, res);
     if (e instanceof ConflictError || e.message === 'conflict') {
@@ -1218,6 +1446,599 @@ app.post('/book', (req, res) => {
     res.status(500).send('Erro ao criar reserva');
   }
 });
+
+  app.get('/guest/:bookingId', (req, res) => {
+    const bookingId = Number.parseInt(req.params.bookingId, 10);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    const requestedToken = normalizeGuestToken(req.query.token);
+    const bookingRow = loadGuestBookingRow(bookingId);
+    if (!bookingRow) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    ensureNoIndexHeader(res);
+
+    const storedToken = normalizeGuestToken(bookingRow.confirmation_token);
+    if (!storedToken || !requestedToken || storedToken !== requestedToken) {
+      if (guestPortalService && requestedToken) {
+        guestPortalService.recordEvent({
+          bookingId,
+          token: requestedToken,
+          eventType: 'invalid_token',
+          request: req
+        });
+      }
+      return res.status(403).send('Pedido não autorizado');
+    }
+
+    const payload = buildGuestPortalPayload(bookingRow);
+    if (!payload) {
+      return res.status(500).send('Não foi possível carregar a reserva');
+    }
+
+    if (guestPortalService) {
+      guestPortalService.recordEvent({
+        bookingId,
+        token: requestedToken,
+        eventType: 'page_view',
+        request: req
+      });
+    }
+
+    const theme = resolveBrandingForRequest(req, {
+      propertyId: bookingRow.property_id,
+      propertyName: bookingRow.property_name
+    });
+    rememberActiveBrandingProperty(res, bookingRow.property_id);
+
+    const bookingSummary = payload.booking;
+    const instructions = payload.instructions || {};
+    const paymentSummaryLines = Array.isArray(payload.payments.summaryLines)
+      ? payload.payments.summaryLines
+      : [];
+    const paymentEntries = Array.isArray(payload.payments.entries) ? payload.payments.entries : [];
+    const extrasAvailable = Array.isArray(payload.extras.available) ? payload.extras.available : [];
+    const extraRequests = Array.isArray(payload.extras.requests) ? payload.extras.requests : [];
+
+    const formatMultiline = (value) => (value ? esc(String(value)).replace(/\n/g, '<br/>') : '');
+
+    const instructionsItems = [];
+    if (bookingSummary.propertyAddress) {
+      instructionsItems.push(`<li><strong>Morada:</strong> ${esc(bookingSummary.propertyAddress)}</li>`);
+    }
+    if (instructions.checkinFrom) {
+      instructionsItems.push(`<li><strong>Check-in a partir das:</strong> ${esc(instructions.checkinFrom)}</li>`);
+    }
+    if (instructions.checkoutUntil) {
+      instructionsItems.push(`<li><strong>Check-out até às:</strong> ${esc(instructions.checkoutUntil)}</li>`);
+    }
+    if (instructions.childrenPolicy) {
+      instructionsItems.push(`<li><strong>Crianças:</strong> ${esc(instructions.childrenPolicy)}</li>`);
+    }
+    if (instructions.petsAllowed != null) {
+      const petsFee = instructions.petsFee != null && Number.isFinite(Number(instructions.petsFee))
+        ? ` (taxa: € ${eur(Math.round(Number(instructions.petsFee) * 100))})`
+        : '';
+      instructionsItems.push(
+        `<li><strong>Animais:</strong> ${instructions.petsAllowed ? 'Permitidos' : 'Não permitidos'}${petsFee}</li>`
+      );
+    }
+
+    const instructionsNotes = [];
+    if (instructions.parkingInfo) {
+      instructionsNotes.push(`<p><strong>Estacionamento:</strong> ${formatMultiline(instructions.parkingInfo)}</p>`);
+    }
+    if (instructions.quietHours) {
+      instructionsNotes.push(`<p><strong>Horário de silêncio:</strong> ${formatMultiline(instructions.quietHours)}</p>`);
+    }
+    if (instructions.paymentMethods) {
+      instructionsNotes.push(`<p><strong>Pagamentos:</strong> ${formatMultiline(instructions.paymentMethods)}</p>`);
+    }
+    if (instructions.cancellationPolicy) {
+      instructionsNotes.push(
+        `<p><strong>Política de cancelamento:</strong> ${formatMultiline(instructions.cancellationPolicy)}</p>`
+      );
+    }
+
+    const paymentStatusClass = (tone) => {
+      switch (tone) {
+        case 'success':
+          return 'bg-emerald-100 text-emerald-700';
+        case 'warning':
+          return 'bg-amber-100 text-amber-700';
+        case 'info':
+          return 'bg-sky-100 text-sky-700';
+        case 'danger':
+          return 'bg-rose-100 text-rose-700';
+        case 'muted':
+        default:
+          return 'bg-slate-200 text-slate-700';
+      }
+    };
+
+    const paymentSummaryHtml = paymentSummaryLines.length
+      ? paymentSummaryLines.map(line => `<li>${esc(line)}</li>`).join('')
+      : '<li>Sem pagamentos registados.</li>';
+
+    const paymentEntriesHtml = paymentEntries.length
+      ? paymentEntries
+          .map(entry => {
+            const badgeClass = paymentStatusClass(entry.statusTone);
+            const created = entry.createdAtLabel ? esc(entry.createdAtLabel) : 'Sem data';
+            return `<li class="border border-slate-200 rounded px-3 py-2 flex items-center justify-between gap-3">
+              <div>
+                <div class="font-medium text-slate-800">${esc(entry.amountFormatted)}</div>
+                <div class="text-xs text-slate-500">${created}</div>
+              </div>
+              <span class="text-xs font-medium px-2 py-1 rounded ${badgeClass}">${esc(entry.statusLabel)}</span>
+            </li>`;
+          })
+          .join('')
+      : '<li class="text-sm text-slate-500">Sem movimentos registados.</li>';
+
+    const extrasAvailableHtml = extrasAvailable.length
+      ? extrasAvailable
+          .map(extra => {
+            const descriptionHtml = extra.description
+              ? `<p class="text-sm text-slate-600">${esc(extra.description)}</p>`
+              : '';
+            const priceHtml = extra.priceFormatted
+              ? `<div class="text-sm font-semibold text-slate-700">${esc(extra.priceFormatted)}</div>`
+              : '';
+            return `<li class="border border-slate-200 rounded px-3 py-3">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="font-medium text-slate-800">${esc(extra.name)}</div>
+                  ${descriptionHtml}
+                </div>
+                ${priceHtml}
+              </div>
+            </li>`;
+          })
+          .join('')
+      : '<p class="text-sm text-slate-600">Sem extras disponíveis.</p>';
+
+    const extraRequestsHtml = extraRequests.length
+      ? extraRequests
+          .map(req => {
+            const created = req.createdAtLabel ? ` · ${esc(req.createdAtLabel)}` : '';
+            return `<li class="border border-slate-200 rounded px-3 py-2">
+              <div class="font-medium text-slate-800">${esc(req.name)}</div>
+              <div class="text-xs text-slate-500">Quantidade: ${esc(String(req.quantity))}${created}</div>
+            </li>`;
+          })
+          .join('')
+      : '<p class="text-sm text-slate-600">Ainda não solicitou extras.</p>';
+
+    const extrasFormVisible = extrasAvailable.length > 0;
+
+    const inlineState = serializeGuestPortalState({
+      bookingId: bookingSummary.id,
+      token: requestedToken,
+      payload
+    });
+
+    res.send(layout({
+      title: 'Portal do hóspede',
+      branding: theme,
+      user: null,
+      body: html`
+        <div class="max-w-4xl mx-auto space-y-6" data-guest-portal-root data-booking-id="${bookingSummary.id}" data-token="${esc(requestedToken)}">
+          <header class="card p-6 space-y-2 bg-white shadow-sm">
+            <span class="pill-indicator">${esc(bookingSummary.statusLabel)}</span>
+            <h1 class="text-2xl font-semibold text-slate-800">Olá ${esc(bookingSummary.guestName || 'hóspede')}!</h1>
+            <p class="text-slate-600 text-sm">Aqui encontra tudo o que precisa para preparar a sua estadia.</p>
+          </header>
+          <section class="grid gap-6 md:grid-cols-2">
+            <article class="card p-6 space-y-4">
+              <h2 class="text-xl font-semibold text-slate-800">Reserva</h2>
+              <dl class="grid gap-3 text-sm">
+                <div>
+                  <dt class="text-slate-500">Propriedade</dt>
+                  <dd class="font-medium text-slate-800">${esc(bookingSummary.propertyName)} · ${esc(bookingSummary.unitName)}</dd>
+                </div>
+                <div>
+                  <dt class="text-slate-500">Datas</dt>
+                  <dd class="font-medium text-slate-800">${esc(bookingSummary.checkinLabel)} &mdash; ${esc(bookingSummary.checkoutLabel)} (${bookingSummary.nights} noite${bookingSummary.nights === 1 ? '' : 's'})</dd>
+                </div>
+                <div>
+                  <dt class="text-slate-500">Hóspedes</dt>
+                  <dd class="font-medium text-slate-800">${bookingSummary.adults} adulto${bookingSummary.adults === 1 ? '' : 's'}${bookingSummary.children ? ` · ${bookingSummary.children} criança${bookingSummary.children === 1 ? '' : 's'}` : ''}</dd>
+                </div>
+                <div>
+                  <dt class="text-slate-500">Contacto</dt>
+                  <dd class="font-medium text-slate-800">${esc(bookingSummary.guestPhone || '-')}</dd>
+                  <dd class="text-sm text-slate-500">${esc(bookingSummary.guestEmail || '')}</dd>
+                </div>
+                ${bookingSummary.agency ? `<div><dt class="text-slate-500">Agência</dt><dd class="font-medium text-slate-800">${esc(bookingSummary.agency)}</dd></div>` : ''}
+                ${bookingSummary.propertyAddress ? `<div><dt class="text-slate-500">Localização</dt><dd class="font-medium text-slate-800">${esc(bookingSummary.propertyAddress)}</dd></div>` : ''}
+              </dl>
+            </article>
+            <article class="card p-6 space-y-4">
+              <h2 class="text-xl font-semibold text-slate-800">Pagamentos</h2>
+              <div>
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Total da reserva</div>
+                <div class="text-3xl font-semibold text-slate-800">${esc(payload.payments.totalFormatted)}</div>
+                <p class="text-sm text-slate-600">Saldo por liquidar: <span data-guest-outstanding>${esc(payload.payments.outstandingFormatted)}</span></p>
+              </div>
+              <div>
+                <h3 class="text-sm font-semibold text-slate-700">Resumo</h3>
+                <ul class="mt-2 space-y-1 text-sm text-slate-600" data-guest-payment-summary>${paymentSummaryHtml}</ul>
+              </div>
+              <div>
+                <h3 class="text-sm font-semibold text-slate-700">Movimentos</h3>
+                <ul class="mt-2 space-y-2 text-sm" data-guest-payment-entries>${paymentEntriesHtml}</ul>
+              </div>
+            </article>
+          </section>
+          <section class="card p-6 space-y-4">
+            <h2 class="text-xl font-semibold text-slate-800">Instruções de estadia</h2>
+            <ul class="space-y-2 text-sm text-slate-700">${instructionsItems.join('')}</ul>
+            ${instructionsNotes.length ? `<div class="space-y-3 text-sm text-slate-600">${instructionsNotes.join('')}</div>` : ''}
+          </section>
+          <section class="card p-6 space-y-4">
+            <h2 class="text-xl font-semibold text-slate-800">Extras &amp; serviços</h2>
+            <div data-guest-extras-available class="space-y-3">${extrasAvailableHtml}</div>
+            <form data-extra-form class="space-y-3" style="${extrasFormVisible ? '' : 'display:none;'}">
+              <div>
+                <label for="extraCode" class="text-sm font-medium text-slate-700">Selecionar extra</label>
+                <select id="extraCode" name="extraCode" class="input">
+                  ${extrasAvailable
+                    .map(extra => `<option value="${esc(extra.code)}">${esc(extra.name)}${extra.priceFormatted ? ` – ${esc(extra.priceFormatted)}` : ''}</option>`)
+                    .join('')}
+                </select>
+              </div>
+              <div>
+                <label for="extraQuantity" class="text-sm font-medium text-slate-700">Quantidade</label>
+                <input id="extraQuantity" name="quantity" type="number" min="1" value="1" class="input" />
+              </div>
+              <button type="submit" class="btn btn-primary w-full md:w-auto">Pedir extra</button>
+              <p class="text-sm text-slate-500" data-extra-feedback role="status"></p>
+            </form>
+            <div>
+              <h3 class="text-sm font-semibold text-slate-700">Pedidos efetuados</h3>
+              <div class="mt-2 space-y-2 text-sm" data-guest-extra-requests>${extraRequestsHtml}</div>
+            </div>
+          </section>
+        </div>
+        <script>window.__GUEST_PORTAL_DATA__ = ${inlineState};</script>
+        <script>
+          (function() {
+            const root = document.querySelector('[data-guest-portal-root]');
+            if (!root) return;
+            const bookingId = root.getAttribute('data-booking-id');
+            const token = root.getAttribute('data-token');
+            const paymentSummaryEl = root.querySelector('[data-guest-payment-summary]');
+            const paymentEntriesEl = root.querySelector('[data-guest-payment-entries]');
+            const outstandingEl = root.querySelector('[data-guest-outstanding]');
+            const extrasAvailableEl = root.querySelector('[data-guest-extras-available]');
+            const extraRequestsEl = root.querySelector('[data-guest-extra-requests]');
+            const form = root.querySelector('[data-extra-form]');
+            const feedbackEl = root.querySelector('[data-extra-feedback]');
+            const selectEl = form ? form.querySelector('select[name="extraCode"]') : null;
+            const quantityEl = form ? form.querySelector('input[name="quantity"]') : null;
+
+            function escapeHtml(value) {
+              return String(value == null ? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+            }
+
+            function statusClass(tone) {
+              switch (tone) {
+                case 'success':
+                  return 'bg-emerald-100 text-emerald-700';
+                case 'warning':
+                  return 'bg-amber-100 text-amber-700';
+                case 'info':
+                  return 'bg-sky-100 text-sky-700';
+                case 'danger':
+                  return 'bg-rose-100 text-rose-700';
+                case 'muted':
+                default:
+                  return 'bg-slate-200 text-slate-700';
+              }
+            }
+
+            function renderPaymentSummary(lines) {
+              if (!paymentSummaryEl) return;
+              if (!Array.isArray(lines) || !lines.length) {
+                paymentSummaryEl.innerHTML = '<li>Sem pagamentos registados.</li>';
+                return;
+              }
+              paymentSummaryEl.innerHTML = lines.map(line => '<li>' + escapeHtml(line) + '</li>').join('');
+            }
+
+            function renderPaymentEntries(entries) {
+              if (!paymentEntriesEl) return;
+              if (!Array.isArray(entries) || !entries.length) {
+                paymentEntriesEl.innerHTML = '<li class="text-sm text-slate-500">Sem movimentos registados.</li>';
+                return;
+              }
+              paymentEntriesEl.innerHTML = entries
+                .map(entry => {
+                  const badge = statusClass(entry.statusTone);
+                  const created = entry.createdAtLabel ? escapeHtml(entry.createdAtLabel) : 'Sem data';
+                  return (
+                    '<li class="border border-slate-200 rounded px-3 py-2 flex items-center justify-between gap-3">' +
+                      '<div>' +
+                        '<div class="font-medium text-slate-800">' + escapeHtml(entry.amountFormatted) + '</div>' +
+                        '<div class="text-xs text-slate-500">' + created + '</div>' +
+                      '</div>' +
+                      '<span class="text-xs font-medium px-2 py-1 rounded ' + badge + '">' + escapeHtml(entry.statusLabel) + '</span>' +
+                    '</li>'
+                  );
+                })
+                .join('');
+            }
+
+            function renderExtrasAvailable(extras) {
+              if (!extrasAvailableEl) return;
+              if (!Array.isArray(extras) || !extras.length) {
+                extrasAvailableEl.innerHTML = '<p class="text-sm text-slate-600">Sem extras disponíveis.</p>';
+                return;
+              }
+              const list = extras
+                .map(extra => {
+                  const description = extra.description
+                    ? '<p class="text-sm text-slate-600">' + escapeHtml(extra.description) + '</p>'
+                    : '';
+                  const price = extra.priceFormatted
+                    ? '<div class="text-sm font-semibold text-slate-700">' + escapeHtml(extra.priceFormatted) + '</div>'
+                    : '';
+                  return (
+                    '<li class="border border-slate-200 rounded px-3 py-3">' +
+                      '<div class="flex items-start justify-between gap-4">' +
+                        '<div>' +
+                          '<div class="font-medium text-slate-800">' + escapeHtml(extra.name) + '</div>' +
+                          description +
+                        '</div>' +
+                        price +
+                      '</div>' +
+                    '</li>'
+                  );
+                })
+                .join('');
+              extrasAvailableEl.innerHTML = '<ul class="space-y-3">' + list + '</ul>';
+            }
+
+            function renderExtraRequests(requests) {
+              if (!extraRequestsEl) return;
+              if (!Array.isArray(requests) || !requests.length) {
+                extraRequestsEl.innerHTML = '<p class="text-sm text-slate-600">Ainda não solicitou extras.</p>';
+                return;
+              }
+              const list = requests
+                .map(req => {
+                  const created = req.createdAtLabel ? ' · ' + escapeHtml(req.createdAtLabel) : '';
+                  return (
+                    '<li class="border border-slate-200 rounded px-3 py-2">' +
+                      '<div class="font-medium text-slate-800">' + escapeHtml(req.name) + '</div>' +
+                      '<div class="text-xs text-slate-500">Quantidade: ' + escapeHtml(String(req.quantity)) + created + '</div>' +
+                    '</li>'
+                  );
+                })
+                .join('');
+              extraRequestsEl.innerHTML = '<ul class="space-y-2">' + list + '</ul>';
+            }
+
+            function toggleForm(extras) {
+              if (!form) return;
+              const hasExtras = Array.isArray(extras) && extras.length > 0;
+              form.style.display = hasExtras ? '' : 'none';
+              if (selectEl) {
+                selectEl.innerHTML = '';
+                if (hasExtras) {
+                  extras.forEach(extra => {
+                    const option = document.createElement('option');
+                    option.value = extra.code;
+                    option.textContent = extra.priceFormatted
+                      ? extra.name + ' – ' + extra.priceFormatted
+                      : extra.name;
+                    selectEl.appendChild(option);
+                  });
+                }
+              }
+              if (quantityEl) {
+                quantityEl.value = '1';
+              }
+            }
+
+            function renderData(data) {
+              if (!data) return;
+              if (data.payments) {
+                renderPaymentSummary(data.payments.summaryLines);
+                renderPaymentEntries(data.payments.entries);
+                if (outstandingEl) {
+                  outstandingEl.textContent = data.payments.outstandingFormatted || '';
+                }
+              }
+              if (data.extras) {
+                renderExtrasAvailable(data.extras.available);
+                renderExtraRequests(data.extras.requests);
+                toggleForm(data.extras.available);
+              }
+            }
+
+            function fetchData() {
+              if (!bookingId || !token) return;
+              const url =
+                '/api/guest/booking?bookingId=' +
+                encodeURIComponent(bookingId) +
+                '&token=' +
+                encodeURIComponent(token);
+              fetch(url, { headers: { Accept: 'application/json' } })
+                .then(res => (res.ok ? res.json() : res.json().catch(() => ({})).then(body => Promise.reject(body))))
+                .then(data => {
+                  renderData(data);
+                })
+                .catch(() => {
+                  if (feedbackEl) {
+                    feedbackEl.textContent = 'Não foi possível atualizar os dados.';
+                    feedbackEl.classList.remove('text-emerald-600');
+                    feedbackEl.classList.add('text-rose-600');
+                  }
+                });
+            }
+
+            if (form) {
+              form.addEventListener('submit', event => {
+                event.preventDefault();
+                if (!bookingId || !token) return;
+                const extraCode = selectEl ? selectEl.value : '';
+                const qtyValue = quantityEl ? Number(quantityEl.value || '1') : 1;
+                const payload = {
+                  bookingId: Number(bookingId),
+                  token,
+                  extraCode,
+                  quantity: Number.isFinite(qtyValue) && qtyValue > 0 ? qtyValue : 1
+                };
+                fetch('/api/guest/extra', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json'
+                  },
+                  body: JSON.stringify(payload)
+                })
+                  .then(res => (res.ok ? res.json() : res.json().catch(() => ({})).then(body => Promise.reject(body))))
+                  .then(data => {
+                    renderData(data);
+                    if (feedbackEl) {
+                      feedbackEl.textContent = 'Pedido registado com sucesso.';
+                      feedbackEl.classList.remove('text-rose-600');
+                      feedbackEl.classList.add('text-emerald-600');
+                    }
+                  })
+                  .catch(err => {
+                    if (feedbackEl) {
+                      feedbackEl.textContent = err && err.error ? err.error : 'Não foi possível registar o pedido.';
+                      feedbackEl.classList.remove('text-emerald-600');
+                      feedbackEl.classList.add('text-rose-600');
+                    }
+                  });
+              });
+            }
+
+            const initial = window.__GUEST_PORTAL_DATA__ && window.__GUEST_PORTAL_DATA__.payload;
+            renderData(initial);
+            fetchData();
+          })();
+        </script>
+      `
+    }));
+  });
+
+  app.get('/api/guest/booking', (req, res) => {
+    const bookingId = Number.parseInt(req.query.bookingId, 10);
+    const requestedToken = normalizeGuestToken(req.query.token);
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0 || !requestedToken) {
+      return res.status(400).json({ error: 'Parâmetros inválidos.' });
+    }
+
+    const bookingRow = loadGuestBookingRow(bookingId);
+    if (!bookingRow) {
+      return res.status(404).json({ error: 'Reserva não encontrada.' });
+    }
+
+    const storedToken = normalizeGuestToken(bookingRow.confirmation_token);
+    if (!storedToken || storedToken !== requestedToken) {
+      if (guestPortalService) {
+        guestPortalService.recordEvent({
+          bookingId,
+          token: requestedToken,
+          eventType: 'invalid_token',
+          request: req
+        });
+      }
+      return res.status(403).json({ error: 'Pedido não autorizado.' });
+    }
+
+    const payload = buildGuestPortalPayload(bookingRow);
+    if (!payload) {
+      return res.status(404).json({ error: 'Reserva não encontrada.' });
+    }
+
+    if (guestPortalService) {
+      guestPortalService.recordEvent({
+        bookingId,
+        token: requestedToken,
+        eventType: 'fetch_booking',
+        request: req
+      });
+    }
+
+    res.json(payload);
+  });
+
+  app.post('/api/guest/extra', (req, res) => {
+    const body = req.body || {};
+    const bookingId = Number.parseInt(body.bookingId, 10);
+    const requestedToken = normalizeGuestToken(body.token);
+    const extraCode = typeof body.extraCode === 'string' ? body.extraCode.trim() : '';
+    const quantityRaw = Number(body.quantity);
+    const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.min(20, Math.round(quantityRaw)) : 1;
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0 || !requestedToken || !extraCode) {
+      return res.status(400).json({ error: 'Parâmetros inválidos.' });
+    }
+
+    const bookingRow = loadGuestBookingRow(bookingId);
+    if (!bookingRow) {
+      return res.status(404).json({ error: 'Reserva não encontrada.' });
+    }
+
+    const storedToken = normalizeGuestToken(bookingRow.confirmation_token);
+    if (!storedToken || storedToken !== requestedToken) {
+      if (guestPortalService) {
+        guestPortalService.recordEvent({
+          bookingId,
+          token: requestedToken,
+          eventType: 'invalid_token',
+          request: req
+        });
+      }
+      return res.status(403).json({ error: 'Pedido não autorizado.' });
+    }
+
+    const extrasAvailable = parsePolicyExtras(bookingRow.policy_extras);
+    if (!extrasAvailable.length) {
+      return res.status(400).json({ error: 'Nenhum extra disponível para esta reserva.' });
+    }
+
+    const selected = extrasAvailable.find(extra => extra.code === extraCode);
+    if (!selected) {
+      return res.status(400).json({ error: 'Extra inválido.' });
+    }
+
+    if (guestPortalService) {
+      guestPortalService.recordEvent({
+        bookingId,
+        token: requestedToken,
+        eventType: 'extra_requested',
+        payload: {
+          code: selected.code,
+          name: selected.name,
+          quantity
+        },
+        request: req
+      });
+    }
+
+    const payload = buildGuestPortalPayload(bookingRow);
+    res.json({
+      booking: payload ? payload.booking : null,
+      payments: payload ? payload.payments : null,
+      extras: payload ? payload.extras : { available: [], requests: [] }
+    });
+  });
 
 app.get('/booking/:id', (req, res) => {
   const sess = getSession(req.cookies.adm, req);
