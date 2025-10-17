@@ -3708,7 +3708,7 @@ module.exports = function registerBackoffice(app, context) {
       : '<tr><td colspan="9" class="text-sm text-center text-slate-500">Sem dados de revenue para o período analisado.</td></tr>';
 
     const statisticsCard = html`
-      <div class="bo-card space-y-6">
+      <div class="bo-card bo-span-all space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <h2 class="text-lg font-semibold text-slate-800">Painel estatístico</h2>
@@ -4374,74 +4374,76 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                   <p class="text-xs text-slate-500">Após confirmar, tens 5 segundos para anular a alteração.</p>
                 </div>
-                <div class="bo-card">
-                  <h2>Propriedades</h2>
-                  <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
-                  ${propertiesListHtml}
-                  <hr class="my-4" />
-                  <h3 class="bo-section-title">Adicionar propriedade</h3>
-                  <form method="post" action="/admin/properties/create" class="grid gap-3">
-                    <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
-                      <input required name="name" class="input" placeholder="Nome" />
-                      <input required name="address" class="input" placeholder="Morada completa" />
-                      <div class="grid gap-2 sm:grid-cols-2">
-                        <input required name="locality" class="input" placeholder="Localidade" />
-                        <input required name="district" class="input" placeholder="Distrito" />
-                      </div>
-                      <textarea name="description" class="input" placeholder="Descrição"></textarea>
-                    </fieldset>
-                    ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
-                    <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
-                  </form>
-                </div>
-
-                <div class="bo-card">
-                  <h2>Unidades</h2>
-                  <div class="bo-table responsive-table">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-left text-slate-500">
-                          <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
-                        </tr>
-                      </thead>
-                      <tbody>${unitsTableRows}</tbody>
-                    </table>
+                <div class="bo-pane__columns bo-span-all">
+                  <div class="bo-card">
+                    <h2>Propriedades</h2>
+                    <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
+                    ${propertiesListHtml}
+                    <hr class="my-4" />
+                    <h3 class="bo-section-title">Adicionar propriedade</h3>
+                    <form method="post" action="/admin/properties/create" class="grid gap-3">
+                      <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
+                        <input required name="name" class="input" placeholder="Nome" />
+                        <input required name="address" class="input" placeholder="Morada completa" />
+                        <div class="grid gap-2 sm:grid-cols-2">
+                          <input required name="locality" class="input" placeholder="Localidade" />
+                          <input required name="district" class="input" placeholder="Distrito" />
+                        </div>
+                        <textarea name="description" class="input" placeholder="Descrição"></textarea>
+                      </fieldset>
+                      ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
+                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
+                    </form>
                   </div>
-                  <hr class="my-4" />
-                  <h3 class="bo-section-title">Adicionar unidade</h3>
-                  <form method="post" action="/admin/units/create" class="grid gap-3">
-                    <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
-                      <label class="form-field md:col-span-2 lg:col-span-2">
-                        <span class="form-label">Propriedade</span>
-                        <select required name="property_id" class="input">
-                          <option value="" disabled selected hidden>Seleciona um alojamento</option>
-                          ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-                        </select>
-                      </label>
-                      <label class="form-field md:col-span-2 lg:col-span-2">
-                        <span class="form-label">Nome da unidade</span>
-                        <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Capacidade</span>
-                        <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Preço base €/noite</span>
-                        <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
-                      </label>
-                      <div class="md:col-span-2 lg:col-span-4">
-                        ${renderFeatureBuilderField({
-                          name: 'features_raw',
-                          label: 'Características',
-                          helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
-                        })}
-                      </div>
-                    </fieldset>
-                    <div>
-                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
+
+                  <div class="bo-card">
+                    <h2>Unidades</h2>
+                    <div class="bo-table responsive-table">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
+                          </tr>
+                        </thead>
+                        <tbody>${unitsTableRows}</tbody>
+                      </table>
                     </div>
-                  </form>
+                    <hr class="my-4" />
+                    <h3 class="bo-section-title">Adicionar unidade</h3>
+                    <form method="post" action="/admin/units/create" class="grid gap-3">
+                      <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
+                        <label class="form-field md:col-span-2 lg:col-span-2">
+                          <span class="form-label">Propriedade</span>
+                          <select required name="property_id" class="input">
+                            <option value="" disabled selected hidden>Seleciona um alojamento</option>
+                            ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+                          </select>
+                        </label>
+                        <label class="form-field md:col-span-2 lg:col-span-2">
+                          <span class="form-label">Nome da unidade</span>
+                          <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
+                        </label>
+                        <label class="form-field">
+                          <span class="form-label">Capacidade</span>
+                          <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
+                        </label>
+                        <label class="form-field">
+                          <span class="form-label">Preço base €/noite</span>
+                          <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
+                        </label>
+                        <div class="md:col-span-2 lg:col-span-4">
+                          ${renderFeatureBuilderField({
+                            name: 'features_raw',
+                            label: 'Características',
+                            helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
+                          })}
+                        </div>
+                      </fieldset>
+                      <div>
+                        <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
+                      </div>
+                    </form>
+                  </div>
                 </div>
 
                 <div class="bo-card bo-span-all">
@@ -4460,173 +4462,179 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="finance">
-                <div class="bo-card">
-                  <h2>Resumo financeiro</h2>
-                  <div class="bo-metrics">
-                    <div class="bo-metric"><strong>€ ${eur(confirmedRevenueCents)}</strong><span>Receita confirmada (histórico)</span></div>
-                    <div class="bo-metric"><strong>€ ${eur(pendingRevenueCents)}</strong><span>Receita pendente (${pendingBookingsCount} reservas)</span></div>
-                    <div class="bo-metric"><strong>€ ${eur(automationRevenue7)}</strong><span>Receita prevista (próximos 7 dias)</span></div>
-                    <div class="bo-metric"><strong>€ ${eur(automationRevenue30)}</strong><span>Receita prevista (próximos 30 dias)</span></div>
-                    <div class="bo-metric"><strong>€ ${eur(averageTicketCents)}</strong><span>Ticket médio confirmado</span></div>
+                <div class="bo-pane__columns">
+                  <div class="bo-card">
+                    <h2>Resumo financeiro</h2>
+                    <div class="bo-metrics">
+                      <div class="bo-metric"><strong>€ ${eur(confirmedRevenueCents)}</strong><span>Receita confirmada (histórico)</span></div>
+                      <div class="bo-metric"><strong>€ ${eur(pendingRevenueCents)}</strong><span>Receita pendente (${pendingBookingsCount} reservas)</span></div>
+                      <div class="bo-metric"><strong>€ ${eur(automationRevenue7)}</strong><span>Receita prevista (próximos 7 dias)</span></div>
+                      <div class="bo-metric"><strong>€ ${eur(automationRevenue30)}</strong><span>Receita prevista (próximos 30 dias)</span></div>
+                      <div class="bo-metric"><strong>€ ${eur(averageTicketCents)}</strong><span>Ticket médio confirmado</span></div>
+                    </div>
                   </div>
-                </div>
-                <div class="bo-card">
-                  <h2>Reservas recentes</h2>
-                  <div class="bo-table responsive-table">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-left text-slate-500">
-                          <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>${recentBookings
-                        .map(b => `
-                          <tr>
-                            <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
-                            <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
-                            <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
-                            <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
-                            <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                            <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
-                            <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                          </tr>`)
-                        .join('')}</tbody>
-                    </table>
+                  <div class="bo-card">
+                    <h2>Reservas recentes</h2>
+                    <div class="bo-table responsive-table">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>${recentBookings
+                          .map(b => `
+                            <tr>
+                              <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
+                              <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
+                              <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
+                              <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
+                              <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                              <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
+                              <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
+                            </tr>`)
+                          .join('')}</tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="revenue">
-                <div class="bo-card">
-                  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                      <h2>Painel de revenue</h2>
-                      <p class="bo-subtitle">Desempenho dos últimos ${revenueRangeDays} dias com foco em receita e ocupação.</p>
-                    </div>
-                    <div class="text-xs text-slate-500">Período analisado: <span data-revenue-range>${esc(revenueRangeLabel)}</span></div>
-                  </div>
-                  <div class="bo-metrics bo-metrics--wrap mt-4" data-revenue-summary>
-                    <div class="bo-metric"><strong data-revenue-metric="revenue">${esc(revenueSummaryLabels.revenue)}</strong><span>Receita total</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="adr">${esc(revenueSummaryLabels.adr)}</strong><span>ADR médio</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="revpar">${esc(revenueSummaryLabels.revpar)}</strong><span>RevPAR</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="occupancy">${esc(revenueSummaryLabels.occupancy)}</strong><span>Ocupação</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="nights">${esc(revenueSummaryLabels.nights)}</strong><span>Noites vendidas</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="reservations">${esc(revenueSummaryLabels.reservations)}</strong><span>Reservas</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="averageStay">${esc(revenueSummaryLabels.averageStay)}</strong><span>Estadia média (noites)</span></div>
-                    <div class="bo-metric"><strong data-revenue-metric="bookingPace">${esc(revenueSummaryLabels.bookingPace)}</strong><span>Booking pace (média diária)</span></div>
-                  </div>
-                </div>
-
-                <div class="grid gap-6 lg:grid-cols-3">
-                  <div class="bo-card lg:col-span-2">
-                    <div class="flex items-start justify-between gap-3 mb-4">
+                <div class="bo-pane__columns">
+                  <div class="bo-card bo-span-all">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <div>
-                        <h3 class="bo-section-title">Receita vs noites</h3>
-                        <p class="bo-subtitle">Comparativo diário entre receita gerada e noites vendidas.</p>
+                        <h2>Painel de revenue</h2>
+                        <p class="bo-subtitle">Desempenho dos últimos ${revenueRangeDays} dias com foco em receita e ocupação.</p>
                       </div>
+                      <div class="text-xs text-slate-500">Período analisado: <span data-revenue-range>${esc(revenueRangeLabel)}</span></div>
                     </div>
-                    <div style="height:260px">
-                      <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
+                    <div class="bo-metrics bo-metrics--wrap mt-4" data-revenue-summary>
+                      <div class="bo-metric"><strong data-revenue-metric="revenue">${esc(revenueSummaryLabels.revenue)}</strong><span>Receita total</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="adr">${esc(revenueSummaryLabels.adr)}</strong><span>ADR médio</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="revpar">${esc(revenueSummaryLabels.revpar)}</strong><span>RevPAR</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="occupancy">${esc(revenueSummaryLabels.occupancy)}</strong><span>Ocupação</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="nights">${esc(revenueSummaryLabels.nights)}</strong><span>Noites vendidas</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="reservations">${esc(revenueSummaryLabels.reservations)}</strong><span>Reservas</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="averageStay">${esc(revenueSummaryLabels.averageStay)}</strong><span>Estadia média (noites)</span></div>
+                      <div class="bo-metric"><strong data-revenue-metric="bookingPace">${esc(revenueSummaryLabels.bookingPace)}</strong><span>Booking pace (média diária)</span></div>
                     </div>
                   </div>
-                  <div class="bo-card">
-                    <div class="flex items-start justify-between gap-3 mb-4">
-                      <div>
-                        <h3 class="bo-section-title">Canais de venda</h3>
-                        <p class="bo-subtitle">Distribuição da receita confirmada.</p>
-                      </div>
-                    </div>
-                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-1">
-                      <div style="height:220px">
-                        <canvas id="revenue-channel-chart" aria-label="Gráfico de canais de revenue"></canvas>
-                      </div>
-                      <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
-                    </div>
-                  </div>
-                  <div class="bo-card lg:col-span-3">
-                    <div class="flex items-start justify-between gap-3 mb-4">
-                      <div>
-                        <h3 class="bo-section-title">Ocupação diária</h3>
-                        <p class="bo-subtitle">Percentual de ocupação ao longo do período.</p>
-                      </div>
-                    </div>
-                    <div style="height:260px">
-                      <canvas id="revenue-occupancy-chart" aria-label="Gráfico de barras de ocupação diária"></canvas>
-                    </div>
-                  </div>
-                </div>
 
-                <p class="bo-empty" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
+                  <div class="grid gap-6 lg:grid-cols-3 bo-span-all">
+                    <div class="bo-card lg:col-span-2">
+                      <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                          <h3 class="bo-section-title">Receita vs noites</h3>
+                          <p class="bo-subtitle">Comparativo diário entre receita gerada e noites vendidas.</p>
+                        </div>
+                      </div>
+                      <div style="height:260px">
+                        <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
+                      </div>
+                    </div>
+                    <div class="bo-card">
+                      <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                          <h3 class="bo-section-title">Canais de venda</h3>
+                          <p class="bo-subtitle">Distribuição da receita confirmada.</p>
+                        </div>
+                      </div>
+                      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-1">
+                        <div style="height:220px">
+                          <canvas id="revenue-channel-chart" aria-label="Gráfico de canais de revenue"></canvas>
+                        </div>
+                        <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
+                      </div>
+                    </div>
+                    <div class="bo-card lg:col-span-3">
+                      <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                          <h3 class="bo-section-title">Ocupação diária</h3>
+                          <p class="bo-subtitle">Percentual de ocupação ao longo do período.</p>
+                        </div>
+                      </div>
+                      <div style="height:260px">
+                        <canvas id="revenue-occupancy-chart" aria-label="Gráfico de barras de ocupação diária"></canvas>
+                      </div>
+                    </div>
+                  </div>
 
-                <div class="bo-card">
-                  <h3 class="bo-section-title">Resumo diário detalhado</h3>
-                  <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
-                  <div class="bo-table responsive-table mt-3">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-left text-slate-500">
-                          <th>Data</th><th>Receita</th><th>ADR</th><th>RevPAR</th><th>Ocupação</th><th>Reservas</th><th>Noites</th><th>Estadia média</th><th>Booking pace</th>
-                        </tr>
-                      </thead>
-                      <tbody id="revenue-daily-table">${revenueDailyTableRows}</tbody>
-                    </table>
+                  <p class="bo-empty bo-span-all" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
+
+                  <div class="bo-card bo-span-all">
+                    <h3 class="bo-section-title">Resumo diário detalhado</h3>
+                    <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
+                    <div class="bo-table responsive-table mt-3">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Data</th><th>Receita</th><th>ADR</th><th>RevPAR</th><th>Ocupação</th><th>Reservas</th><th>Noites</th><th>Estadia média</th><th>Booking pace</th>
+                          </tr>
+                        </thead>
+                        <tbody id="revenue-daily-table">${revenueDailyTableRows}</tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="channel-manager">
-                <div class="bo-card">
-                  <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                    <div>
-                      <h2>Channel Manager</h2>
-                      <p class="bo-subtitle">Centralize as integrações com Booking.com, Airbnb, i-escape e Splendia numa única área de controlo.</p>
+                <div class="bo-pane__columns">
+                  <div class="bo-card bo-span-all">
+                    <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <h2>Channel Manager</h2>
+                        <p class="bo-subtitle">Centralize as integrações com Booking.com, Airbnb, i-escape e Splendia numa única área de controlo.</p>
+                      </div>
+                      <div class="text-xs text-slate-500">Última sincronização registada: <span class="font-medium text-slate-700">${esc(lastSyncLabel)}</span></div>
                     </div>
-                    <div class="text-xs text-slate-500">Última sincronização registada: <span class="font-medium text-slate-700">${esc(lastSyncLabel)}</span></div>
-                  </div>
-                  ${channelNoticeHtml ? `<div class="mt-4">${channelNoticeHtml}</div>` : ''}
-                  <div class="bo-metrics bo-metrics--wrap mt-4">
-                    <div class="bo-metric"><strong>${totalChannels}</strong><span>Canais disponíveis</span></div>
-                    <div class="bo-metric"><strong>${autoActiveCount}</strong><span>Auto-sync ativos</span></div>
-                    <div class="bo-metric"><strong>${manualEnabledCount}</strong><span>Importações manuais</span></div>
-                    <div class="bo-metric"><strong>${channelsNeedingAttention}</strong><span>Alertas a resolver</span></div>
-                    <div class="bo-metric"><strong>${recentImportCount}</strong><span>Importações recentes</span></div>
-                  </div>
-                </div>
-
-                <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr]">
-                  <div class="bo-channel-stack space-y-6">
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Conexões de canais</h3>
-                      <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
-                      <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
-                    </div>
-
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Upload manual de reservas</h3>
-                      <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
-                      ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
-                      <div class="mt-4">${manualUploadSection}</div>
+                    ${channelNoticeHtml ? `<div class="mt-4">${channelNoticeHtml}</div>` : ''}
+                    <div class="bo-metrics bo-metrics--wrap mt-4">
+                      <div class="bo-metric"><strong>${totalChannels}</strong><span>Canais disponíveis</span></div>
+                      <div class="bo-metric"><strong>${autoActiveCount}</strong><span>Auto-sync ativos</span></div>
+                      <div class="bo-metric"><strong>${manualEnabledCount}</strong><span>Importações manuais</span></div>
+                      <div class="bo-metric"><strong>${channelsNeedingAttention}</strong><span>Alertas a resolver</span></div>
+                      <div class="bo-metric"><strong>${recentImportCount}</strong><span>Importações recentes</span></div>
                     </div>
                   </div>
 
-                  <div class="bo-channel-stack space-y-6">
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Alertas do Channel Manager</h3>
-                      <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
-                      <div class="bo-channel-alerts mt-3 space-y-3">${channelAlertsHtml}</div>
+                  <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr] bo-span-all">
+                    <div class="bo-channel-stack space-y-6">
+                      <div class="bo-card">
+                        <h3 class="bo-section-title">Conexões de canais</h3>
+                        <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
+                        <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
+                      </div>
+
+                      <div class="bo-card">
+                        <h3 class="bo-section-title">Upload manual de reservas</h3>
+                        <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
+                        ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
+                        <div class="mt-4">${manualUploadSection}</div>
+                      </div>
                     </div>
 
-                    <div class="bo-card">
-                      <h3 class="bo-section-title">Histórico de importações</h3>
-                      <div class="bo-table responsive-table mt-3">
-                        <table class="w-full text-sm">
-                          <thead>
-                            <tr class="text-left text-slate-500">
-                              <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
-                            </tr>
-                          </thead>
-                          <tbody>${channelImportsRows}</tbody>
-                        </table>
+                    <div class="bo-channel-stack space-y-6">
+                      <div class="bo-card">
+                        <h3 class="bo-section-title">Alertas do Channel Manager</h3>
+                        <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
+                        <div class="bo-channel-alerts mt-3 space-y-3">${channelAlertsHtml}</div>
+                      </div>
+
+                      <div class="bo-card">
+                        <h3 class="bo-section-title">Histórico de importações</h3>
+                        <div class="bo-table responsive-table mt-3">
+                          <table class="w-full text-sm">
+                            <thead>
+                              <tr class="text-left text-slate-500">
+                                <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
+                              </tr>
+                            </thead>
+                            <tbody>${channelImportsRows}</tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -4634,133 +4642,145 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
-                ${canViewAutomation ? statisticsCard : '<div class="bo-card"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
+                <div class="bo-pane__columns">
+                  ${canViewAutomation ? statisticsCard : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
+                </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="reviews" data-reviews-pane>
-                <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
-                  <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 class="text-lg font-semibold text-slate-800">Avaliações dos hóspedes</h2>
-                      <p class="text-sm text-slate-600">Filtra rapidamente as reviews recentes ou negativas e responde com confirmação imediata.</p>
+                <div class="bo-pane__columns">
+                  <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
+                    <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 class="text-lg font-semibold text-slate-800">Avaliações dos hóspedes</h2>
+                        <p class="text-sm text-slate-600">Filtra rapidamente as reviews recentes ou negativas e responde com confirmação imediata.</p>
+                      </div>
+                      <div class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600" data-reviews-counter>—</div>
+                    </header>
+                    <div class="flex flex-wrap items-center gap-2" role="tablist">
+                      <button type="button" class="btn btn-light btn-compact is-active" data-review-filter="all" role="tab" aria-selected="true">Todas</button>
+                      <button type="button" class="btn btn-light btn-compact" data-review-filter="negative" role="tab" aria-selected="false">Negativas</button>
+                      <button type="button" class="btn btn-light btn-compact" data-review-filter="recent" role="tab" aria-selected="false">Recentes</button>
                     </div>
-                    <div class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600" data-reviews-counter>—</div>
-                  </header>
-                  <div class="flex flex-wrap items-center gap-2" role="tablist">
-                    <button type="button" class="btn btn-light btn-compact is-active" data-review-filter="all" role="tab" aria-selected="true">Todas</button>
-                    <button type="button" class="btn btn-light btn-compact" data-review-filter="negative" role="tab" aria-selected="false">Negativas</button>
-                    <button type="button" class="btn btn-light btn-compact" data-review-filter="recent" role="tab" aria-selected="false">Recentes</button>
+                    <div class="space-y-3" data-reviews-list aria-busy="true">
+                      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
+                        <div class="h-4 bg-slate-200 rounded w-1/3 mb-2"></div>
+                        <div class="h-3 bg-slate-200 rounded w-2/3"></div>
+                      </div>
+                      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
+                        <div class="h-4 bg-slate-200 rounded w-1/2 mb-2"></div>
+                        <div class="h-3 bg-slate-200 rounded w-3/4"></div>
+                      </div>
+                    </div>
+                    <p class="text-sm text-slate-500" data-reviews-empty hidden role="status" aria-live="polite">
+                      Sem novas avaliações esta semana.
+                    </p>
                   </div>
-                  <div class="space-y-3" data-reviews-list aria-busy="true">
-                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
-                      <div class="h-4 bg-slate-200 rounded w-1/3 mb-2"></div>
-                      <div class="h-3 bg-slate-200 rounded w-2/3"></div>
+                  <div class="bo-card space-y-3" data-review-composer hidden>
+                    <header>
+                      <h3 class="text-base font-semibold text-slate-800">Responder à avaliação</h3>
+                      <p class="text-xs text-slate-500">A resposta ficará visível no portal após sincronização com o canal.</p>
+                    </header>
+                    <article class="rounded-lg border border-slate-200 bg-white/70 p-3 space-y-1" data-selected-review aria-live="polite"></article>
+                    <label class="form-field" data-field>
+                      <span class="form-label">Resposta</span>
+                      <textarea class="input" rows="3" maxlength="1000" data-review-response placeholder="Obrigado pela partilha..." required></textarea>
+                      <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
+                        <span data-review-hint>Máx. 1000 caracteres.</span>
+                        <span data-review-count>0 / 1000</span>
+                      </div>
+                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
+                    </label>
+                    <div class="flex items-center gap-3">
+                      <button type="button" class="btn btn-primary" data-review-submit>Enviar resposta</button>
+                      <button type="button" class="btn btn-light" data-review-cancel>Cancelar</button>
+                      <span class="text-xs text-slate-500" data-review-loading hidden aria-live="assertive">A enviar resposta…</span>
                     </div>
-                    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
-                      <div class="h-4 bg-slate-200 rounded w-1/2 mb-2"></div>
-                      <div class="h-3 bg-slate-200 rounded w-3/4"></div>
-                    </div>
-                  </div>
-                  <p class="text-sm text-slate-500" data-reviews-empty hidden role="status" aria-live="polite">
-                    Sem novas avaliações esta semana.
-                  </p>
-                </div>
-                <div class="bo-card space-y-3" data-review-composer hidden>
-                  <header>
-                    <h3 class="text-base font-semibold text-slate-800">Responder à avaliação</h3>
-                    <p class="text-xs text-slate-500">A resposta ficará visível no portal após sincronização com o canal.</p>
-                  </header>
-                  <article class="rounded-lg border border-slate-200 bg-white/70 p-3 space-y-1" data-selected-review aria-live="polite"></article>
-                  <label class="form-field" data-field>
-                    <span class="form-label">Resposta</span>
-                    <textarea class="input" rows="3" maxlength="1000" data-review-response placeholder="Obrigado pela partilha..." required></textarea>
-                    <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
-                      <span data-review-hint>Máx. 1000 caracteres.</span>
-                      <span data-review-count>0 / 1000</span>
-                    </div>
-                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                  </label>
-                  <div class="flex items-center gap-3">
-                    <button type="button" class="btn btn-primary" data-review-submit>Enviar resposta</button>
-                    <button type="button" class="btn btn-light" data-review-cancel>Cancelar</button>
-                    <span class="text-xs text-slate-500" data-review-loading hidden aria-live="assertive">A enviar resposta…</span>
                   </div>
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="housekeeping">
-                ${canSeeHousekeeping
-                  ? html`
-                      <div class="bo-card">
-                        <h2>Resumo de limpeza</h2>
-                        <div class="bo-metrics">
-                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.pending : 0}</strong><span>Tarefas pendentes</span></div>
-                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.inProgress : 0}</strong><span>Em curso</span></div>
-                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.highPriority : 0}</strong><span>Prioridade alta</span></div>
-                          <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.completedRecent : 0}</strong><span>Concluídas 7 dias</span></div>
+                <div class="bo-pane__columns">
+                  ${canSeeHousekeeping
+                    ? html`
+                        <div class="bo-card">
+                          <h2>Resumo de limpeza</h2>
+                          <div class="bo-metrics">
+                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.pending : 0}</strong><span>Tarefas pendentes</span></div>
+                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.inProgress : 0}</strong><span>Em curso</span></div>
+                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.highPriority : 0}</strong><span>Prioridade alta</span></div>
+                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.completedRecent : 0}</strong><span>Concluídas 7 dias</span></div>
+                          </div>
                         </div>
-                      </div>
-                      <div class="bo-card">
-                        <h2>Tarefas pendentes</h2>
-                        ${housekeepingPendingHtml}
-                      </div>
-                      <div class="bo-card">
-                        <h2>Em curso</h2>
-                        ${housekeepingInProgressHtml}
-                      </div>
-                      <div class="bo-card">
-                        <h2>Concluídas recentemente</h2>
-                        ${housekeepingCompletedHtml}
-                      </div>
-                      <div class="bo-card">
-                        <a class="btn btn-primary" href="/admin/limpeza">Abrir gestão de limpezas</a>
-                      </div>
-                    `
-                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
+                        <div class="bo-card">
+                          <h2>Tarefas pendentes</h2>
+                          ${housekeepingPendingHtml}
+                        </div>
+                        <div class="bo-card">
+                          <h2>Em curso</h2>
+                          ${housekeepingInProgressHtml}
+                        </div>
+                        <div class="bo-card">
+                          <h2>Concluídas recentemente</h2>
+                          ${housekeepingCompletedHtml}
+                        </div>
+                        <div class="bo-card">
+                          <a class="btn btn-primary" href="/admin/limpeza">Abrir gestão de limpezas</a>
+                        </div>
+                      `
+                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
+                </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="emails">
-                ${canManageEmailTemplates
-                  ? html`
-                      <div class="bo-card">
-                        <h2>Emails de reserva</h2>
-                        <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
-                        <div class="space-y-6">${emailTemplateCards}</div>
-                      </div>
-                    `
-                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
+                <div class="bo-pane__columns">
+                  ${canManageEmailTemplates
+                    ? html`
+                        <div class="bo-card bo-span-all">
+                          <h2>Emails de reserva</h2>
+                          <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
+                          <div class="space-y-6">${emailTemplateCards}</div>
+                        </div>
+                      `
+                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
+                </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="messages">
-                ${canManageEmailTemplates
-                  ? html`
-                      <div class="bo-card" data-message-templates-root>
-                        <h2>Mensagens automáticas</h2>
-                        <p class="bo-subtitle">Personalize respostas rápidas para WhatsApp, SMS ou chat com os hóspedes.</p>
-                        <div class="space-y-6">${messageTemplateCards}</div>
-                      </div>
-                    `
-                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
+                <div class="bo-pane__columns">
+                  ${canManageEmailTemplates
+                    ? html`
+                        <div class="bo-card bo-span-all" data-message-templates-root>
+                          <h2>Mensagens automáticas</h2>
+                          <p class="bo-subtitle">Personalize respostas rápidas para WhatsApp, SMS ou chat com os hóspedes.</p>
+                          <div class="space-y-6">${messageTemplateCards}</div>
+                        </div>
+                      `
+                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
+                </div>
               </section>
 
               ${canViewHistory
                 ? html`
                     <section class="bo-pane" data-bo-pane="history">
-                      <div class="bo-card space-y-6">
-                        <div>
-                          <h2>Histórico de alterações</h2>
-                          <p class="bo-subtitle">
-                            Acompanhe as edições efetuadas pela equipa em reservas e tarefas de limpeza.
-                          </p>
-                        </div>
-                        <div class="grid gap-6 lg:grid-cols-2">
-                          <div class="space-y-3">
-                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Reservas</h3>
-                            <div class="space-y-4">${historyBookingHtml}</div>
+                      <div class="bo-pane__columns">
+                        <div class="bo-card bo-span-all space-y-6">
+                          <div>
+                            <h2>Histórico de alterações</h2>
+                            <p class="bo-subtitle">
+                              Acompanhe as edições efetuadas pela equipa em reservas e tarefas de limpeza.
+                            </p>
                           </div>
-                          <div class="space-y-3">
-                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Tarefas de limpeza</h3>
-                            <div class="space-y-4">${historyTaskHtml}</div>
+                          <div class="grid gap-6 lg:grid-cols-2">
+                            <div class="space-y-3">
+                              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Reservas</h3>
+                              <div class="space-y-4">${historyBookingHtml}</div>
+                            </div>
+                            <div class="space-y-3">
+                              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Tarefas de limpeza</h3>
+                              <div class="space-y-4">${historyTaskHtml}</div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -4769,70 +4789,76 @@ module.exports = function registerBackoffice(app, context) {
                 : ''}
 
               <section class="bo-pane" data-bo-pane="branding">
-                <div class="bo-card">
-                  <h2>Identidade visual</h2>
-                  <p class="bo-subtitle">Cores e imagem aplicadas ao portal</p>
-                  <div class="grid gap-3 sm:grid-cols-2">
-                    <div class="rounded-xl border border-amber-200 p-4">
-                      <div class="text-xs uppercase text-amber-600">Nome</div>
-                      <div class="text-lg font-semibold text-amber-900">${esc(theme.brandName)}</div>
-                      ${theme.tagline ? `<div class="text-sm text-amber-700 mt-2">${esc(theme.tagline)}</div>` : ''}
+                <div class="bo-pane__columns">
+                  <div class="bo-card bo-span-all">
+                    <h2>Identidade visual</h2>
+                    <p class="bo-subtitle">Cores e imagem aplicadas ao portal</p>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                      <div class="rounded-xl border border-amber-200 p-4">
+                        <div class="text-xs uppercase text-amber-600">Nome</div>
+                        <div class="text-lg font-semibold text-amber-900">${esc(theme.brandName)}</div>
+                        ${theme.tagline ? `<div class="text-sm text-amber-700 mt-2">${esc(theme.tagline)}</div>` : ''}
+                      </div>
+                      <div class="rounded-xl border border-amber-200 p-4 flex gap-3 items-center">
+                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.primaryColor)}"></span>
+                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.secondaryColor)}"></span>
+                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.highlightColor)}"></span>
+                      </div>
                     </div>
-                    <div class="rounded-xl border border-amber-200 p-4 flex gap-3 items-center">
-                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.primaryColor)}"></span>
-                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.secondaryColor)}"></span>
-                      <span class="w-10 h-10 rounded-full" style="background:${esc(theme.highlightColor)}"></span>
-                    </div>
+                    ${canManageUsers
+                      ? '<div class="mt-4"><a class="btn btn-primary" href="/admin/identidade-visual">Gerir identidade visual</a></div>'
+                      : '<p class="bo-empty mt-4">Sem permissões para editar a identidade.</p>'}
                   </div>
-                  ${canManageUsers
-                    ? '<div class="mt-4"><a class="btn btn-primary" href="/admin/identidade-visual">Gerir identidade visual</a></div>'
-                    : '<p class="bo-empty mt-4">Sem permissões para editar a identidade.</p>'}
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="users">
-                ${canManageUsers
-                  ? html`
-                      <div class="bo-card">
-                        <h2>Utilizadores</h2>
-                        <div class="bo-table responsive-table">
-                          <table class="w-full text-sm">
-                            <thead>
-                              <tr class="text-left text-slate-500">
-                                <th>Utilizador</th><th>Perfil</th>
-                              </tr>
-                            </thead>
-                            <tbody>${usersTableRows}</tbody>
-                          </table>
+                <div class="bo-pane__columns">
+                  ${canManageUsers
+                    ? html`
+                        <div class="bo-card bo-span-all">
+                          <h2>Utilizadores</h2>
+                          <div class="bo-table responsive-table">
+                            <table class="w-full text-sm">
+                              <thead>
+                                <tr class="text-left text-slate-500">
+                                  <th>Utilizador</th><th>Perfil</th>
+                                </tr>
+                              </thead>
+                              <tbody>${usersTableRows}</tbody>
+                            </table>
+                          </div>
+                          <div class="mt-4 flex gap-3 flex-wrap">
+                            <a class="btn btn-primary" href="/admin/utilizadores">Gerir utilizadores</a>
+                          </div>
                         </div>
-                        <div class="mt-4 flex gap-3 flex-wrap">
-                          <a class="btn btn-primary" href="/admin/utilizadores">Gerir utilizadores</a>
-                        </div>
-                      </div>
-                    `
-                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
+                      `
+                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
+                </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="calendar">
-                ${canViewCalendar
-                  ? html`
-                      <div class="bo-card">
-                        <h2>Agenda de reservas</h2>
-                        <p class="bo-subtitle">Próximas reservas confirmadas ou pendentes</p>
-                        <div class="bo-table responsive-table">
-                          <table class="w-full text-sm">
-                            <thead>
-                              <tr class="text-left text-slate-500">
-                                <th>Datas</th><th>Propriedade</th><th>Hóspede</th><th>Estado</th>
-                              </tr>
-                            </thead>
-                            <tbody>${calendarPreviewRows}</tbody>
-                          </table>
+                <div class="bo-pane__columns">
+                  ${canViewCalendar
+                    ? html`
+                        <div class="bo-card bo-span-all">
+                          <h2>Agenda de reservas</h2>
+                          <p class="bo-subtitle">Próximas reservas confirmadas ou pendentes</p>
+                          <div class="bo-table responsive-table">
+                            <table class="w-full text-sm">
+                              <thead>
+                                <tr class="text-left text-slate-500">
+                                  <th>Datas</th><th>Propriedade</th><th>Hóspede</th><th>Estado</th>
+                                </tr>
+                              </thead>
+                              <tbody>${calendarPreviewRows}</tbody>
+                            </table>
+                          </div>
+                          <div class="mt-4"><a class="btn btn-primary" href="/calendar">Abrir calendário completo</a></div>
                         </div>
-                        <div class="mt-4"><a class="btn btn-primary" href="/calendar">Abrir calendário completo</a></div>
-                      </div>
-                    `
-                  : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
+                      `
+                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
+                </div>
               </section>
               </div>
             </div>
