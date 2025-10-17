@@ -66,6 +66,7 @@ const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { applyRateRules } = require('./server/services/pricing/rules');
 const { createTelemetry } = require('./src/services/telemetry');
 const { createPaymentService } = require('./src/services/payments');
+const { createGuestPortalService } = require('./src/services/guest-portal');
 const {
   MASTER_ROLE,
   ROLE_LABELS,
@@ -1726,6 +1727,7 @@ const automationEngine = createAutomationEngine({
 
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
 const paymentService = createPaymentService({ db, dayjs, logger: console });
+const guestPortalService = createGuestPortalService({ db, crypto, dayjs });
 if (!skipStartupTasks) {
   channelIntegrations
     .autoSyncAll({ reason: 'startup' })
@@ -3537,6 +3539,7 @@ const context = {
   otaDispatcher,
   telemetry,
   paymentService,
+  guestPortalService,
   featureFlags,
   isFeatureEnabled,
   wantsJson,
@@ -3660,7 +3663,7 @@ if (!global.__SERVER_STARTED__ && process.env.SKIP_SERVER_START !== '1') {
 }
 
 if (process.env.SKIP_SERVER_START === '1') {
-  Object.assign(app, { db, requireScope, buildUserContext, tenantService });
+  Object.assign(app, { db, requireScope, buildUserContext, tenantService, guestPortalService });
 }
 
 module.exports = app;

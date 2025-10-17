@@ -9,16 +9,16 @@ function buildBookingLink({ booking, request, fallbackBase }) {
     const host = request.get('host');
     const protocol = request.protocol || 'https';
     if (host) {
-      return `${protocol}://${host.replace(/\/$/, '')}/booking/${booking.id}${token}`;
+      return `${protocol}://${host.replace(/\/$/, '')}/guest/${booking.id}${token}`;
     }
   }
 
   if (fallbackBase) {
     const base = fallbackBase.replace(/\/$/, '');
-    return `${base}/booking/${booking.id}${token}`;
+    return `${base}/guest/${booking.id}${token}`;
   }
 
-  return `/booking/${booking.id}${token}`;
+  return `/guest/${booking.id}${token}`;
 }
 
 function createBookingEmailer({ emailTemplates, mailer, dayjs, eur }) {
