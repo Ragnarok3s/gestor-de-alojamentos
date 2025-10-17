@@ -2801,6 +2801,9 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-card .btn-primary{background:#f97316;border:none;box-shadow:0 10px 25px rgba(249,115,22,.25);}
         .page-backoffice .bo-card .btn-primary:hover{background:#ea580c;}
         .page-backoffice .bo-card table th{background:#fff7ed;}
+        .page-backoffice .bo-pane__columns{display:grid;gap:24px;}
+        .page-backoffice .bo-pane__columns > *{min-width:0;}
+        @media (min-width:720px){.page-backoffice .bo-pane__columns{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));}}
         .page-backoffice .bo-property-units{margin:6px 0 0;padding-left:18px;font-size:.78rem;color:#b45309;display:grid;gap:4px;list-style:disc;}
         .page-backoffice .bo-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;}
         .page-backoffice .bo-metric{background:#fff7ed;border:1px solid #fed7aa;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
