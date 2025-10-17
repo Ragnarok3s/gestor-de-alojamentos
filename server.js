@@ -31,6 +31,7 @@ const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const registerAccountModule = require('./src/modules/account');
+const registerPaymentsModule = require('./src/modules/payments');
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createSessionService } = require('./src/services/session');
@@ -58,6 +59,7 @@ const logActivityAction = require('./server/automations/actions/log.activity');
 const { createDecisionAssistant } = require('./server/decisions/assistant');
 const { applyRateRules } = require('./server/services/pricing/rules');
 const { createTelemetry } = require('./src/services/telemetry');
+const { createPaymentService } = require('./src/services/payments');
 const {
   MASTER_ROLE,
   ROLE_LABELS,
@@ -1660,6 +1662,7 @@ const automationEngine = createAutomationEngine({
 });
 
 const decisionAssistant = createDecisionAssistant({ db, dayjs });
+const paymentService = createPaymentService({ db, dayjs, logger: console });
 if (!skipStartupTasks) {
   channelIntegrations
     .autoSyncAll({ reason: 'startup' })
@@ -3399,6 +3402,7 @@ const context = {
   channelSync,
   otaDispatcher,
   telemetry,
+  paymentService,
   featureFlags,
   isFeatureEnabled,
   wantsJson,
@@ -3470,6 +3474,7 @@ const context = {
 registerAuthRoutes(app, context);
 registerAccountModule(app, context);
 registerFrontoffice(app, context);
+registerPaymentsModule(app, context);
 registerOwnersPortal(app, context);
 registerInternalTelemetry(app, context);
 registerBackoffice(app, context);

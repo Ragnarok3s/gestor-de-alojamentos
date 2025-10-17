@@ -1,6 +1,8 @@
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex, verifySignedQuery, rateLimitByUserRoute } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
+const { aggregatePaymentData, computeOutstandingCents } = require('../../services/payments/summary');
+const { describePaymentStatus } = require('../../services/payments/status');
 
 module.exports = function registerFrontoffice(app, context) {
   const {
@@ -43,14 +45,88 @@ module.exports = function registerFrontoffice(app, context) {
     ratePlanService
   } = context;
 
+  function summarizePaymentDetailsForBooking(booking, summary) {
+    if (!summary) {
+      return ['Sem pagamentos registados'];
+    }
+
+    const totalRecorded =
+      (summary.capturedCents || 0) +
+      (summary.pendingCents || 0) +
+      (summary.actionRequiredCents || 0) +
+      (summary.failedCents || 0) +
+      (summary.cancelledCents || 0) +
+      (summary.refundedCents || 0);
+
+    if (totalRecorded === 0) {
+      return ['Sem pagamentos registados'];
+    }
+
+    const bookingTotalCents = Number(booking.total_cents || 0);
+    const outstandingCents = computeOutstandingCents(summary, bookingTotalCents);
+
+    let statusLabel = null;
+    if (bookingTotalCents > 0 && summary.netCapturedCents >= bookingTotalCents) {
+      statusLabel = describePaymentStatus('captured').label;
+    } else if ((summary.actionRequiredCents || 0) > 0) {
+      statusLabel = describePaymentStatus('requires_action').label;
+    } else if ((summary.pendingCents || 0) > 0) {
+      statusLabel = describePaymentStatus('pending').label;
+    } else if ((summary.failedCents || 0) > 0) {
+      statusLabel = describePaymentStatus('failed').label;
+    } else if ((summary.cancelledCents || 0) > 0) {
+      statusLabel = describePaymentStatus('cancelled').label;
+    } else if ((summary.netCapturedCents || 0) > 0) {
+      statusLabel = 'Pago parcial';
+    }
+
+    const lines = [];
+    if (statusLabel) {
+      lines.push(`Estado: ${statusLabel}`);
+    }
+    if ((summary.netCapturedCents || 0) > 0) {
+      lines.push(`Pago: € ${eur(summary.netCapturedCents)}`);
+    }
+    if ((summary.refundedCents || 0) > 0) {
+      lines.push(`Reembolsado: € ${eur(summary.refundedCents)}`);
+    }
+    if ((summary.pendingCents || 0) > 0) {
+      lines.push(`Pendente: € ${eur(summary.pendingCents)}`);
+    }
+    if ((summary.actionRequiredCents || 0) > 0) {
+      lines.push(`Ação necessária: € ${eur(summary.actionRequiredCents)}`);
+    }
+    if ((summary.failedCents || 0) > 0) {
+      lines.push(`Falhou: € ${eur(summary.failedCents)}`);
+    }
+    if ((summary.cancelledCents || 0) > 0) {
+      lines.push(`Cancelado: € ${eur(summary.cancelledCents)}`);
+    }
+    if (outstandingCents > 0) {
+      lines.push(`Por cobrar: € ${eur(outstandingCents)}`);
+    } else if (bookingTotalCents > 0 && summary.netCapturedCents >= bookingTotalCents) {
+      lines.push('Saldo liquidado');
+    }
+
+    return lines.length ? lines : ['Sem movimentos registados'];
+  }
+
   function isFlagEnabled(flagName) {
+    let enabled;
+
     if (typeof isFeatureEnabled === 'function') {
-      return isFeatureEnabled(flagName);
+      enabled = isFeatureEnabled(flagName);
+    } else if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      enabled = !!featureFlags[flagName];
+    } else {
+      enabled = false;
     }
-    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
-      return !!featureFlags[flagName];
+
+    if (enabled && flagName === 'FEATURE_SIGNED_EXPORT_DOWNLOAD' && !process.env.EXPORT_SIGNING_KEY) {
+      return false;
     }
-    return false;
+
+    return !!enabled;
   }
 
   function ensureNoIndexHeader(res) {
@@ -2559,6 +2635,36 @@ app.get(
     }
 
     const bookingsForMonth = bookingsMonthStmt.all(monthStart, monthEndExcl);
+
+    const bookingIds = bookingsForMonth.map(booking => booking.id);
+    let paymentRows = [];
+    let refundRows = [];
+    if (bookingIds.length) {
+      const placeholders = bookingIds.map(() => '?').join(',');
+      const paymentsSql = `
+        SELECT id, booking_id, status, amount_cents
+          FROM payments
+         WHERE booking_id IN (${placeholders})
+      `;
+      paymentRows = db.prepare(paymentsSql).all(...bookingIds);
+
+      const paymentIds = paymentRows.map(payment => payment.id);
+      if (paymentIds.length) {
+        const refundPlaceholders = paymentIds.map(() => '?').join(',');
+        const refundsSql = `
+          SELECT id, payment_id, status, amount_cents
+            FROM refunds
+           WHERE payment_id IN (${refundPlaceholders})
+        `;
+        refundRows = db.prepare(refundsSql).all(...paymentIds);
+      }
+    }
+
+    const { bookingSummaries } = aggregatePaymentData({
+      payments: paymentRows,
+      refunds: refundRows
+    });
+
     const refByBookingId = new Map();
     bookingsForMonth.forEach((booking, idx) => {
       refByBookingId.set(booking.id, numberToLetters(idx));
@@ -2719,6 +2825,11 @@ app.get(
         '',
         ''
       ]);
+
+      const paymentSummary = bookingSummaries.get(booking.id) || null;
+      const paymentLines = summarizePaymentDetailsForBooking(booking, paymentSummary);
+      const paymentCell = detailRow.getCell(19);
+      paymentCell.value = paymentLines.join('\n');
 
       detailRow.eachCell((cell, colNumber) => {
         if (currencyColumns.has(colNumber)) {
