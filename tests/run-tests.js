@@ -20,10 +20,7 @@ const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
 const { createI18nService } = require('../src/services/i18n');
 const { createMessageTemplateService } = require('../src/services/templates');
 const { createTenantService } = require('../src/services/tenants');
-<<<<<<< HEAD
-=======
 const { createChannelContentService } = require('../src/services/channel-content');
->>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
 
 const simpleSlugify = (value) =>
   String(value || '')
@@ -877,8 +874,6 @@ function testTenantService() {
   assert.throws(() => tenantService.deleteTenant(defaultTenant.id), /tenant padrão/i, 'não deve remover tenant padrão');
 }
 
-<<<<<<< HEAD
-=======
 function testChannelContentService() {
   const db = createDatabase(':memory:');
   const tenantId = 1;
@@ -963,7 +958,6 @@ function testChannelContentService() {
   assert.ok(history.some(entry => entry.version === 1));
 }
 
->>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
 async function main() {
   console.log('> testServerBootstrap');
   testServerBootstrap();
@@ -974,12 +968,9 @@ async function main() {
   console.log('> testTenantService');
   testTenantService();
   console.log('✓ testTenantService');
-<<<<<<< HEAD
-=======
   console.log('> testChannelContentService');
   testChannelContentService();
   console.log('✓ testChannelContentService');
->>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
   console.log('> testCsrfProtection');
   testCsrfProtection();
   console.log('✓ testCsrfProtection');
