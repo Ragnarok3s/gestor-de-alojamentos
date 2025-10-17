@@ -112,13 +112,21 @@ module.exports = function registerFrontoffice(app, context) {
   }
 
   function isFlagEnabled(flagName) {
+    let enabled;
+
     if (typeof isFeatureEnabled === 'function') {
-      return isFeatureEnabled(flagName);
+      enabled = isFeatureEnabled(flagName);
+    } else if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      enabled = !!featureFlags[flagName];
+    } else {
+      enabled = false;
     }
-    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
-      return !!featureFlags[flagName];
+
+    if (enabled && flagName === 'FEATURE_SIGNED_EXPORT_DOWNLOAD' && !process.env.EXPORT_SIGNING_KEY) {
+      return false;
     }
-    return false;
+
+    return !!enabled;
   }
 
   function ensureNoIndexHeader(res) {
