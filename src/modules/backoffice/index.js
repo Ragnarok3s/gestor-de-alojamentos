@@ -3326,18 +3326,18 @@ module.exports = function registerBackoffice(app, context) {
         const sectionItemsId = `bo-nav-items-${section.id}`;
 
         return `
-          <div class="bo-nav__section" data-nav-section>
+          <div class="bo-nav__section is-collapsed" data-nav-section data-nav-start-collapsed="true">
             <button
               type="button"
               class="bo-nav__section-toggle"
               data-nav-toggle
-              aria-expanded="true"
+              aria-expanded="false"
               aria-controls="${sectionItemsId}"
             >
               <span>${esc(section.title)}</span>
               <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
             </button>
-            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}">${itemsHtml}</div>
+            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
           </div>
         `;
       })

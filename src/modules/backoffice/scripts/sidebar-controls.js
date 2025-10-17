@@ -49,7 +49,13 @@
       if (!toggle || !items) return;
 
       if (!sectionState.has(section)) {
-        sectionState.set(section, false);
+        var defaultCollapsed = false;
+        if (section.hasAttribute("data-nav-start-collapsed")) {
+          defaultCollapsed = section.getAttribute("data-nav-start-collapsed") !== "false";
+        } else {
+          defaultCollapsed = section.classList.contains("is-collapsed");
+        }
+        sectionState.set(section, defaultCollapsed);
       }
 
       var storedCollapsed = !!sectionState.get(section);
