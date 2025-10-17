@@ -2735,7 +2735,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-shell{--bo-sidebar-width:264px;position:relative;display:grid;grid-template-columns:var(--bo-sidebar-width) minmax(0,1fr);gap:24px;align-items:start;}
         .page-backoffice .bo-shell.is-collapsed{--bo-sidebar-width:92px;}
         .page-backoffice .bo-shell.is-sidebar-open{--bo-sidebar-width:264px;}
-        .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;max-height:calc(100vh - 120px);overflow:auto;box-shadow:0 18px 40px rgba(249,115,22,.12);scrollbar-gutter:stable;}
+        .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;max-height:calc(100vh - 120px);overflow:auto;overflow-x:hidden;overflow-y:auto;box-shadow:0 18px 40px rgba(249,115,22,.12);}
         .page-backoffice .bo-sidebar:focus{outline:2px solid rgba(249,115,22,.5);outline-offset:4px;}
         .page-backoffice .bo-sidebar__header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
         .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#c2410c;font-weight:600;}
@@ -2745,10 +2745,15 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-sidebar__toggle-icon--expand,.page-backoffice .bo-sidebar__toggle-icon--close{display:none;}
         .page-backoffice .bo-sidebar__scrim{display:none;}
         .page-backoffice .bo-nav{display:grid;gap:16px;}
-        .page-backoffice .bo-nav__section{display:grid;gap:8px;padding:12px 0;border-top:1px solid rgba(251,191,36,.35);}
+        .page-backoffice .bo-nav__section{display:grid;gap:10px;padding:12px 0;border-top:1px solid rgba(251,191,36,.35);}
         .page-backoffice .bo-nav__section:first-child{padding-top:0;border-top:none;}
-        .page-backoffice .bo-nav__section-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;}
+        .page-backoffice .bo-nav__section-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:0;border:none;background:transparent;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;cursor:pointer;transition:color .2s ease;}
+        .page-backoffice .bo-nav__section-toggle:hover{color:#9a3412;}
+        .page-backoffice .bo-nav__section-toggle:focus-visible{outline:2px solid rgba(249,115,22,.5);outline-offset:3px;border-radius:12px;}
+        .page-backoffice .bo-nav__section-toggle-icon{width:18px;height:18px;transition:transform .2s ease;}
         .page-backoffice .bo-nav__section-items{display:grid;gap:8px;}
+        .page-backoffice .bo-nav__section.is-collapsed .bo-nav__section-items{display:none;}
+        .page-backoffice .bo-nav__section.is-collapsed .bo-nav__section-toggle-icon{transform:rotate(-90deg);}
         .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:#c2410c;cursor:pointer;transition:all .2s ease;}
         .page-backoffice .bo-tab.bo-tab--compact{gap:8px;}
         .page-backoffice .bo-tab--link{text-decoration:none;}
@@ -2763,7 +2768,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-shell.is-collapsed .bo-sidebar__title{display:none;}
         .page-backoffice .bo-shell.is-collapsed .bo-nav{gap:12px;}
         .page-backoffice .bo-shell.is-collapsed .bo-nav__section{padding:8px 0;}
-        .page-backoffice .bo-shell.is-collapsed .bo-nav__section-title{display:none;}
+        .page-backoffice .bo-shell.is-collapsed .bo-nav__section-toggle{display:none;}
         .page-backoffice .bo-shell.is-collapsed .bo-tab{justify-content:center;padding:10px 12px;}
         .page-backoffice .bo-shell.is-collapsed .bo-tab span{display:none;}
         .page-backoffice .bo-shell.is-collapsed .bo-sidebar__toggle-icon--collapse{display:none;}

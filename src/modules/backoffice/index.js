@@ -3223,6 +3223,7 @@ module.exports = function registerBackoffice(app, context) {
 
     const navSections = [
       {
+        id: 'operations',
         title: 'Operações diárias',
         items: [
           { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
@@ -3241,6 +3242,7 @@ module.exports = function registerBackoffice(app, context) {
         ]
       },
       {
+        id: 'finance',
         title: 'Finanças e rendimento',
         items: [
           { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
@@ -3249,6 +3251,7 @@ module.exports = function registerBackoffice(app, context) {
         ]
       },
       {
+        id: 'communication',
         title: 'Comunicação',
         items: [
           { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
@@ -3258,6 +3261,7 @@ module.exports = function registerBackoffice(app, context) {
         ]
       },
       {
+        id: 'administration',
         title: 'Administração',
         items: [
           ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
@@ -3303,10 +3307,21 @@ module.exports = function registerBackoffice(app, context) {
           return '';
         }
 
+        const sectionItemsId = `bo-nav-items-${section.id}`;
+
         return `
-          <div class="bo-nav__section">
-            <div class="bo-nav__section-title">${esc(section.title)}</div>
-            <div class="bo-nav__section-items">${itemsHtml}</div>
+          <div class="bo-nav__section" data-nav-section>
+            <button
+              type="button"
+              class="bo-nav__section-toggle"
+              data-nav-toggle
+              aria-expanded="true"
+              aria-controls="${sectionItemsId}"
+            >
+              <span>${esc(section.title)}</span>
+              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
+            </button>
+            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}">${itemsHtml}</div>
           </div>
         `;
       })

@@ -16,6 +16,8 @@
     var openButtons = Array.from(shell.querySelectorAll("[data-sidebar-open]"));
     var scrim = shell.querySelector("[data-sidebar-scrim]");
     var collapseState = false;
+    var navSections = Array.from(sidebar.querySelectorAll("[data-nav-section]"));
+    var sectionState = new WeakMap();
     var mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 1080px)") : null;
 
     function isMobile() {
@@ -40,10 +42,59 @@
       });
     }
 
+    function applySectionState(section) {
+      if (!section) return;
+      var toggle = section.querySelector("[data-nav-toggle]");
+      var items = section.querySelector("[data-nav-items]");
+      if (!toggle || !items) return;
+
+      if (!sectionState.has(section)) {
+        sectionState.set(section, false);
+      }
+
+      var storedCollapsed = !!sectionState.get(section);
+      var forceExpanded = collapseState && !isMobile();
+      var shouldCollapse = forceExpanded ? false : storedCollapsed;
+
+      if (shouldCollapse) {
+        section.classList.add("is-collapsed");
+        toggle.setAttribute("aria-expanded", "false");
+        items.setAttribute("hidden", "");
+      } else {
+        section.classList.remove("is-collapsed");
+        toggle.setAttribute("aria-expanded", "true");
+        items.removeAttribute("hidden");
+      }
+
+      if (collapseState && !isMobile()) {
+        toggle.setAttribute("tabindex", "-1");
+        toggle.setAttribute("aria-disabled", "true");
+        toggle.setAttribute("disabled", "");
+      } else {
+        toggle.removeAttribute("tabindex");
+        toggle.removeAttribute("aria-disabled");
+        toggle.removeAttribute("disabled");
+      }
+    }
+
+    function toggleSection(section) {
+      if (!section) return;
+      var current = sectionState.has(section) ? !!sectionState.get(section) : false;
+      sectionState.set(section, !current);
+      applySectionState(section);
+    }
+
+    function refreshSections() {
+      navSections.forEach(function (section) {
+        applySectionState(section);
+      });
+    }
+
     function setCollapsed(nextState) {
       collapseState = !!nextState;
       shell.classList.toggle("is-collapsed", collapseState);
       updateToggleLabels(collapseState);
+      refreshSections();
     }
 
     function openSidebar() {
@@ -97,6 +148,7 @@
         updateToggleLabels(collapseState);
         syncOpenButtons(false);
       }
+      refreshSections();
     }
 
     if (toggle) {
@@ -129,6 +181,18 @@
     } else {
       window.addEventListener("resize", handleMobileChange);
     }
+
+    navSections.forEach(function (section) {
+      applySectionState(section);
+      var sectionToggle = section.querySelector("[data-nav-toggle]");
+      if (sectionToggle) {
+        sectionToggle.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (collapseState && !isMobile()) return;
+          toggleSection(section);
+        });
+      }
+    });
 
     handleMobileChange();
     updateToggleLabels(collapseState);
