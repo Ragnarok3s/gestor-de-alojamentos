@@ -32,6 +32,10 @@ const registerOwnersPortal = require('./src/modules/owners');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const registerAccountModule = require('./src/modules/account');
 const registerTenantAdminModule = require('./src/modules/admin/tenants');
+// Legacy alias retained for environments still referencing the older payments
+// module hook name. Ensures pm2 or other runners with stale bundles do not
+// crash while the new tenant admin module rolls out.
+const registerPaymentsModule = registerTenantAdminModule;
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
 const { createTenantService } = require('./src/services/tenants');
