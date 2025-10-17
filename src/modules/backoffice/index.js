@@ -689,6 +689,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
   const uxEnhancementsSource = fs.readFileSync(path.join(scriptsDir, 'ux-enhancements.js'), 'utf8');
+  const sidebarControlsSource = fs.readFileSync(path.join(scriptsDir, 'sidebar-controls.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
@@ -696,6 +697,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerScript = inlineScript(galleryManagerSource);
   const revenueDashboardScript = inlineScript(revenueDashboardSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
+  const sidebarControlsScript = inlineScript(sidebarControlsSource);
 
   function renderDashboardTabsScript(defaultPaneId) {
     const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
@@ -4229,22 +4231,41 @@ module.exports = function registerBackoffice(app, context) {
         pageClass: 'page-backoffice',
         body: html`
           <div class="bo-page bo-page--wide">
-            <div class="bo-shell">
-              <aside class="bo-sidebar">
-                <div class="bo-sidebar__title">Menu principal</div>
-                <div class="bo-nav">${navButtonsHtml}</div>
+            <div class="bo-shell" data-bo-shell>
+              <aside class="bo-sidebar" data-bo-sidebar tabindex="-1">
+                <div class="bo-sidebar__header">
+                  <div class="bo-sidebar__title">Menu principal</div>
+                  <button
+                    type="button"
+                    class="bo-sidebar__toggle"
+                    data-sidebar-toggle
+                    aria-expanded="true"
+                    aria-controls="bo-backoffice-nav"
+                    aria-label="Encolher menu"
+                  >
+                    <i data-lucide="chevron-left" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse" aria-hidden="true"></i>
+                    <i data-lucide="chevron-right" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand" aria-hidden="true"></i>
+                    <i data-lucide="x" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>${navButtonsHtml}</nav>
               </aside>
-              <div class="bo-main">
-              <header class="bo-header">
-                <h1>Gestor Operacional</h1>
-                <p>Todos os dados essenciais de gestão em formato compacto.</p>
-              </header>
+              <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
+              <div class="bo-main" data-bo-main>
+                <button type="button" class="bo-main__menu" data-sidebar-open>
+                  <i data-lucide="menu" aria-hidden="true"></i>
+                  <span>Menu</span>
+                </button>
+                <header class="bo-header">
+                  <h1>Gestor Operacional</h1>
+                  <p>Todos os dados essenciais de gestão em formato compacto.</p>
+                </header>
 
-              ${quickAccessHtml}
+                ${quickAccessHtml}
 
-              <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
+                <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
-              <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
                 <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
                   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                     <div>
@@ -4826,6 +4847,7 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
+          <script>${sidebarControlsScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
