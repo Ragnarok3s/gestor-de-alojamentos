@@ -4374,74 +4374,76 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                   <p class="text-xs text-slate-500">Após confirmar, tens 5 segundos para anular a alteração.</p>
                 </div>
-                <div class="bo-card">
-                  <h2>Propriedades</h2>
-                  <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
-                  ${propertiesListHtml}
-                  <hr class="my-4" />
-                  <h3 class="bo-section-title">Adicionar propriedade</h3>
-                  <form method="post" action="/admin/properties/create" class="grid gap-3">
-                    <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
-                      <input required name="name" class="input" placeholder="Nome" />
-                      <input required name="address" class="input" placeholder="Morada completa" />
-                      <div class="grid gap-2 sm:grid-cols-2">
-                        <input required name="locality" class="input" placeholder="Localidade" />
-                        <input required name="district" class="input" placeholder="Distrito" />
-                      </div>
-                      <textarea name="description" class="input" placeholder="Descrição"></textarea>
-                    </fieldset>
-                    ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
-                    <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
-                  </form>
-                </div>
-
-                <div class="bo-card">
-                  <h2>Unidades</h2>
-                  <div class="bo-table responsive-table">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-left text-slate-500">
-                          <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
-                        </tr>
-                      </thead>
-                      <tbody>${unitsTableRows}</tbody>
-                    </table>
+                <div class="bo-pane__columns bo-span-all">
+                  <div class="bo-card">
+                    <h2>Propriedades</h2>
+                    <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
+                    ${propertiesListHtml}
+                    <hr class="my-4" />
+                    <h3 class="bo-section-title">Adicionar propriedade</h3>
+                    <form method="post" action="/admin/properties/create" class="grid gap-3">
+                      <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
+                        <input required name="name" class="input" placeholder="Nome" />
+                        <input required name="address" class="input" placeholder="Morada completa" />
+                        <div class="grid gap-2 sm:grid-cols-2">
+                          <input required name="locality" class="input" placeholder="Localidade" />
+                          <input required name="district" class="input" placeholder="Distrito" />
+                        </div>
+                        <textarea name="description" class="input" placeholder="Descrição"></textarea>
+                      </fieldset>
+                      ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
+                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
+                    </form>
                   </div>
-                  <hr class="my-4" />
-                  <h3 class="bo-section-title">Adicionar unidade</h3>
-                  <form method="post" action="/admin/units/create" class="grid gap-3">
-                    <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
-                      <label class="form-field md:col-span-2 lg:col-span-2">
-                        <span class="form-label">Propriedade</span>
-                        <select required name="property_id" class="input">
-                          <option value="" disabled selected hidden>Seleciona um alojamento</option>
-                          ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-                        </select>
-                      </label>
-                      <label class="form-field md:col-span-2 lg:col-span-2">
-                        <span class="form-label">Nome da unidade</span>
-                        <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Capacidade</span>
-                        <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Preço base €/noite</span>
-                        <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
-                      </label>
-                      <div class="md:col-span-2 lg:col-span-4">
-                        ${renderFeatureBuilderField({
-                          name: 'features_raw',
-                          label: 'Características',
-                          helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
-                        })}
-                      </div>
-                    </fieldset>
-                    <div>
-                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
+
+                  <div class="bo-card">
+                    <h2>Unidades</h2>
+                    <div class="bo-table responsive-table">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-slate-500">
+                            <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
+                          </tr>
+                        </thead>
+                        <tbody>${unitsTableRows}</tbody>
+                      </table>
                     </div>
-                  </form>
+                    <hr class="my-4" />
+                    <h3 class="bo-section-title">Adicionar unidade</h3>
+                    <form method="post" action="/admin/units/create" class="grid gap-3">
+                      <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
+                        <label class="form-field md:col-span-2 lg:col-span-2">
+                          <span class="form-label">Propriedade</span>
+                          <select required name="property_id" class="input">
+                            <option value="" disabled selected hidden>Seleciona um alojamento</option>
+                            ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+                          </select>
+                        </label>
+                        <label class="form-field md:col-span-2 lg:col-span-2">
+                          <span class="form-label">Nome da unidade</span>
+                          <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
+                        </label>
+                        <label class="form-field">
+                          <span class="form-label">Capacidade</span>
+                          <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
+                        </label>
+                        <label class="form-field">
+                          <span class="form-label">Preço base €/noite</span>
+                          <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
+                        </label>
+                        <div class="md:col-span-2 lg:col-span-4">
+                          ${renderFeatureBuilderField({
+                            name: 'features_raw',
+                            label: 'Características',
+                            helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
+                          })}
+                        </div>
+                      </fieldset>
+                      <div>
+                        <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
+                      </div>
+                    </form>
+                  </div>
                 </div>
 
                 <div class="bo-card bo-span-all">
