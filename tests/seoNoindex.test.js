@@ -40,8 +40,8 @@ const app = require(serverPath);
 
 function createAuthenticatedSession(role = 'direcao') {
   const username = `user_${Math.random().toString(16).slice(2)}`;
-  const insertUser = app.db.prepare('INSERT INTO users(username, password_hash, role) VALUES (?,?,?)');
-  const userId = insertUser.run(username, 'hash', role).lastInsertRowid;
+  const insertUser = app.db.prepare('INSERT INTO users(username, email, password_hash, role) VALUES (?,?,?,?)');
+  const userId = insertUser.run(username, `${username}@example.com`, 'hash', role).lastInsertRowid;
   const token = crypto.randomBytes(16).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();

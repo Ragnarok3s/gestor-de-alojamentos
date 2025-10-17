@@ -31,9 +31,10 @@ const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const registerAccountModule = require('./src/modules/account');
-const registerPaymentsModule = require('./src/modules/payments');
+const registerTenantAdminModule = require('./src/modules/admin/tenants');
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
+const { createTenantService } = require('./src/services/tenants');
 const { createSessionService } = require('./src/services/session');
 const { createTwoFactorService } = require('./src/services/twoFactorService');
 const { buildUserNotifications } = require('./src/services/notifications');
@@ -82,6 +83,7 @@ app.use(csrfProtection.middleware);
 
 // ===================== DB =====================
 const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
+const tenantService = createTenantService({ db });
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
@@ -89,6 +91,38 @@ const twoFactorService = createTwoFactorService({ db, dayjs });
 const rateRuleService = createRateRuleService({ db, dayjs });
 const ratePlanService = createRatePlanService({ db, dayjs });
 const skipStartupTasks = SKIP_SERVER_BOOT;
+
+function resolveTenantDomain(req) {
+  if (!req || !req.headers) return null;
+  const headerOverride =
+    req.headers['x-tenant-domain'] || req.headers['x-tenant'] || req.headers['x-tenant-host'];
+  if (headerOverride) {
+    return String(headerOverride).trim().toLowerCase();
+  }
+  const hostHeader = req.headers.host || '';
+  if (hostHeader) {
+    return String(hostHeader).split(':')[0].trim().toLowerCase();
+  }
+  if (typeof req.hostname === 'string' && req.hostname) {
+    return req.hostname.trim().toLowerCase();
+  }
+  return null;
+}
+
+function resolveTenantForRequest(req) {
+  const domain = resolveTenantDomain(req);
+  const tenant = tenantService.resolveTenant(domain);
+  return tenant || tenantService.getDefaultTenant();
+}
+
+app.use((req, res, next) => {
+  const tenant = resolveTenantForRequest(req);
+  req.tenant = tenant;
+  if (res && res.locals) {
+    res.locals.tenant = tenant;
+  }
+  next();
+});
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -1069,7 +1103,12 @@ try {
 const usersCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
+  db.prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)').run(
+    'admin',
+    'admin@example.com',
+    hash,
+    'direcao'
+  );
   if (!SKIP_SERVER_BOOT) {
     console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
   }
@@ -1078,7 +1117,12 @@ if (usersCount === 0) {
 const masterUser = db.prepare('SELECT id FROM users WHERE username = ?').get('dev');
 if (!masterUser) {
   const devHash = bcrypt.hashSync('dev123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('dev', devHash, MASTER_ROLE);
+  db.prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)').run(
+    'dev',
+    'dev@example.com',
+    devHash,
+    MASTER_ROLE
+  );
   if (!SKIP_SERVER_BOOT) {
     console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
   }
@@ -1424,8 +1468,11 @@ function computeBranding(state, options = {}) {
   return computeBrandingTheme(state, options);
 }
 
-function getBranding({ propertyId = null, propertyName = '' } = {}) {
+function getBranding({ propertyId = null, propertyName = '', tenantTheme = null } = {}) {
   const baseTheme = { ...brandingStore.global };
+  if (tenantTheme && typeof tenantTheme === 'object') {
+    Object.assign(baseTheme, tenantTheme);
+  }
   if (propertyId && brandingStore.properties[propertyId]) {
     Object.assign(baseTheme, brandingStore.properties[propertyId]);
   }
@@ -1581,7 +1628,12 @@ function resolveBrandingForRequest(req, overrides = {}) {
     }
   }
 
-  const branding = getBranding({ propertyId, propertyName });
+  const tenantTheme =
+    overrides.tenantTheme !== undefined
+      ? overrides.tenantTheme
+      : req && req.tenant && req.tenant.branding;
+
+  const branding = getBranding({ propertyId, propertyName, tenantTheme });
   if (req) {
     req.brandingPropertyId = propertyId;
     req.brandingPropertyName = propertyName || null;
@@ -1985,21 +2037,47 @@ function dateRangeNights(ci, co) {
   return nights;
 }
 
+function resolveTenantIdFromRequest(req, fallback = 1) {
+  if (typeof req === 'number') {
+    const numeric = Number(req);
+    if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  }
+  if (req && typeof req === 'object') {
+    if (req && typeof req.tenantId === 'number') {
+      const numeric = Number(req.tenantId);
+      if (Number.isInteger(numeric) && numeric > 0) return numeric;
+    }
+    if (req.tenant && typeof req.tenant.id === 'number') {
+      const numeric = Number(req.tenant.id);
+      if (Number.isInteger(numeric) && numeric > 0) return numeric;
+    }
+  }
+  const numericFallback = Number(fallback);
+  if (Number.isInteger(numericFallback) && numericFallback > 0) {
+    return numericFallback;
+  }
+  return 1;
+}
+
 function createSession(userId, req, days = 7) {
-  const { token } = sessionService.issueSession(userId, req, { days });
+  const tenantId = resolveTenantIdFromRequest(req);
+  const { token } = sessionService.issueSession(userId, req, { days, tenantId });
   return token;
 }
 
 function getSession(token, req) {
-  return sessionService.getSession(token, req);
+  const tenantId = resolveTenantIdFromRequest(req);
+  return sessionService.getSession(token, req, { tenantId });
 }
 
-function destroySession(token) {
-  sessionService.destroySession(token);
+function destroySession(token, req) {
+  const tenantId = resolveTenantIdFromRequest(req);
+  sessionService.destroySession(token, { tenantId });
 }
 
-function revokeUserSessions(userId) {
-  sessionService.revokeUserSessions(userId);
+function revokeUserSessions(userId, req) {
+  const tenantId = resolveTenantIdFromRequest(req);
+  sessionService.revokeUserSessions(userId, { tenantId });
 }
 
 function requireLogin(req,res,next){
@@ -3357,6 +3435,7 @@ const context = {
   paths,
   ExcelJS,
   brandingStore,
+  tenantService,
   normalizeRole,
   buildUserContext,
   userCan,
@@ -3478,6 +3557,7 @@ registerPaymentsModule(app, context);
 registerOwnersPortal(app, context);
 registerInternalTelemetry(app, context);
 registerBackoffice(app, context);
+registerTenantAdminModule(app, context);
 
 // ===================== Debug Rotas + 404 =====================
 if (process.env.NODE_ENV !== 'production') {
@@ -3525,7 +3605,7 @@ if (!global.__SERVER_STARTED__ && process.env.SKIP_SERVER_START !== '1') {
 }
 
 if (process.env.SKIP_SERVER_START === '1') {
-  Object.assign(app, { db, requireScope, buildUserContext });
+  Object.assign(app, { db, requireScope, buildUserContext, tenantService });
 }
 
 module.exports = app;
