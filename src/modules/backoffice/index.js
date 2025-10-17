@@ -1,5 +1,5 @@
 const registerUxApi = require('./ux-api');
-const { ConflictError } = require('../../services/errors');
+const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
 
@@ -118,6 +118,7 @@ module.exports = function registerBackoffice(app, context) {
     rememberActiveBrandingProperty,
     resolveBrandingForRequest,
     parseFeaturesStored,
+    ratePlanService,
     parseFeaturesInput,
     featuresToTextarea,
     featureChipsHtml,
@@ -276,6 +277,182 @@ module.exports = function registerBackoffice(app, context) {
   registerUxApi(app, context);
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
+
+  function renderBookingDetailPage(req, res, { booking, bookingNotes, planOptions = [], feedback = null, statusCode = 200 }) {
+    if (!booking) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+    const b = booking;
+    const canEditBooking = userCan(req.user, 'bookings.edit');
+    const canCancelBooking = userCan(req.user, 'bookings.cancel');
+    const canAddNote = userCan(req.user, 'bookings.notes');
+
+    const feedbackHtml = feedback && feedback.message
+      ? `<div class="inline-feedback" data-variant="${feedback.variant === 'success' ? 'success' : 'danger'}" role="alert" aria-live="polite">
+          <span class="inline-feedback-icon">${feedback.variant === 'success' ? '✓' : '⚠'}</span>
+          <div>${esc(feedback.message)}</div>
+        </div>`
+      : '';
+
+    const notes = Array.isArray(bookingNotes) ? bookingNotes : [];
+
+    const sortedPlans = Array.isArray(planOptions) ? [...planOptions] : [];
+    sortedPlans.sort((a, bOption) => {
+      const aName = (a && a.name) || '';
+      const bName = (bOption && bOption.name) || '';
+      return aName.localeCompare(bName);
+    });
+    const planOptionsHtml = sortedPlans
+      .map(plan => {
+        if (!plan || !plan.id) return '';
+        const active = plan.active === undefined || plan.active === null ? true : !!plan.active;
+        const label = `${plan.name}${active ? '' : ' (inativo)'}`;
+        const selected = Number(b.rate_plan_id || 0) === Number(plan.id) ? 'selected' : '';
+        return `<option value="${plan.id}" ${selected}>${esc(label)}</option>`;
+      })
+      .filter(Boolean)
+      .join('');
+
+    const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
+    rememberActiveBrandingProperty(res, b.property_id);
+
+    const formattedNotes = notes.map(n => ({
+      ...n,
+      created_human: dayjs(n.created_at).format('DD/MM/YYYY HH:mm')
+    }));
+
+    const planSelect = `<div>
+              <label class="text-sm">Plano tarifário</label>
+              <select name="rate_plan_id" class="input">
+                <option value="">Sem plano</option>
+                ${planOptionsHtml}
+              </select>
+              <p class="text-xs text-slate-500">Respeita restrições de chegada (CTA) e saída (CTD) associadas.</p>
+            </div>`;
+
+    const body = html`
+      <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
+      <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
+      ${feedbackHtml}
+
+      <div class="card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <div class="text-sm text-slate-500">${esc(b.property_name)}</div>
+          <div class="font-semibold mb-3">${esc(b.unit_name)}</div>
+          <ul class="text-sm text-slate-700 space-y-1">
+            <li>Atual: ${dayjs(b.checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(b.checkout).format('DD/MM/YYYY')}</li>
+            <li>Ocupação: ${b.adults}A+${b.children}C (cap. ${b.capacity})</li>
+            <li>Total atual: € ${eur(b.total_cents)}</li>
+          </ul>
+          ${b.internal_notes
+            ? html`
+                <div class="mt-4">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Anotacoes internas</div>
+                  <div class="text-sm text-slate-700 whitespace-pre-line">${esc(b.internal_notes)}</div>
+                </div>
+              `
+            : ''}
+        </div>
+
+        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3" id="booking-update-form">
+          <fieldset class="grid gap-3" ${canEditBooking ? '' : 'disabled'}>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Check-in</label>
+                <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
+              </div>
+              <div>
+                <label class="text-sm">Check-out</label>
+                <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-sm">Adultos</label>
+                <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
+              </div>
+              <div>
+                <label class="text-sm">Crianças</label>
+                <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
+              </div>
+            </div>
+
+            <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
+            <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
+            <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
+            <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade"/>
+            <div>
+              <label class="text-sm">Agência</label>
+              <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm">Anotações internas</label>
+              <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
+              <p class="text-xs text-slate-500">Não aparece para o hóspede.</p>
+            </div>
+
+            <div>
+              <label class="text-sm">Estado</label>
+              <select name="status" class="input">
+                <option value="CONFIRMED" ${b.status === 'CONFIRMED' ? 'selected' : ''}>CONFIRMED</option>
+                <option value="PENDING" ${b.status === 'PENDING' ? 'selected' : ''}>PENDING</option>
+              </select>
+            </div>
+
+            ${planSelect}
+
+            <button class="btn btn-primary justify-self-start">Guardar alterações</button>
+          </fieldset>
+          ${canEditBooking ? '' : '<p class="text-xs text-slate-500">Sem permissões para editar esta reserva.</p>'}
+        </form>
+        ${canCancelBooking
+          ? html`
+              <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');" class="self-end">
+                <button class="btn btn-danger mt-2">Cancelar reserva</button>
+              </form>
+            `
+          : ''}
+        <section class="md:col-span-2 card p-4" id="notes">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="font-semibold">Notas internas</h2>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${formattedNotes.length} nota${formattedNotes.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="mt-3 space-y-3">
+            ${formattedNotes.length
+              ? formattedNotes.map(n => html`
+                  <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div class="text-xs text-slate-500 mb-1">${esc(n.username)} &middot; ${esc(n.created_human)}</div>
+                    <div class="text-sm text-slate-700 whitespace-pre-line">${esc(n.note)}</div>
+                  </article>
+                `)
+              : html`<p class="text-sm text-slate-500">Sem notas registadas.</p>`}
+          </div>
+          ${canAddNote
+            ? html`
+                <form method="post" action="/admin/bookings/${b.id}/notes" class="mt-4 grid gap-2">
+                  <label class="grid gap-1 text-sm text-slate-600">
+                    <span>Adicionar nota</span>
+                    <textarea class="input" name="note" rows="3" placeholder="Notas visíveis apenas para a equipa"></textarea>
+                  </label>
+                  <button class="btn btn-light justify-self-start">Guardar nota</button>
+                </form>
+              `
+            : ''}
+        </section>
+      </div>
+    `;
+
+    res.status(statusCode).send(
+      layout({
+        title: `Editar reserva #${b.id}`,
+        user: req.user,
+        activeNav: 'bookings',
+        branding: theme,
+        body
+      })
+    );
+  }
 
   function getRuleTypeLabel(type) {
     const match = RATE_RULE_TYPES.find(entry => entry.key === type);
@@ -6155,130 +6332,36 @@ app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'),
   `).get(req.params.id);
   if (!b) return res.status(404).send('Reserva não encontrada');
 
-  const canEditBooking = userCan(req.user, 'bookings.edit');
-  const canCancelBooking = userCan(req.user, 'bookings.cancel');
-  const canAddNote = userCan(req.user, 'bookings.notes');
   const bookingNotes = db.prepare(`
     SELECT bn.id, bn.note, bn.created_at, u.username
       FROM booking_notes bn
       JOIN users u ON u.id = bn.user_id
      WHERE bn.booking_id = ?
      ORDER BY bn.created_at DESC
-  `).all(b.id).map(n => ({
-    ...n,
-    created_human: dayjs(n.created_at).format('DD/MM/YYYY HH:mm')
-  }));
+  `).all(b.id);
+  let planOptions = [];
+  if (ratePlanService) {
+    try {
+      planOptions = ratePlanService.listPlans({ propertyId: b.property_id, includeInactive: true });
+      if (b.rate_plan_id) {
+        const currentPlan = ratePlanService.getPlan(b.rate_plan_id);
+        if (currentPlan && !planOptions.some(p => Number(p.id) === Number(currentPlan.id))) {
+          planOptions = [...planOptions, currentPlan];
+        }
+      }
+    } catch (err) {
+      console.warn('Falha ao carregar planos tarifários:', err.message);
+    }
+  }
 
-  const theme = resolveBrandingForRequest(req, { propertyId: b.property_id, propertyName: b.property_name });
-  rememberActiveBrandingProperty(res, b.property_id);
-
-  res.send(layout({
-    title: `Editar reserva #${b.id}`,
-    user: req.user,
-    activeNav: 'bookings',
-    branding: theme,
-    body: html`
-      <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
-      <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
-
-      <div class="card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <div class="text-sm text-slate-500">${esc(b.property_name)}</div>
-          <div class="font-semibold mb-3">${esc(b.unit_name)}</div>
-          <ul class="text-sm text-slate-700 space-y-1">
-            <li>Atual: ${dayjs(b.checkin).format('DD/MM/YYYY')} &rarr; ${dayjs(b.checkout).format('DD/MM/YYYY')}</li>
-            <li>Ocupação: ${b.adults}A+${b.children}C (cap. ${b.capacity})</li>
-            <li>Total atual: € ${eur(b.total_cents)}</li>
-          </ul>
-          ${b.internal_notes ? `
-            <div class="mt-4">
-              <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Anotacoes internas</div>
-              <div class="text-sm text-slate-700 whitespace-pre-line">${esc(b.internal_notes)}</div>
-            </div>
-          ` : ''}
-        </div>
-
-        <form method="post" action="/admin/bookings/${b.id}/update" class="grid gap-3" id="booking-update-form">
-          <fieldset class="grid gap-3" ${canEditBooking ? '' : 'disabled'}>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-sm">Check-in</label>
-                <input required type="date" name="checkin" class="input" value="${b.checkin}"/>
-              </div>
-              <div>
-                <label class="text-sm">Check-out</label>
-                <input required type="date" name="checkout" class="input" value="${b.checkout}"/>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-sm">Adultos</label>
-                <input required type="number" min="1" name="adults" class="input" value="${b.adults}"/>
-              </div>
-              <div>
-                <label class="text-sm">Crianças</label>
-                <input required type="number" min="0" name="children" class="input" value="${b.children}"/>
-              </div>
-            </div>
-
-            <input class="input" name="guest_name" value="${esc(b.guest_name)}" placeholder="Nome do hóspede" required />
-            <input class="input" type="email" name="guest_email" value="${esc(b.guest_email)}" placeholder="Email" required />
-            <input class="input" name="guest_phone" value="${esc(b.guest_phone || '')}" placeholder="Telefone" />
-            <input class="input" name="guest_nationality" value="${esc(b.guest_nationality || '')}" placeholder="Nacionalidade" />
-            <div>
-              <label class="text-sm">Agência</label>
-              <input class="input" name="agency" value="${esc(b.agency || '')}" placeholder="Ex: BOOKING" />
-            </div>
-            <div class="grid gap-1">
-              <label class="text-sm">Anotações internas</label>
-              <textarea class="input" name="internal_notes" rows="4" placeholder="Notas internas (apenas equipa)">${esc(b.internal_notes || '')}</textarea>
-              <p class="text-xs text-slate-500">Não aparece para o hóspede.</p>
-            </div>
-
-            <div>
-              <label class="text-sm">Estado</label>
-              <select name="status" class="input">
-                <option value="CONFIRMED" ${b.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-                <option value="PENDING" ${b.status==='PENDING'?'selected':''}>PENDING</option>
-              </select>
-            </div>
-
-            <button class="btn btn-primary justify-self-start">Guardar alterações</button>
-          </fieldset>
-          ${canEditBooking ? '' : '<p class="text-xs text-slate-500">Sem permissões para editar esta reserva.</p>'}
-        </form>
-        ${canCancelBooking ? `
-          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');" class="self-end">
-            <button class="btn btn-danger mt-2">Cancelar reserva</button>
-          </form>
-        ` : ''}
-        <section class="md:col-span-2 card p-4" id="notes">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="font-semibold">Notas internas</h2>
-            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${bookingNotes.length} nota${bookingNotes.length === 1 ? '' : 's'}</span>
-          </div>
-          <div class="mt-3 space-y-3">
-            ${bookingNotes.length ? bookingNotes.map(n => `
-              <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div class="text-xs text-slate-500 mb-1">${esc(n.username)} &middot; ${esc(n.created_human)}</div>
-                <div class="text-sm text-slate-700 whitespace-pre-line">${esc(n.note)}</div>
-              </article>
-            `).join('') : '<p class="text-sm text-slate-500">Sem notas adicionadas pela equipa.</p>'}
-          </div>
-          ${canAddNote ? `
-            <form method="post" action="/admin/bookings/${b.id}/notes" class="mt-4 grid gap-2">
-              <label class="text-sm" for="note">Adicionar nova nota</label>
-              <textarea class="input" id="note" name="note" rows="3" placeholder="Partilhe contexto para a equipa" required></textarea>
-              <button class="btn btn-primary justify-self-start">Gravar nota</button>
-            </form>
-          ` : '<p class="text-xs text-slate-500 mt-4">Sem permissões para adicionar novas notas.</p>'}
-        </section>
-      </div>
-    `
-  }));
+  renderBookingDetailPage(req, res, {
+    booking: b,
+    bookingNotes,
+    planOptions,
+    feedback: null,
+    statusCode: 200
+  });
 });
-
 app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings.edit'), (req, res) => {
   const id = req.params.id;
   const b = db.prepare(`
@@ -6303,6 +6386,69 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
   const guest_phone = req.body.guest_phone || null;
   const guest_nationality = req.body.guest_nationality || null;
   const agency = req.body.agency ? String(req.body.agency).trim().toUpperCase() : null;
+  const rawPlanId = typeof req.body.rate_plan_id === 'string' ? req.body.rate_plan_id.trim() : '';
+  let ratePlanId = null;
+  let latestQuoteCents = b.total_cents;
+
+  const renderUpdateError = (message, statusCode) => {
+    let planOptions = [];
+    let bookingNotes = [];
+    try {
+      bookingNotes = db
+        .prepare(
+          `SELECT bn.id, bn.note, bn.created_at, u.username
+             FROM booking_notes bn
+             JOIN users u ON u.id = bn.user_id
+            WHERE bn.booking_id = ?
+            ORDER BY bn.created_at DESC`
+        )
+        .all(b.id);
+      if (ratePlanService) {
+        planOptions = ratePlanService.listPlans({ propertyId: b.property_id, includeInactive: true });
+        if (ratePlanId) {
+          const currentPlan = ratePlanService.getPlan(ratePlanId);
+          if (currentPlan && !planOptions.some(p => Number(p.id) === Number(currentPlan.id))) {
+            planOptions = [...planOptions, currentPlan];
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Falha ao preparar contexto da reserva:', err.message);
+    }
+
+    const attempted = {
+      ...b,
+      checkin,
+      checkout,
+      adults,
+      children,
+      guest_name,
+      guest_email,
+      guest_phone,
+      guest_nationality,
+      agency,
+      internal_notes,
+      status,
+      total_cents: latestQuoteCents,
+      rate_plan_id: ratePlanId
+    };
+
+    renderBookingDetailPage(req, res, {
+      booking: attempted,
+      bookingNotes,
+      planOptions,
+      feedback: { message, variant: 'danger' },
+      statusCode
+    });
+  };
+
+  if (rawPlanId) {
+    const parsedPlan = Number.parseInt(rawPlanId, 10);
+    if (!Number.isInteger(parsedPlan) || parsedPlan <= 0) {
+      return renderUpdateError('Plano tarifário inválido.', 400);
+    }
+    ratePlanId = parsedPlan;
+  }
 
   if (!dayjs(checkout).isAfter(dayjs(checkin))) return res.status(400).send('checkout deve ser > checkin');
   if (adults + children > b.capacity) return res.status(400).send(`Capacidade excedida (máx ${b.capacity}).`);
@@ -6317,8 +6463,37 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
   `).get(b.unit_id, id, checkin, checkout);
   if (conflict) return res.status(409).send('Conflito com outra reserva.');
 
+  if (ratePlanService) {
+    try {
+      ratePlanService.assertBookingAllowed({ ratePlanId, checkin, checkout });
+    } catch (err) {
+      if (err instanceof ConflictError || (err && err.status === 409)) {
+        return renderUpdateError(err.message || 'Plano tarifário indisponível para estas datas.', err.status || 409);
+      }
+      if (err instanceof ValidationError || (err && err.status === 400)) {
+        return renderUpdateError(err.message || 'Plano tarifário inválido.', err.status || 400);
+      }
+      throw err;
+    }
+  }
+
   const q = rateQuote(b.unit_id, checkin, checkout, b.base_price_cents);
+  latestQuoteCents = q.total_cents;
   if (q.nights < q.minStayReq) return res.status(400).send(`Estadia mínima: ${q.minStayReq} noites`);
+
+  if (ratePlanService && ratePlanId) {
+    try {
+      ratePlanService.assertBookingAllowed({ ratePlanId, checkin, checkout });
+    } catch (err) {
+      if (err instanceof ConflictError || (err && err.status === 409)) {
+        return renderUpdateError(err.message || 'Plano tarifário indisponível para estas datas.', err.status || 409);
+      }
+      if (err instanceof ValidationError || (err && err.status === 400)) {
+        return renderUpdateError(err.message || 'Plano tarifário inválido.', err.status || 400);
+      }
+      throw err;
+    }
+  }
 
   try {
     if (status === 'CONFIRMED') {
@@ -6352,6 +6527,7 @@ app.post('/admin/bookings/:id/update', requireLogin, requirePermission('bookings
     internal_notes,
     status,
     q.total_cents,
+    ratePlanId || null,
     id
   );
 

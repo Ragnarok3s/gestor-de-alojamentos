@@ -9,6 +9,7 @@ const { createCsrfProtection } = require('../src/security/csrf');
 const { suggestPrice } = require('../server/services/pricing');
 const { applyRateRules, normalizeRuleRow } = require('../server/services/pricing/rules');
 const { createRateManagementService } = require('../src/services/rate-management');
+const { createRatePlanService } = require('../src/services/rate-plans');
 const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
 const { createReportingService } = require('../src/services/reporting');
@@ -411,8 +412,8 @@ function testUnitBlockService() {
   assert.equal(block.reason, 'Manutenção preventiva');
 
   db.prepare(
-    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
-  ).run(unitId, 'Ana', 'ana@example.com', '2025-04-05', '2025-04-08', 48000, 'CONFIRMED');
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status, rate_plan_id) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(unitId, 'Ana', 'ana@example.com', '2025-04-05', '2025-04-08', 48000, 'CONFIRMED', null);
 
   assert.throws(() => {
     service.createBlock({
@@ -440,10 +441,10 @@ async function testOverbookingGuardService() {
   });
 
   const insertBooking = db.prepare(
-    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status, rate_plan_id) VALUES (?,?,?,?,?,?,?,?)'
   );
 
-  const bookingId = insertBooking.run(unitId, 'Maria', 'maria@example.com', '2025-06-01', '2025-06-04', 36000, 'PENDING')
+  const bookingId = insertBooking.run(unitId, 'Maria', 'maria@example.com', '2025-06-01', '2025-06-04', 36000, 'PENDING', null)
     .lastInsertRowid;
   const hold = guard.reserveSlot({ unitId, from: '2025-06-01', to: '2025-06-04', bookingId });
   assert.equal(hold.created, true, 'primeiro bloqueio deve ser criado');
@@ -455,9 +456,9 @@ async function testOverbookingGuardService() {
 
   const concurrentFrom = '2025-07-01';
   const concurrentTo = '2025-07-04';
-  const firstConcurrentId = insertBooking.run(unitId, 'João', 'joao@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING')
+  const firstConcurrentId = insertBooking.run(unitId, 'João', 'joao@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING', null)
     .lastInsertRowid;
-  const secondConcurrentId = insertBooking.run(unitId, 'Carla', 'carla@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING')
+  const secondConcurrentId = insertBooking.run(unitId, 'Carla', 'carla@example.com', concurrentFrom, concurrentTo, 45000, 'PENDING', null)
     .lastInsertRowid;
 
   function runReserve(booking) {
@@ -751,8 +752,8 @@ function testReportingService() {
   const db = createDatabase(':memory:');
   const { unitId } = seedPropertyAndUnit(db);
   db.prepare(
-    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status) VALUES (?,?,?,?,?,?,?)'
-  ).run(unitId, 'João', 'joao@example.com', '2025-05-10', '2025-05-13', 30000, 'CONFIRMED');
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status, rate_plan_id) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(unitId, 'João', 'joao@example.com', '2025-05-10', '2025-05-13', 30000, 'CONFIRMED', null);
 
   const service = createReportingService({ db, dayjs });
   const snapshot = service.computeWeeklySnapshot({ from: '2025-05-10', to: '2025-05-12' });
@@ -765,22 +766,104 @@ function testReportingService() {
   assert.equal(pdf.slice(0, 4).toString(), '%PDF', 'PDF gerado deve começar com assinatura PDF');
 }
 
+function testRatePlanRestrictions() {
+  const db = createDatabase(':memory:');
+  const { propertyId } = seedPropertyAndUnit(db);
+  const service = createRatePlanService({ db, dayjs });
+  const plan = service.createPlan({ name: 'Plano Festival', propertyId });
+
+  service.createRestriction({
+    ratePlanId: plan.id,
+    startDate: '2025-08-10',
+    endDate: '2025-08-15',
+    closedToArrival: true,
+    reason: 'Festival local'
+  });
+
+  let arrivalError = null;
+  try {
+    service.assertBookingAllowed({ ratePlanId: plan.id, checkin: '2025-08-11', checkout: '2025-08-13' });
+  } catch (err) {
+    arrivalError = err;
+  }
+  assert.ok(arrivalError instanceof ConflictError, 'restrição de chegada deve gerar conflito');
+  assert.equal(arrivalError.status, 409, 'conflito deve sinalizar estado 409');
+  assert.ok(arrivalError.message.includes('Check-in indisponível'), 'mensagem deve indicar bloqueio de check-in');
+  assert.ok(arrivalError.message.includes('Festival local'), 'mensagem deve incluir motivo configurado');
+
+  const allowed = service.assertBookingAllowed({ ratePlanId: plan.id, checkin: '2025-08-16', checkout: '2025-08-18' });
+  assert.ok(allowed.ok, 'fora do intervalo restrito a reserva deve ser permitida');
+
+  service.createRestriction({
+    ratePlanId: plan.id,
+    startDate: '2025-09-20',
+    endDate: '2025-09-22',
+    closedToDeparture: true,
+    reason: 'Saídas bloqueadas para limpeza'
+  });
+
+  let departureError = null;
+  try {
+    service.assertBookingAllowed({ ratePlanId: plan.id, checkin: '2025-09-18', checkout: '2025-09-21' });
+  } catch (err) {
+    departureError = err;
+  }
+  assert.ok(departureError instanceof ConflictError, 'restrição de saída deve gerar conflito');
+  assert.equal(departureError.status, 409, 'conflito de saída deve sinalizar 409');
+  assert.ok(departureError.message.includes('Check-out indisponível'), 'mensagem deve indicar bloqueio de check-out');
+  assert.ok(departureError.message.includes('Saídas bloqueadas'), 'motivo de saída deve aparecer na mensagem');
+}
+
 async function main() {
+  console.log('> testServerBootstrap');
   testServerBootstrap();
+  console.log('✓ testServerBootstrap');
+  console.log('> testSessionService');
   testSessionService();
+  console.log('✓ testSessionService');
+  console.log('> testCsrfProtection');
   testCsrfProtection();
+  console.log('✓ testCsrfProtection');
+  console.log('> testRequireScopeMiddleware');
   testRequireScopeMiddleware();
+  console.log('✓ testRequireScopeMiddleware');
+  console.log('> testPricingService');
   testPricingService();
+  console.log('✓ testPricingService');
+  console.log('> testRateRuleEngine');
   testRateRuleEngine();
+  console.log('✓ testRateRuleEngine');
+  console.log('> testRateManagementService');
   testRateManagementService();
+  console.log('✓ testRateManagementService');
+  console.log('> testUnitBlockService');
   testUnitBlockService();
+  console.log('✓ testUnitBlockService');
+  console.log('> testRatePlanRestrictions');
+  testRatePlanRestrictions();
+  console.log('✓ testRatePlanRestrictions');
+  console.log('> testOverbookingGuardService');
   await testOverbookingGuardService();
+  console.log('✓ testOverbookingGuardService');
+  console.log('> testOtaWebhookIngestion');
   await testOtaWebhookIngestion();
+  console.log('✓ testOtaWebhookIngestion');
+  console.log('> testOtaDispatcherQueue');
   await testOtaDispatcherQueue();
+  console.log('✓ testOtaDispatcherQueue');
+  console.log('> testI18nService');
   testI18nService();
+  console.log('✓ testI18nService');
+  console.log('> testMessageTemplateService');
   testMessageTemplateService();
+  console.log('✓ testMessageTemplateService');
+  console.log('> testReviewService');
   testReviewService();
+  console.log('✓ testReviewService');
+  console.log('> testReportingService');
   testReportingService();
+  const handles = process._getActiveHandles();
+  console.log('Active handles after tests:', handles.map(h => h.constructor.name));
   console.log('Todos os testes passaram.');
 }
 

@@ -1,4 +1,4 @@
-const { ConflictError } = require('../../services/errors');
+const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex, verifySignedQuery, rateLimitByUserRoute } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
 
@@ -39,7 +39,8 @@ module.exports = function registerFrontoffice(app, context) {
     overbookingGuard,
     otaDispatcher,
     featureFlags,
-    isFeatureEnabled
+    isFeatureEnabled,
+    ratePlanService
   } = context;
 
   function isFlagEnabled(flagName) {
@@ -859,6 +860,15 @@ app.get('/book/:unitId', (req, res) => {
   const adults = Math.max(1, Number(req.query.adults ?? 2));
   const children = Math.max(0, Number(req.query.children ?? 0));
   const totalGuests = adults + children;
+  const rawPlanId = typeof req.query.rate_plan_id === 'string' ? req.query.rate_plan_id.trim() : '';
+  let ratePlanId = null;
+  if (rawPlanId) {
+    const parsedPlan = Number.parseInt(rawPlanId, 10);
+    if (!Number.isInteger(parsedPlan) || parsedPlan <= 0) {
+      return res.status(400).send('Plano tarifário inválido.');
+    }
+    ratePlanId = parsedPlan;
+  }
 
   const u = db
     .prepare('SELECT u.*, p.name as property_name FROM units u JOIN properties p ON p.id = u.property_id WHERE u.id = ?')
@@ -867,6 +877,20 @@ app.get('/book/:unitId', (req, res) => {
   if (!checkin || !checkout) return res.redirect('/');
   if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
   if (!unitAvailable(u.id, checkin, checkout)) return res.status(409).send('Este alojamento já não tem disponibilidade.');
+
+  if (ratePlanService) {
+    try {
+      ratePlanService.assertBookingAllowed({ ratePlanId, checkin, checkout });
+    } catch (err) {
+      if (err instanceof ConflictError || (err && err.status === 409)) {
+        return res.status(409).send(err.message || 'Plano tarifário indisponível.');
+      }
+      if (err instanceof ValidationError || (err && err.status === 400)) {
+        return res.status(400).send(err.message || 'Plano tarifário inválido.');
+      }
+      throw err;
+    }
+  }
 
   const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
   if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia mínima: ' + quote.minStayReq + ' noites');
@@ -913,6 +937,7 @@ app.get('/book/:unitId', (req, res) => {
           <input type="hidden" name="unit_id" value="${u.id}" />
           <input type="hidden" name="checkin" value="${checkin}" />
           <input type="hidden" name="checkout" value="${checkout}" />
+          <input type="hidden" name="rate_plan_id" value="${ratePlanId ? ratePlanId : ''}" />
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="text-sm">Adultos</label>
@@ -975,6 +1000,16 @@ app.post('/book', (req, res) => {
   const { guest_name, guest_email, guest_nationality, guest_phone, checkin, checkout, adults, children, agency } = data;
   const totalGuests = adults + children;
   const agencyValue = agency || 'DIRECT';
+  const rawPlanBody =
+    req.body && Object.prototype.hasOwnProperty.call(req.body, 'rate_plan_id') ? req.body.rate_plan_id : null;
+  let ratePlanId = null;
+  if (rawPlanBody != null && rawPlanBody !== '') {
+    const parsedPlan = Number.parseInt(rawPlanBody, 10);
+    if (!Number.isInteger(parsedPlan) || parsedPlan <= 0) {
+      return res.status(400).send('Plano tarifário inválido.');
+    }
+    ratePlanId = parsedPlan;
+  }
 
   const u = db
     .prepare(
@@ -987,6 +1022,23 @@ app.post('/book', (req, res) => {
   if (!u) return res.status(404).send('Unidade não encontrada');
   if (u.capacity < totalGuests) return res.status(400).send(`Capacidade máx. da unidade: ${u.capacity}.`);
 
+  function ensurePlanAllowed() {
+    if (!ratePlanService) return;
+    ratePlanService.assertBookingAllowed({ ratePlanId, checkin, checkout });
+  }
+
+  try {
+    ensurePlanAllowed();
+  } catch (err) {
+    if (err instanceof ConflictError || (err && err.status === 409)) {
+      return res.status(409).send(err.message || 'Plano tarifário indisponível.');
+    }
+    if (err instanceof ValidationError || (err && err.status === 400)) {
+      return res.status(400).send(err.message || 'Plano tarifário inválido.');
+    }
+    throw err;
+  }
+
   const trx = db.transaction(() => {
     const confirmationToken = crypto.randomBytes(16).toString('hex');
     const conflicts = db.prepare(
@@ -996,6 +1048,7 @@ app.post('/book', (req, res) => {
     ).all(unitId, checkin, checkout, unitId, checkin, checkout);
     if (conflicts.length > 0) throw new Error('conflict');
 
+    ensurePlanAllowed();
     const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
     if (quote.nights < quote.minStayReq) throw new Error('minstay:'+quote.minStayReq);
     const total = quote.total_cents;
@@ -1003,8 +1056,8 @@ app.post('/book', (req, res) => {
     const bookingStatus = canAutoConfirm ? 'CONFIRMED' : 'PENDING';
 
     const stmt = db.prepare(
-      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref, confirmation_token)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, guest_phone, agency, adults, children, checkin, checkout, total_cents, status, external_ref, confirmation_token, rate_plan_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const r = stmt.run(
       unitId,
@@ -1020,7 +1073,8 @@ app.post('/book', (req, res) => {
       total,
       bookingStatus,
       null,
-      confirmationToken
+      confirmationToken,
+      ratePlanId || null
     );
     const bookingId = r.lastInsertRowid;
     overbookingGuard.reserveSlot({

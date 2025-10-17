@@ -8,11 +8,16 @@ const fsp = fs.promises;
 const https = require('https');
 const multer = require('multer');
 const ExcelJS = require('exceljs');
+const SKIP_SERVER_BOOT = process.env.SKIP_SERVER_START === '1';
 let sharp = null;
 try {
   sharp = require('sharp');
 } catch (err) {
-  console.warn('Dependência opcional "sharp" não encontrada; as imagens não serão comprimidas automaticamente até ser instalada.');
+  if (!SKIP_SERVER_BOOT) {
+    console.warn(
+      'Dependência opcional "sharp" não encontrada; as imagens não serão comprimidas automaticamente até ser instalada.'
+    );
+  }
 }
 dayjs.extend(minMax);
 dayjs.locale('pt');
@@ -38,6 +43,7 @@ const { createMessageTemplateService } = require('./src/services/templates');
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createRateRuleService } = require('./src/services/rate-rules');
+const { createRatePlanService } = require('./src/services/rate-plans');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
 const { createChannelSync } = require('./src/services/channel-sync');
 const { createOtaDispatcher } = require('./src/services/ota-sync/dispatcher');
@@ -79,7 +85,8 @@ const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
 const twoFactorService = createTwoFactorService({ db, dayjs });
 const rateRuleService = createRateRuleService({ db, dayjs });
-const skipStartupTasks = process.env.SKIP_SERVER_START === '1';
+const ratePlanService = createRatePlanService({ db, dayjs });
+const skipStartupTasks = SKIP_SERVER_BOOT;
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -314,12 +321,12 @@ const adminBookingUpdateStmt = db.prepare(
   (hasBookingsUpdatedAt
     ? `
     UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, updated_at = datetime('now')
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, rate_plan_id = ?, updated_at = datetime('now')
      WHERE id = ?
   `
     : `
     UPDATE bookings
-       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?
+       SET checkin = ?, checkout = ?, adults = ?, children = ?, guest_name = ?, guest_email = ?, guest_phone = ?, guest_nationality = ?, agency = ?, internal_notes = ?, status = ?, total_cents = ?, rate_plan_id = ?
      WHERE id = ?
   `
   ).trim()
@@ -1061,14 +1068,18 @@ const usersCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
   db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
-  console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
+  if (!SKIP_SERVER_BOOT) {
+    console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
+  }
 }
 
 const masterUser = db.prepare('SELECT id FROM users WHERE username = ?').get('dev');
 if (!masterUser) {
   const devHash = bcrypt.hashSync('dev123', 10);
   db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('dev', devHash, MASTER_ROLE);
-  console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
+  if (!SKIP_SERVER_BOOT) {
+    console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
+  }
 }
 
 // ===================== Uploads =====================
@@ -1603,7 +1614,10 @@ function timingSafeCompare(expected, actual) {
 const i18n = createI18nService();
 const emailTemplates = createEmailTemplateService({ db, dayjs });
 const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
-const mailer = createMailer({ logger: console });
+const mailerLogger = SKIP_SERVER_BOOT
+  ? { info: () => {}, warn: console.warn, error: console.error }
+  : console;
+const mailer = createMailer({ logger: mailerLogger });
 const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
 const channelIntegrations = createChannelIntegrationService({
   db,
@@ -3409,6 +3423,7 @@ const context = {
   mailer,
   bookingEmailer,
   rateRuleService,
+  ratePlanService,
   twoFactorService,
   overbookingGuard,
   secureCookies,
