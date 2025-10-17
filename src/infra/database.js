@@ -850,6 +850,58 @@ function runLightMigrations(db) {
     );
 
     ensureTable(
+      'payments',
+      `CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+        provider TEXT NOT NULL,
+        provider_payment_id TEXT,
+        intent_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        customer_email TEXT,
+        metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+        client_secret TEXT,
+        next_action_json TEXT CHECK (next_action_json IS NULL OR json_valid(next_action_json)),
+        last_error TEXT CHECK (last_error IS NULL OR json_valid(last_error)),
+        reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+        captured_at TEXT,
+        cancelled_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_provider_ref
+        ON payments(provider, provider_payment_id)
+        WHERE provider_payment_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);`
+    );
+
+    ensureTable(
+      'refunds',
+      `CREATE TABLE IF NOT EXISTS refunds (
+        id TEXT PRIMARY KEY,
+        payment_id TEXT NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_refund_id TEXT,
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        status TEXT NOT NULL,
+        reason TEXT,
+        metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+        reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        processed_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_provider_ref
+        ON refunds(provider, provider_refund_id)
+        WHERE provider_refund_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_refunds_payment ON refunds(payment_id);`
+    );
+
+    ensureTable(
       'competitor_prices',
       `CREATE TABLE IF NOT EXISTS competitor_prices (
         id TEXT PRIMARY KEY,
