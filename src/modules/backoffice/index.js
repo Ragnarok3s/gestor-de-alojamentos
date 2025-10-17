@@ -2,6 +2,14 @@ const registerUxApi = require('./ux-api');
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
+const {
+  describePaymentStatus,
+  statusToneToBadgeClass,
+  normalizePaymentStatus,
+  normalizeReconciliationStatus,
+  isSuccessfulRefundStatus
+} = require('../../services/payments/status');
+const { aggregatePaymentData, computeOutstandingCents } = require('../../services/payments/summary');
 
 const FEATURE_PRESETS = [
   {
@@ -2664,6 +2672,14 @@ module.exports = function registerBackoffice(app, context) {
         description: 'Gerir contas internas, perfis e permissões.',
         href: '/admin/utilizadores',
         cta: 'Gerir utilizadores'
+      });
+    }
+    if (userCan(req.user, 'bookings.view')) {
+      quickLinks.push({
+        title: 'Pagamentos',
+        description: 'Consulta cobranças registadas e estado de reconciliação.',
+        href: '/admin/pagamentos',
+        cta: 'Ver pagamentos'
       });
     }
     if (isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit) {
@@ -6222,6 +6238,355 @@ app.post('/admin/units/:id/images/reorder', requireLogin, requirePermission('gal
 });
 
 // ===================== Booking Management (Admin) =====================
+app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (req, res) => {
+  const provider = String(req.query.provider || '').trim();
+  const status = normalizePaymentStatus(req.query.status || '');
+  const reconciliation = normalizeReconciliationStatus(req.query.reconciliation || '');
+  const q = String(req.query.q || '').trim();
+
+  const where = [];
+  const params = [];
+
+  if (provider) {
+    where.push('LOWER(p.provider) = ?');
+    params.push(provider.toLowerCase());
+  }
+  if (status) {
+    where.push('LOWER(p.status) = ?');
+    params.push(status);
+  }
+  if (reconciliation) {
+    where.push('LOWER(p.reconciliation_status) = ?');
+    params.push(reconciliation);
+  }
+  if (q) {
+    const like = `%${q}%`;
+    where.push(`(
+      p.id LIKE ? OR
+      p.provider_payment_id LIKE ? OR
+      CAST(p.booking_id AS TEXT) LIKE ? OR
+      COALESCE(b.guest_name, '') LIKE ? OR
+      COALESCE(b.guest_email, '') LIKE ? OR
+      COALESCE(p.customer_email, '') LIKE ?
+    )`);
+    params.push(like, like, like, like, like, like);
+  }
+
+  const paymentsSql = `
+    SELECT p.id, p.booking_id, p.provider, p.provider_payment_id, p.intent_type,
+           p.status, p.amount_cents, p.currency, p.customer_email, p.metadata,
+           p.reconciliation_status, p.captured_at, p.cancelled_at, p.created_at,
+           p.updated_at, p.last_error, p.next_action_json,
+           b.guest_name, b.guest_email, b.status AS booking_status, b.checkin,
+           b.checkout, b.total_cents AS booking_total_cents, b.agency,
+           u.name AS unit_name, prop.name AS property_name
+      FROM payments p
+      LEFT JOIN bookings b ON b.id = p.booking_id
+      LEFT JOIN units u ON u.id = b.unit_id
+      LEFT JOIN properties prop ON prop.id = u.property_id
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY p.created_at DESC
+      LIMIT 500
+  `;
+  const paymentRows = db.prepare(paymentsSql).all(...params);
+  const paymentIds = paymentRows.map(row => row.id);
+
+  let refundRows = [];
+  if (paymentIds.length) {
+    const placeholders = paymentIds.map(() => '?').join(',');
+    const refundsSql = `
+      SELECT r.*
+        FROM refunds r
+       WHERE r.payment_id IN (${placeholders})
+       ORDER BY r.created_at ASC
+    `;
+    refundRows = db.prepare(refundsSql).all(...paymentIds);
+  }
+
+  const { bookingSummaries, paymentSummaries, refundIndex } = aggregatePaymentData({
+    payments: paymentRows,
+    refunds: refundRows
+  });
+
+  const providerOptions = db
+    .prepare('SELECT DISTINCT provider FROM payments ORDER BY provider')
+    .all()
+    .map(row => row.provider)
+    .filter(Boolean);
+  const statusOptions = db
+    .prepare('SELECT DISTINCT status FROM payments ORDER BY status')
+    .all()
+    .map(row => normalizePaymentStatus(row.status))
+    .filter(Boolean);
+  const reconciliationOptions = db
+    .prepare('SELECT DISTINCT reconciliation_status FROM payments ORDER BY reconciliation_status')
+    .all()
+    .map(row => normalizeReconciliationStatus(row.reconciliation_status))
+    .filter(Boolean);
+
+  const uniqueStatusOptions = Array.from(new Set(statusOptions)).sort();
+  const uniqueReconciliationOptions = Array.from(new Set(reconciliationOptions)).sort();
+  providerOptions.sort((a, b) => a.localeCompare(b));
+
+  let totalCapturedCents = 0;
+  let totalRefundedCents = 0;
+  let totalPendingCents = 0;
+  let totalActionCents = 0;
+  let totalFailedCents = 0;
+
+  const reconciliationLabels = {
+    pending: 'Pendente',
+    matched: 'Conciliado',
+    failed: 'Falhou',
+    manual: 'Manual'
+  };
+
+  const reconciliationTones = {
+    matched: 'success',
+    failed: 'danger',
+    manual: 'info',
+    pending: 'warning'
+  };
+
+  const payments = paymentRows.map(row => {
+    const paymentSummary = paymentSummaries.get(row.id) || {
+      capturedCents: 0,
+      refundedCents: 0,
+      pendingCents: 0,
+      actionCents: 0,
+      failedCents: 0,
+      cancelledCents: 0,
+      netCapturedCents: 0
+    };
+
+    totalCapturedCents += paymentSummary.capturedCents;
+    totalRefundedCents += paymentSummary.refundedCents;
+    totalPendingCents += paymentSummary.pendingCents;
+    totalActionCents += paymentSummary.actionCents;
+    totalFailedCents += paymentSummary.failedCents;
+
+    const statusInfo = describePaymentStatus(row.status);
+    const statusBadge = statusToneToBadgeClass(statusInfo.tone);
+    const reconciliationStatus = normalizeReconciliationStatus(row.reconciliation_status || 'pending') || 'pending';
+    const reconciliationBadge = statusToneToBadgeClass(
+      reconciliationTones[reconciliationStatus] || 'warning'
+    );
+
+    const bookingSummary = row.booking_id ? bookingSummaries.get(row.booking_id) : null;
+    const outstandingCents = bookingSummary
+      ? computeOutstandingCents(bookingSummary, row.booking_total_cents)
+      : 0;
+
+    const refundsForPayment = refundIndex.get(row.id) || [];
+
+    return {
+      row,
+      statusInfo,
+      statusBadge,
+      reconciliationStatus,
+      reconciliationBadge,
+      paymentSummary,
+      outstandingCents,
+      refunds: refundsForPayment
+    };
+  });
+
+  const netCapturedCents = Math.max(totalCapturedCents - totalRefundedCents, 0);
+
+  const formatCurrency = (value) => `€ ${eur(value)}`;
+
+  const pageTitle = 'Pagamentos';
+  res.send(layout({
+    title: pageTitle,
+    user: req.user,
+    activeNav: 'backoffice',
+    branding: resolveBrandingForRequest(req),
+    body: html`
+      <h1 class="text-2xl font-semibold mb-4">${pageTitle}</h1>
+
+      <div class="card p-4 mb-4">
+        <div class="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <div>
+            <div class="text-xs uppercase tracking-wide text-slate-500">Cobrado</div>
+            <div class="text-lg font-semibold text-slate-800">${formatCurrency(totalCapturedCents)}</div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wide text-slate-500">Reembolsado</div>
+            <div class="text-lg font-semibold text-slate-800">${formatCurrency(totalRefundedCents)}</div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wide text-slate-500">Líquido</div>
+            <div class="text-lg font-semibold text-emerald-700">${formatCurrency(netCapturedCents)}</div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wide text-slate-500">Pendente</div>
+            <div class="text-lg font-semibold text-amber-700">${formatCurrency(totalPendingCents)}</div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wide text-slate-500">Ação necessária</div>
+            <div class="text-lg font-semibold text-sky-700">${formatCurrency(totalActionCents)}</div>
+          </div>
+        </div>
+      </div>
+
+      <form method="get" class="card p-4 grid gap-3 md:grid-cols-5 mb-4">
+        <input class="input md:col-span-2" name="q" placeholder="Pesquisar por ID, reserva ou hóspede" value="${esc(q)}" />
+        <select class="input" name="status">
+          <option value="">Todos os estados</option>
+          ${uniqueStatusOptions
+            .map(value => {
+              const optionLabel = describePaymentStatus(value).label;
+              const selected = value === status ? 'selected' : '';
+              return `<option value="${esc(value)}" ${selected}>${esc(optionLabel)} (${esc(value)})</option>`;
+            })
+            .join('')}
+        </select>
+        <select class="input" name="reconciliation">
+          <option value="">Todos os estados de conciliação</option>
+          ${uniqueReconciliationOptions
+            .map(value => {
+              const label = reconciliationLabels[value] || value || 'Pendente';
+              const selected = value === reconciliation ? 'selected' : '';
+              return `<option value="${esc(value)}" ${selected}>${esc(label)}</option>`;
+            })
+            .join('')}
+        </select>
+        <select class="input" name="provider">
+          <option value="">Todos os métodos</option>
+          ${providerOptions
+            .map(value => {
+              const selected = value && value.toLowerCase() === provider.toLowerCase() ? 'selected' : '';
+              return `<option value="${esc(value)}" ${selected}>${esc(value)}</option>`;
+            })
+            .join('')}
+        </select>
+        <button class="btn btn-primary">Filtrar</button>
+      </form>
+
+      <div class="card p-0">
+        <div class="responsive-table">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-slate-500">
+                <th>Data</th>
+                <th>Reserva</th>
+                <th>Hóspede</th>
+                <th>Método</th>
+                <th>Intento</th>
+                <th>Montante</th>
+                <th>Estado</th>
+                <th>Conciliação</th>
+                <th>Detalhes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${payments
+                .map(({ row, statusInfo, statusBadge, reconciliationStatus, reconciliationBadge, paymentSummary, outstandingCents, refunds }) => {
+                  const bookingLink = row.booking_id
+                    ? `<a class="underline" href="/admin/bookings/${row.booking_id}">Reserva #${row.booking_id}</a>`
+                    : '<span class="table-cell-muted">Sem reserva</span>';
+                  const bookingMeta = row.property_name
+                    ? `<span class="table-cell-muted">${esc(row.property_name)}${row.unit_name ? ' · ' + esc(row.unit_name) : ''}</span>`
+                    : '';
+                  const guestInfo = row.guest_name || row.customer_email
+                    ? `<span class="table-cell-value">${esc(row.guest_name || row.customer_email || '-')}</span>`
+                    : '<span class="table-cell-muted">—</span>';
+                  const guestContact = row.guest_email
+                    ? `<span class="table-cell-muted">${esc(row.guest_email)}</span>`
+                    : row.customer_email
+                    ? `<span class="table-cell-muted">${esc(row.customer_email)}</span>`
+                    : '';
+                  const providerRef = row.provider_payment_id
+                    ? `<span class="table-cell-muted">${esc(row.provider_payment_id)}</span>`
+                    : '';
+                  const intentLabel = row.intent_type === 'preauth' ? 'Pré-autorização' : 'Cobrança';
+                  const refundsList = refunds.length
+                    ? `<div class="mt-1 text-xs text-slate-500">${refunds
+                        .map(ref => {
+                          const successful = isSuccessfulRefundStatus(ref.status);
+                          const label = successful ? 'Reembolso concluído' : `Reembolso ${esc(ref.status || '').toLowerCase()}`;
+                          return `<div>${label}: € ${eur(ref.amount_cents)}</div>`;
+                        })
+                        .join('')}</div>`
+                    : '';
+
+                  const lastError = row.last_error ? safeJsonParse(row.last_error) : null;
+                  const errorBlock = lastError && lastError.message
+                    ? `<div class="mt-1 text-xs text-rose-600">Erro: ${esc(lastError.message)}</div>`
+                    : '';
+
+                  const pendingDetails = [];
+                  if (paymentSummary.pendingCents > 0) {
+                    pendingDetails.push(`Pendente: € ${eur(paymentSummary.pendingCents)}`);
+                  }
+                  if (paymentSummary.actionCents > 0) {
+                    pendingDetails.push(`Ação necessária: € ${eur(paymentSummary.actionCents)}`);
+                  }
+                  if (paymentSummary.failedCents > 0) {
+                    pendingDetails.push(`Falhou: € ${eur(paymentSummary.failedCents)}`);
+                  }
+                  if (paymentSummary.cancelledCents > 0) {
+                    pendingDetails.push(`Cancelado: € ${eur(paymentSummary.cancelledCents)}`);
+                  }
+                  const pendingBlock = pendingDetails.length
+                    ? `<div class="mt-1 text-xs text-slate-500">${pendingDetails.join(' · ')}</div>`
+                    : '';
+
+                  const outstandingBlock = row.booking_id
+                    ? `<div class="mt-1 text-xs ${outstandingCents > 0 ? 'text-amber-700' : 'text-emerald-700'}">Saldo reserva: € ${eur(outstandingCents)}</div>`
+                    : '';
+
+                  return `
+                    <tr>
+                      <td data-label="Data"><span class="table-cell-value">${dayjs(row.created_at).format('DD/MM/YYYY HH:mm')}</span></td>
+                      <td data-label="Reserva">
+                        <div class="table-cell-value">${bookingLink}</div>
+                        ${bookingMeta}
+                      </td>
+                      <td data-label="Hóspede">
+                        ${guestInfo}
+                        ${guestContact}
+                      </td>
+                      <td data-label="Método">
+                        <span class="table-cell-value">${esc(row.provider)}</span>
+                        ${providerRef}
+                      </td>
+                      <td data-label="Intento"><span class="table-cell-value">${intentLabel}</span></td>
+                      <td data-label="Montante"><span class="table-cell-value">€ ${eur(row.amount_cents)}</span></td>
+                      <td data-label="Estado">
+                        <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${statusBadge}">
+                          ${esc(statusInfo.label)}
+                        </span>
+                        <div class="mt-1 text-xs text-slate-500">Líquido: € ${eur(paymentSummary.netCapturedCents)}</div>
+                        ${pendingBlock}
+                        ${errorBlock}
+                      </td>
+                      <td data-label="Conciliação">
+                        <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${reconciliationBadge}">
+                          ${esc(reconciliationLabels[reconciliationStatus] || reconciliationStatus)}
+                        </span>
+                        ${outstandingBlock}
+                      </td>
+                      <td data-label="Detalhes">
+                        <div class="text-xs text-slate-500">
+                          Capturado: € ${eur(paymentSummary.capturedCents)}<br />
+                          Reembolsado: € ${eur(paymentSummary.refundedCents)}
+                        </div>
+                        ${refundsList}
+                      </td>
+                    </tr>
+                  `;
+                })
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+        ${payments.length === 0 ? '<div class="p-4 text-slate-500">Sem pagamentos registados.</div>' : ''}
+      </div>
+    `
+  }));
+});
+
 app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
   const q = String(req.query.q || '').trim();
   const status = String(req.query.status || '').trim(); // '', CONFIRMED, PENDING

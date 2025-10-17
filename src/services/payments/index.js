@@ -1,30 +1,14 @@
 const crypto = require('crypto');
 const { ValidationError } = require('../errors');
-
-const FINAL_PAYMENT_STATUSES = new Set([
-  'succeeded',
-  'paid',
-  'captured',
-  'cancelled',
-  'canceled',
-  'voided',
-  'failed',
-  'requires_payment_method',
-  'refunded'
-]);
-
-const CAPTURE_STATUSES = new Set(['succeeded', 'paid', 'captured', 'refunded']);
-const CANCEL_STATUSES = new Set(['canceled', 'cancelled', 'voided']);
-const FAILURE_STATUSES = new Set(['failed', 'requires_payment_method']);
-const REQUIRE_ACTION_STATUSES = new Set([
-  'requires_action',
-  'requires_source_action',
-  'requires_customer_action',
-  'requires_3ds',
-  'requires_payment_method'
-]);
-
-const FINAL_REFUND_STATUSES = new Set(['succeeded', 'completed', 'paid', 'failed', 'canceled', 'cancelled']);
+const {
+  normalizePaymentStatus,
+  isFinalPaymentStatus,
+  isCapturedStatus,
+  isCancelledStatus,
+  isFailureStatus,
+  isActionRequiredStatus,
+  isFinalRefundStatus
+} = require('./status');
 
 function randomId(prefix) {
   if (typeof crypto.randomUUID === 'function') {
@@ -44,8 +28,8 @@ function parseJsonSafe(value, fallback = null) {
 }
 
 function normalizeStatus(value, { fallback = null } = {}) {
-  if (typeof value !== 'string') return fallback;
-  return value.trim().toLowerCase() || fallback;
+  const normalized = normalizePaymentStatus(value);
+  return normalized || fallback;
 }
 
 function isPlainObject(value) {
@@ -335,18 +319,20 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
       sets.push('status = @status');
       params.status = status;
       if (updates.reconciliationStatus === undefined) {
-        updates.reconciliationStatus = FINAL_PAYMENT_STATUSES.has(status) ? 'matched' : current.reconciliationStatus || 'pending';
+        updates.reconciliationStatus = isFinalPaymentStatus(status)
+          ? 'matched'
+          : current.reconciliationStatus || 'pending';
       }
-      if (CAPTURE_STATUSES.has(status) && updates.capturedAt === undefined && !current.capturedAt) {
+      if (isCapturedStatus(status) && updates.capturedAt === undefined && !current.capturedAt) {
         updates.capturedAt = nowIso(dayjs);
       }
-      if (CANCEL_STATUSES.has(status) && updates.cancelledAt === undefined && !current.cancelledAt) {
+      if (isCancelledStatus(status) && updates.cancelledAt === undefined && !current.cancelledAt) {
         updates.cancelledAt = nowIso(dayjs);
       }
-      if (!CAPTURE_STATUSES.has(status) && updates.capturedAt === undefined) {
+      if (!isCapturedStatus(status) && updates.capturedAt === undefined) {
         updates.capturedAt = current.capturedAt ?? undefined;
       }
-      if (!CANCEL_STATUSES.has(status) && updates.cancelledAt === undefined) {
+      if (!isCancelledStatus(status) && updates.cancelledAt === undefined) {
         updates.cancelledAt = current.cancelledAt ?? undefined;
       }
     }
@@ -434,7 +420,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
     const requiresAction =
       normalized.requiresAction !== undefined
         ? !!normalized.requiresAction
-        : (status ? REQUIRE_ACTION_STATUSES.has(status) : false);
+        : (status ? isActionRequiredStatus(status) : false);
     const capturedAt = normalized.capturedAt || null;
     const cancelledAt = normalized.cancelledAt || normalized.canceledAt || null;
     const metadata = normalized.metadata !== undefined ? normalized.metadata : undefined;
@@ -522,7 +508,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
       cancelledAt: result.cancelledAt || undefined
     });
 
-    const requiresAction = result.requiresAction || REQUIRE_ACTION_STATUSES.has(updatedPayment.status);
+    const requiresAction = result.requiresAction || isActionRequiredStatus(updatedPayment.status);
     const response = {
       payment: updatedPayment,
       requiresAction,
@@ -531,7 +517,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
       status: updatedPayment.status
     };
 
-    if (FAILURE_STATUSES.has(updatedPayment.status)) {
+    if (isFailureStatus(updatedPayment.status)) {
       const message =
         result.errorMessage ||
         (updatedPayment.lastError && updatedPayment.lastError.message) ||
@@ -582,7 +568,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
     const processedAt =
       event.processedAt ||
       event.settledAt ||
-      (FINAL_REFUND_STATUSES.has(status) ? nowIso(dayjs) : null);
+      (isFinalRefundStatus(status) ? nowIso(dayjs) : null);
 
     let refund = null;
     let created = false;
@@ -606,7 +592,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
         status,
         reason,
         metadata: metadata == null ? null : JSON.stringify(metadata),
-        reconciliationStatus: FINAL_REFUND_STATUSES.has(status) ? 'matched' : 'pending',
+        reconciliationStatus: isFinalRefundStatus(status) ? 'matched' : 'pending',
         processedAt: processedAt || null
       });
       refund = getRefund(id);
@@ -630,7 +616,7 @@ function createPaymentService({ db, dayjs, adapters = {}, logger = console } = {
         sets.push('status = @status');
         params.status = status;
         sets.push('reconciliation_status = @reconciliationStatus');
-        params.reconciliationStatus = FINAL_REFUND_STATUSES.has(status) ? 'matched' : refund.reconciliationStatus;
+        params.reconciliationStatus = isFinalRefundStatus(status) ? 'matched' : refund.reconciliationStatus;
       }
       if (reason !== undefined) {
         sets.push('reason = @reason');
