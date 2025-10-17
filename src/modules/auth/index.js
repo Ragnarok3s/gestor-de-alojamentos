@@ -569,6 +569,7 @@ module.exports = function registerAuthRoutes(app, context) {
       deleteResetTokenStmt.run(tokenHash);
       return res.redirect('/login/reset?error=Ligação inválida ou expirada.');
     }
+    const errorMessage = req.query && req.query.error ? esc(req.query.error) : '';
     const csrfToken = csrfProtection.ensureToken(req, res);
     ensureNoIndexHeader(res);
     res.send(
