@@ -342,11 +342,12 @@ module.exports = function registerBackoffice(app, context) {
             </div>`;
 
     const body = html`
-      <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
-      <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
-      ${feedbackHtml}
+      <div class="bo-page">
+        <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
+        <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
+        ${feedbackHtml}
 
-      <div class="card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <div class="text-sm text-slate-500">${esc(b.property_name)}</div>
           <div class="font-semibold mb-3">${esc(b.unit_name)}</div>
@@ -451,6 +452,7 @@ module.exports = function registerBackoffice(app, context) {
               `
             : ''}
         </section>
+        </div>
       </div>
     `;
 
@@ -460,6 +462,7 @@ module.exports = function registerBackoffice(app, context) {
         user: req.user,
         activeNav: 'bookings',
         branding: theme,
+        pageClass: 'page-backoffice page-bookings',
         body
       })
     );
@@ -694,6 +697,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
   const uxEnhancementsSource = fs.readFileSync(path.join(scriptsDir, 'ux-enhancements.js'), 'utf8');
+  const sidebarControlsSource = fs.readFileSync(path.join(scriptsDir, 'sidebar-controls.js'), 'utf8');
 
   const featureBuilderScript = inlineScript(
     featureBuilderSource.replace(/__FEATURE_PRESETS__/g, FEATURE_PRESETS_JSON)
@@ -701,6 +705,7 @@ module.exports = function registerBackoffice(app, context) {
   const galleryManagerScript = inlineScript(galleryManagerSource);
   const revenueDashboardScript = inlineScript(revenueDashboardSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
+  const sidebarControlsScript = inlineScript(sidebarControlsSource);
 
   function renderDashboardTabsScript(defaultPaneId) {
     const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
@@ -1887,11 +1892,12 @@ module.exports = function registerBackoffice(app, context) {
       ? propertyRows.join('')
       : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
     const body = html`
-      <div class="hk-dashboard space-y-8">
-        ${renderBreadcrumbs([
-          { label: 'Backoffice', href: '/admin' },
-          { label: 'Limpezas' }
-        ])}
+      <div class="bo-page bo-page--wide">
+        <div class="hk-dashboard space-y-8">
+          ${renderBreadcrumbs([
+            { label: 'Backoffice', href: '/admin' },
+            { label: 'Limpezas' }
+          ])}
         <header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
           <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
@@ -2120,6 +2126,7 @@ module.exports = function registerBackoffice(app, context) {
               </div>
             </section>`
           : ''}
+        </div>
       </div>
     `;
     res.send(
@@ -2627,6 +2634,7 @@ module.exports = function registerBackoffice(app, context) {
     const canManageRates = userCan(req.user, 'rates.manage');
     const canAccessAudit = userCan(req.user, 'audit.view') || userCan(req.user, 'logs.view');
 
+    const canViewBookings = userCan(req.user, 'bookings.view');
     const quickLinks = [];
     if (canManageHousekeeping) {
       quickLinks.push({
@@ -2695,48 +2703,7 @@ module.exports = function registerBackoffice(app, context) {
         cta: 'Abrir auditoria'
       });
     }
-
-    const auditSidebarLink =
-      isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit
-        ? html`
-            <div class="bo-sidebar__footer">
-              <a class="bo-sidebar__footer-link" href="/admin/auditoria">
-                <i data-lucide="clipboard-list" class="w-4 h-4" aria-hidden="true"></i>
-                <span>Auditoria</span>
-              </a>
-            </div>
-          `
-        : '';
-
-    const quickAccessHtml = quickLinks.length
-      ? html`<section class="bo-card space-y-4">
-          <div>
-            <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
-            <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
-          </div>
-          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            ${quickLinks
-              .map(link => {
-                if (!link.href) {
-                  const desc = link.description ? `<p class="text-sm text-slate-500">${esc(link.description)}</p>` : '';
-                  return `<article class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-                    <h3 class="font-semibold text-slate-700">${esc(link.title)}</h3>
-                    ${desc}
-                    <p class="text-xs text-slate-400">Atualize permissões ou dados para ativar este atalho.</p>
-                  </article>`;
-                }
-                return `<article class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(link.title)}</h3>
-                    <p class="text-sm text-slate-600">${esc(link.description)}</p>
-                  </div>
-                  <a class="btn btn-light" href="${esc(link.href)}">${esc(link.cta || 'Abrir')}</a>
-                </article>`;
-              })
-              .join('')}
-          </div>
-        </section>`
-      : '';
+    let quickAccessHtml = '';
 
     const channelRecords = channelIntegrations.listIntegrations();
     const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
@@ -3270,43 +3237,144 @@ module.exports = function registerBackoffice(app, context) {
       </svg>
     `.trim();
 
-    const navItems = [
-      { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
-      { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
-      { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
-      { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-      { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' },
-      { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
-      { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-      { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
-      { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
-      { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates },
-      ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
-      { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-      { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers }
+    const navSections = [
+      {
+        id: 'operations',
+        title: 'Operações diárias',
+        items: [
+          { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
+          { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
+          { id: 'bookings-link', label: 'Reservas', icon: 'notebook-text', allowed: canViewBookings, href: '/admin/bookings' },
+          { id: 'housekeeping', label: 'Painel de limpezas', iconSvg: broomIconSvg, icon: 'broom', allowed: canSeeHousekeeping },
+          {
+            id: 'housekeeping-manage',
+            label: 'Gestão de limpezas',
+            icon: 'clipboard-check',
+            allowed: canManageHousekeeping,
+            href: '/admin/limpeza'
+          },
+          { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
+          { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' }
+        ]
+      },
+      {
+        id: 'finance',
+        title: 'Finanças e rendimento',
+        items: [
+          { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
+          { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
+          { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
+        ]
+      },
+      {
+        id: 'communication',
+        title: 'Comunicação',
+        items: [
+          { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
+          { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
+          { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
+          { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates }
+        ]
+      },
+      {
+        id: 'administration',
+        title: 'Administração',
+        items: [
+          ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
+          { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
+          { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
+          {
+            id: 'audit-link',
+            label: 'Auditoria',
+            icon: 'clipboard-list',
+            allowed: isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit,
+            href: '/admin/auditoria'
+          }
+        ]
+      }
     ];
-    const defaultPane = navItems.find(item => item.allowed)?.id || 'overview';
-    const navButtonsHtml = navItems
-      .map(item => {
-        const classes = ['bo-tab'];
-        if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-        if (!item.href && item.id === defaultPane) classes.push('is-active');
-        if (item.href) classes.push('bo-tab--link');
-        const iconMarkup = item.iconSvg
-          ? item.iconSvg
-          : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
+    const allNavItems = navSections.flatMap(section => section.items);
+    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
+    const navButtonsHtml = navSections
+      .map(section => {
+        const itemsHtml = section.items
+          .map(item => {
+            const classes = ['bo-tab'];
+            if (item.id === 'channel-manager') classes.push('bo-tab--compact');
+            if (!item.href && item.id === defaultPane) classes.push('is-active');
+            if (item.href) classes.push('bo-tab--link');
+            const iconMarkup = item.iconSvg
+              ? item.iconSvg
+              : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
 
-        if (!item.allowed) {
-          return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
+            if (!item.allowed) {
+              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
+            }
+
+            if (item.href) {
+              return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
+            }
+
+            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
+          })
+          .join('');
+
+        if (!itemsHtml.trim()) {
+          return '';
         }
 
-        if (item.href) {
-          return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
-        }
+        const sectionItemsId = `bo-nav-items-${section.id}`;
 
-        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
+        return `
+          <div class="bo-nav__section" data-nav-section>
+            <button
+              type="button"
+              class="bo-nav__section-toggle"
+              data-nav-toggle
+              aria-expanded="true"
+              aria-controls="${sectionItemsId}"
+            >
+              <span>${esc(section.title)}</span>
+              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
+            </button>
+            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}">${itemsHtml}</div>
+          </div>
+        `;
       })
+      .filter(Boolean)
       .join('');
+
+    const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
+    const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
+    quickAccessHtml = filteredQuickLinks.length
+      ? html`<section class="bo-card space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
+            <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            ${filteredQuickLinks
+              .map(link => {
+                if (!link.href) {
+                  const desc = link.description ? `<p class="text-sm text-slate-500">${esc(link.description)}</p>` : '';
+                  return `<article class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                    <h3 class="font-semibold text-slate-700">${esc(link.title)}</h3>
+                    ${desc}
+                    <p class="text-xs text-slate-400">Atualize permissões ou dados para ativar este atalho.</p>
+                  </article>`;
+                }
+                return `<article class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3">
+                  <div>
+                    <h3 class="font-semibold text-slate-800">${esc(link.title)}</h3>
+                    <p class="text-sm text-slate-600">${esc(link.description)}</p>
+                  </div>
+                  <a class="btn btn-light" href="${esc(link.href)}">${esc(link.cta || 'Abrir')}</a>
+                </article>`;
+              })
+              .join('')}
+          </div>
+        </section>`
+      : '';
 
     const propertiesListHtml = props.length
       ? `<ul class="space-y-3">${props
@@ -4193,23 +4261,42 @@ module.exports = function registerBackoffice(app, context) {
         notifications,
         pageClass: 'page-backoffice',
         body: html`
-          <div class="bo-shell">
-            <aside class="bo-sidebar">
-              <div class="bo-sidebar__title">Menu principal</div>
-              <div class="bo-nav">${navButtonsHtml}</div>
-              ${auditSidebarLink}
-            </aside>
-            <div class="bo-main">
-              <header class="bo-header">
-                <h1>Gestor Operacional</h1>
-                <p>Todos os dados essenciais de gestão em formato compacto.</p>
-              </header>
+          <div class="bo-page bo-page--wide">
+            <div class="bo-shell" data-bo-shell>
+              <aside class="bo-sidebar" data-bo-sidebar tabindex="-1">
+                <div class="bo-sidebar__header">
+                  <div class="bo-sidebar__title">Menu principal</div>
+                  <button
+                    type="button"
+                    class="bo-sidebar__toggle"
+                    data-sidebar-toggle
+                    aria-expanded="true"
+                    aria-controls="bo-backoffice-nav"
+                    aria-label="Encolher menu"
+                  >
+                    <i data-lucide="chevron-left" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse" aria-hidden="true"></i>
+                    <i data-lucide="chevron-right" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand" aria-hidden="true"></i>
+                    <i data-lucide="x" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>${navButtonsHtml}</nav>
+              </aside>
+              <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
+              <div class="bo-main" data-bo-main>
+                <button type="button" class="bo-main__menu" data-sidebar-open>
+                  <i data-lucide="menu" aria-hidden="true"></i>
+                  <span>Menu</span>
+                </button>
+                <header class="bo-header">
+                  <h1>Gestor Operacional</h1>
+                  <p>Todos os dados essenciais de gestão em formato compacto.</p>
+                </header>
 
-              ${quickAccessHtml}
+                ${quickAccessHtml}
 
-              <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
+                <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
-              <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
                 <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
                   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                     <div>
@@ -4747,6 +4834,7 @@ module.exports = function registerBackoffice(app, context) {
                     `
                   : '<div class="bo-card"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
               </section>
+              </div>
             </div>
           </div>
           <div class="bo-modal hidden" data-block-modal aria-hidden="true" role="dialog" aria-modal="true">
@@ -4790,6 +4878,7 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
+          <script>${sidebarControlsScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
@@ -5929,21 +6018,23 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
       title: 'Regras automáticas de tarifas',
       user: req.user,
       activeNav: 'backoffice',
+      pageClass: 'page-backoffice page-rates',
       body: html`
-        ${renderBreadcrumbs([
-          { label: 'Backoffice', href: '/admin' },
-          { label: 'Regras de tarifas' }
-        ])}
-        <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-        <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
-        <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>
-        ${successMessage
-          ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
-          : ''}
-        ${errorMessage
-          ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
-          : ''}
-        <div class="grid gap-6 lg:grid-cols-2">
+        <div class="bo-page bo-page--wide">
+          ${renderBreadcrumbs([
+            { label: 'Backoffice', href: '/admin' },
+            { label: 'Regras de tarifas' }
+          ])}
+          <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+          <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
+          <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>
+          ${successMessage
+            ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
+            : ''}
+          ${errorMessage
+            ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
+            : ''}
+          <div class="grid gap-6 lg:grid-cols-2">
           <section class="card p-6 space-y-4">
             <div>
               <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
@@ -6056,8 +6147,9 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
             </div>
             <ul class="space-y-4">${ruleItems}</ul>
           </section>
+          </div>
+          <script>${ruleFormScript}</script>
         </div>
-        <script>${ruleFormScript}</script>
       `,
     })
   );
@@ -6644,10 +6736,12 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
     user: req.user,
     activeNav: 'bookings',
     branding: resolveBrandingForRequest(req),
+    pageClass: 'page-backoffice page-bookings',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+      <div class="bo-page">
+        <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
-      <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+        <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
         <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
         <select class="input" name="status">
           <option value="">Todos os estados</option>
@@ -6697,6 +6791,7 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
           </table>
         </div>
         ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
+      </div>
       </div>
     `
   }));
@@ -7059,8 +7154,10 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
     user: req.user,
     activeNav: 'branding',
     branding: theme,
+    pageClass: 'page-backoffice page-branding',
     body: html`
-      <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+      <div class="bo-page bo-page--wide">
+        <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
       <h1 class="text-2xl font-semibold mt-2">Identidade visual</h1>
       <p class="text-slate-600 mb-4">Personalize logotipo, cores e mensagens da barra de navegação principal. As alterações aplicam-se apenas à navbar superior visível em toda a aplicação.</p>
 
@@ -7414,6 +7511,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
           updatePreview();
         })();
       </script>
+      </div>
     `
   }));
 });
@@ -7606,22 +7704,24 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
     user: req.user,
     activeNav: 'audit',
     branding: theme,
+    pageClass: 'page-backoffice page-audit',
     body: html`
-      <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
-      ${canViewAudit ? `
-        <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
-          <div class="grid gap-1">
-            <label class="text-sm text-slate-600">Entidade</label>
-            <select class="input" name="entity">
-              <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
-              <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
-              <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
-            </select>
-          </div>
-          <div class="grid gap-1">
-            <label class="text-sm text-slate-600">ID</label>
-            <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
-          </div>
+      <div class="bo-page bo-page--wide">
+        <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
+        ${canViewAudit ? `
+          <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+            <div class="grid gap-1">
+              <label class="text-sm text-slate-600">Entidade</label>
+              <select class="input" name="entity">
+                <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+                <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+                <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+              </select>
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm text-slate-600">ID</label>
+              <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+            </div>
           <div class="self-end">
             <button class="btn btn-primary w-full">Filtrar</button>
           </div>
@@ -7711,6 +7811,7 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
           </div>
         </section>
       ` : ''}
+      </div>
     `
   }));
 });
@@ -7880,17 +7981,24 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
   }
   const theme = resolveBrandingForRequest(req);
-  res.send(layout({ title:'Utilizadores', user: req.user, activeNav: 'users', branding: theme, body: html`
-    <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-    <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
-    ${errorMessage
-      ? `<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
-      : ''}
-    ${successMessage
-      ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
-      : ''}
+  res.send(layout({
+    title: 'Utilizadores',
+    user: req.user,
+    activeNav: 'users',
+    branding: theme,
+    pageClass: 'page-backoffice page-users',
+    body: html`
+      <div class="bo-page bo-page--wide">
+        <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+        <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+        ${errorMessage
+          ? `<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+          : ''}
+        ${successMessage
+          ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
+          : ''}
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <section class="card p-4">
         <h2 class="font-semibold mb-3">Criar novo utilizador</h2>
         <form method="post" action="/admin/users/create" class="grid gap-2">
@@ -8183,7 +8291,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
       })();
     </script>
 
-    ${isDevOperator && permissionPayload ? html`
+      ${isDevOperator && permissionPayload ? html`
       <script>
         (function(){
           const dataEl = document.getElementById('user-permissions-data');
@@ -8269,7 +8377,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           updateSummary();
         })();
       </script>
-    ` : ''}
+      ` : ''}
+
+      </div>
 
     ${isDevOperator ? html`
       <div id="reveal-password-modal" class="modal-overlay modal-hidden" role="dialog" aria-modal="true" aria-labelledby="reveal-password-title">

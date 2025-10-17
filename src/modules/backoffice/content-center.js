@@ -76,12 +76,12 @@ module.exports = function registerContentCenter(app, context) {
 
       if (!activeUnit) {
         const body = html`
-          <section class="max-w-3xl mx-auto py-12">
-            <div class="bg-white shadow-sm rounded-2xl p-8">
+          <div class="bo-page">
+            <section class="bg-white shadow-sm rounded-2xl p-8">
               <h1 class="text-2xl font-semibold text-slate-900 mb-2">Centro de Conteúdos</h1>
               <p class="text-slate-600">Ainda não existem unidades configuradas para este tenant. Crie uma unidade para começar a gerir conteúdos.</p>
-            </div>
-          </section>
+            </section>
+          </div>
         `;
         return res.send(
           layout({
@@ -89,6 +89,7 @@ module.exports = function registerContentCenter(app, context) {
             user: req.user,
             activeNav: 'backoffice',
             branding: resolveBrandingForRequest(req),
+            pageClass: 'page-backoffice page-content-center',
             body
           })
         );
@@ -119,8 +120,9 @@ module.exports = function registerContentCenter(app, context) {
       };
 
       const pageBody = html`
-        <section class="max-w-6xl mx-auto py-10">
-          <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-8">
+        <div class="bo-page bo-page--wide">
+          <div class="space-y-10 py-10">
+            <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
             <div>
               <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
               <p class="text-slate-600 mt-2 max-w-2xl">
@@ -140,7 +142,7 @@ module.exports = function registerContentCenter(app, context) {
             </div>
           </div>
 
-          <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr),minmax(0,1fr)]">
+            <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr),minmax(0,1fr)]">
             <form class="bg-white shadow-sm rounded-2xl p-6 space-y-6" data-content-form>
               <div class="grid md:grid-cols-2 gap-5">
                 <div>
@@ -218,7 +220,8 @@ module.exports = function registerContentCenter(app, context) {
               </div>
             </aside>
           </div>
-        </section>
+        </div>
+      </div>
         <script type="application/json" id="content-center-data">${esc(JSON.stringify(payload))}</script>
         <script>
           (function() {
@@ -706,6 +709,7 @@ module.exports = function registerContentCenter(app, context) {
           user: req.user,
           activeNav: 'backoffice',
           branding,
+          pageClass: 'page-backoffice page-content-center',
           body: pageBody
         })
       );

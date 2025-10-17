@@ -2471,26 +2471,29 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
       user: req.user,
       activeNav: 'export',
       branding: resolveBrandingForRequest(req),
+      pageClass: 'page-backoffice page-export',
       body: html`
-        <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
-        <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
-        <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
-          <div>
-            <label class="text-sm">Mês inicial</label>
-            <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
+        <div class="bo-page">
+          <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
+          <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
+          <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
+            <div>
+              <label class="text-sm">Mês inicial</label>
+              <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
+            </div>
+            <div>
+              <label class="text-sm">Quantos meses (1–12)</label>
+              <input type="number" min="1" max="12" name="months" value="${monthsSelected}" class="input" required />
+            </div>
+            <button class="btn btn-light" type="submit">Atualizar link</button>
+          </form>
+          <div class="mt-4 space-y-2">
+            ${downloadCta}
+            ${linkNotice}
+            ${generatedAt}
           </div>
-          <div>
-            <label class="text-sm">Quantos meses (1–12)</label>
-            <input type="number" min="1" max="12" name="months" value="${monthsSelected}" class="input" required />
-          </div>
-          <button class="btn btn-light" type="submit">Atualizar link</button>
-        </form>
-        <div class="mt-4 space-y-2">
-          ${downloadCta}
-          ${linkNotice}
-          ${generatedAt}
+          <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
         </div>
-        <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
       `
     })
   );
