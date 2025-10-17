@@ -1,5 +1,10 @@
 const crypto = require('crypto');
-const rateLimit = require('express-rate-limit');
+let rateLimit;
+try {
+  rateLimit = require('express-rate-limit');
+} catch (err) {
+  rateLimit = () => (req, res, next) => next();
+}
 
 function setNoIndex(res) {
   if (!res || typeof res.set !== 'function') {

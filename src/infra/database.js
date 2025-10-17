@@ -9,6 +9,7 @@ function createDatabase(databasePath = 'booking_engine.db') {
   db.pragma('foreign_keys = ON');
 
   applySchema(db);
+  ensureTenantInfrastructure(db);
   runLightMigrations(db);
   warnMissingAuditColumns(db);
 
@@ -17,6 +18,15 @@ function createDatabase(databasePath = 'booking_engine.db') {
 
 function applySchema(db) {
   const schema = `
+CREATE TABLE IF NOT EXISTS tenants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  domain TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  branding_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS properties (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -120,6 +130,56 @@ CREATE TABLE IF NOT EXISTS unit_blocks (
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
 
+CREATE TABLE IF NOT EXISTS unit_content (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
+  published_at TEXT,
+  published_version INTEGER,
+  last_published_channels TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(unit_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_content_unit ON unit_content(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_content_tenant ON unit_content(tenant_id);
+
+CREATE TABLE IF NOT EXISTS unit_content_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_content_id INTEGER NOT NULL REFERENCES unit_content(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  restored_from_version INTEGER,
+  note TEXT,
+  UNIQUE(unit_content_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_content_versions_lookup ON unit_content_versions(unit_content_id, version);
+
+CREATE TABLE IF NOT EXISTS unit_policies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  policy_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(unit_id, tenant_id, policy_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_policies_unit ON unit_policies(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_policies_tenant ON unit_policies(tenant_id);
+
 CREATE TABLE IF NOT EXISTS rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
@@ -180,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_restrictions_plan_dates ON rate_restrictions
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
+  email TEXT,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'admin'
 );
@@ -282,6 +343,20 @@ CREATE TABLE IF NOT EXISTS two_factor_challenges (
 );
 
 CREATE INDEX IF NOT EXISTS idx_two_factor_challenges_user ON two_factor_challenges(user_id);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  ip TEXT,
+  user_agent TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires ON password_reset_tokens(expires_at);
 
 CREATE TABLE IF NOT EXISTS unit_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -479,6 +554,55 @@ CREATE INDEX IF NOT EXISTS idx_owner_push_notifications_status ON owner_push_not
   db.exec(schema);
 }
 
+function ensureTenantInfrastructure(db) {
+  try {
+    const existingDefault = db
+      .prepare('SELECT id FROM tenants ORDER BY id ASC LIMIT 1')
+      .get();
+
+    const tablesNeedingTenant = [
+      'users',
+      'sessions',
+      'properties',
+      'units',
+      'bookings',
+      'property_owners',
+      'user_roles',
+      'rates',
+      'rate_rules',
+      'rate_plans',
+      'rate_restrictions',
+      'unit_blocks',
+      'blocks'
+    ];
+
+    tablesNeedingTenant.forEach(table => ensureTenantColumn(db, table));
+
+    if (!existingDefault) {
+      db.prepare('INSERT INTO tenants(name, domain, branding_json) VALUES (?,?,?)').run(
+        'Tenant Padrão',
+        'localhost',
+        JSON.stringify({ brandName: 'Gestor de Alojamentos' })
+      );
+    }
+  } catch (err) {
+    console.warn('Falha ao garantir infraestrutura multi-tenant:', err.message);
+  }
+}
+
+function ensureTenantColumn(db, tableName) {
+  if (!tableName) return;
+  if (tableHasColumn(db, tableName, 'tenant_id')) return;
+  try {
+    db.exec(
+      `ALTER TABLE ${tableName} ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1`
+    );
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${tableName}_tenant ON ${tableName}(tenant_id)`);
+  } catch (err) {
+    console.warn(`Falha ao adicionar tenant_id à tabela ${tableName}:`, err.message);
+  }
+}
+
 function runLightMigrations(db) {
   const tableExists = (table) => {
     try {
@@ -595,7 +719,17 @@ function runLightMigrations(db) {
     ensureColumn('sessions', 'user_agent', 'TEXT');
     ensureTimestampColumn('sessions', 'created_at');
     ensureTimestampColumn('sessions', 'last_seen_at');
+    ensureColumn('users', 'email', 'TEXT');
     ensureColumn('session_logs', 'metadata_json', 'TEXT');
+    if (!indexExists('idx_users_tenant_email_unique')) {
+      try {
+        db.exec(
+          "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_email_unique ON users(tenant_id, email) WHERE email IS NOT NULL"
+        );
+      } catch (err) {
+        console.warn('Falha ao criar índice único de email por tenant:', err.message);
+      }
+    }
     ensureColumn('email_templates', 'description', 'TEXT');
     ensureColumn('email_templates', 'metadata_json', 'TEXT');
     ensureTimestampColumn('email_templates', 'updated_at');
@@ -761,6 +895,20 @@ function runLightMigrations(db) {
       )`
     );
 
+    ensureTable(
+      'password_reset_tokens',
+      `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        token_hash TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        ip TEXT,
+        user_agent TEXT
+      )`
+    );
+
     ensureColumn('two_factor_challenges', 'last_attempt_at', 'TEXT');
 
     ensureTable(
@@ -818,6 +966,8 @@ function runLightMigrations(db) {
 
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_two_factor_challenges_user ON two_factor_challenges(user_id);
+       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires ON password_reset_tokens(expires_at);
        CREATE INDEX IF NOT EXISTS idx_owner_financial_user ON owner_financial_entries(user_id);
        CREATE INDEX IF NOT EXISTS idx_owner_financial_property ON owner_financial_entries(property_id);
        CREATE INDEX IF NOT EXISTS idx_owner_financial_unit ON owner_financial_entries(unit_id);

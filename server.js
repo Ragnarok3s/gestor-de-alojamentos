@@ -31,8 +31,14 @@ const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const registerAccountModule = require('./src/modules/account');
+const registerTenantAdminModule = require('./src/modules/admin/tenants');
+// Legacy alias retained for environments still referencing the older payments
+// module hook name. Ensures pm2 or other runners with stale bundles do not
+// crash while the new tenant admin module rolls out.
+const registerPaymentsModule = registerTenantAdminModule;
 const { featureFlags, isFeatureEnabled } = require('./config/featureFlags');
 const { createDatabase, tableHasColumn } = require('./src/infra/database');
+const { createTenantService } = require('./src/services/tenants');
 const { createSessionService } = require('./src/services/session');
 const { createTwoFactorService } = require('./src/services/twoFactorService');
 const { buildUserNotifications } = require('./src/services/notifications');
@@ -45,6 +51,7 @@ const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createRateRuleService } = require('./src/services/rate-rules');
 const { createRatePlanService } = require('./src/services/rate-plans');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createChannelContentService } = require('./src/services/channel-content');
 const { createChannelSync } = require('./src/services/channel-sync');
 const { createOtaDispatcher } = require('./src/services/ota-sync/dispatcher');
 const { createOverbookingGuard } = require('./src/services/overbooking-guard');
@@ -80,6 +87,7 @@ app.use(csrfProtection.middleware);
 
 // ===================== DB =====================
 const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
+const tenantService = createTenantService({ db });
 const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
 const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
 const sessionService = createSessionService({ db, dayjs });
@@ -87,6 +95,38 @@ const twoFactorService = createTwoFactorService({ db, dayjs });
 const rateRuleService = createRateRuleService({ db, dayjs });
 const ratePlanService = createRatePlanService({ db, dayjs });
 const skipStartupTasks = SKIP_SERVER_BOOT;
+
+function resolveTenantDomain(req) {
+  if (!req || !req.headers) return null;
+  const headerOverride =
+    req.headers['x-tenant-domain'] || req.headers['x-tenant'] || req.headers['x-tenant-host'];
+  if (headerOverride) {
+    return String(headerOverride).trim().toLowerCase();
+  }
+  const hostHeader = req.headers.host || '';
+  if (hostHeader) {
+    return String(hostHeader).split(':')[0].trim().toLowerCase();
+  }
+  if (typeof req.hostname === 'string' && req.hostname) {
+    return req.hostname.trim().toLowerCase();
+  }
+  return null;
+}
+
+function resolveTenantForRequest(req) {
+  const domain = resolveTenantDomain(req);
+  const tenant = tenantService.resolveTenant(domain);
+  return tenant || tenantService.getDefaultTenant();
+}
+
+app.use((req, res, next) => {
+  const tenant = resolveTenantForRequest(req);
+  req.tenant = tenant;
+  if (res && res.locals) {
+    res.locals.tenant = tenant;
+  }
+  next();
+});
 
 async function geocodeAddress(query) {
   const search = typeof query === 'string' ? query.trim() : '';
@@ -1067,7 +1107,12 @@ try {
 const usersCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (usersCount === 0) {
   const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('admin', hash, 'direcao');
+  db.prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)').run(
+    'admin',
+    'admin@example.com',
+    hash,
+    'direcao'
+  );
   if (!SKIP_SERVER_BOOT) {
     console.log('Admin default: admin / admin123 (muda em /admin/utilizadores).');
   }
@@ -1076,7 +1121,12 @@ if (usersCount === 0) {
 const masterUser = db.prepare('SELECT id FROM users WHERE username = ?').get('dev');
 if (!masterUser) {
   const devHash = bcrypt.hashSync('dev123', 10);
-  db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('dev', devHash, MASTER_ROLE);
+  db.prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)').run(
+    'dev',
+    'dev@example.com',
+    devHash,
+    MASTER_ROLE
+  );
   if (!SKIP_SERVER_BOOT) {
     console.log('Utilizador mestre: dev / dev123 (pode alterar em /admin/utilizadores).');
   }
@@ -1422,8 +1472,11 @@ function computeBranding(state, options = {}) {
   return computeBrandingTheme(state, options);
 }
 
-function getBranding({ propertyId = null, propertyName = '' } = {}) {
+function getBranding({ propertyId = null, propertyName = '', tenantTheme = null } = {}) {
   const baseTheme = { ...brandingStore.global };
+  if (tenantTheme && typeof tenantTheme === 'object') {
+    Object.assign(baseTheme, tenantTheme);
+  }
   if (propertyId && brandingStore.properties[propertyId]) {
     Object.assign(baseTheme, brandingStore.properties[propertyId]);
   }
@@ -1579,7 +1632,12 @@ function resolveBrandingForRequest(req, overrides = {}) {
     }
   }
 
-  const branding = getBranding({ propertyId, propertyName });
+  const tenantTheme =
+    overrides.tenantTheme !== undefined
+      ? overrides.tenantTheme
+      : req && req.tenant && req.tenant.branding;
+
+  const branding = getBranding({ propertyId, propertyName, tenantTheme });
   if (req) {
     req.brandingPropertyId = propertyId;
     req.brandingPropertyName = propertyName || null;
@@ -1636,6 +1694,12 @@ const otaDispatcher = createOtaDispatcher({
   channelIntegrations,
   overbookingGuard,
   logger: console
+});
+const channelContentService = createChannelContentService({
+  db,
+  dayjs,
+  channelIntegrations,
+  otaDispatcher
 });
 
 const automationActionDrivers = {
@@ -1982,21 +2046,47 @@ function dateRangeNights(ci, co) {
   return nights;
 }
 
+function resolveTenantIdFromRequest(req, fallback = 1) {
+  if (typeof req === 'number') {
+    const numeric = Number(req);
+    if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  }
+  if (req && typeof req === 'object') {
+    if (req && typeof req.tenantId === 'number') {
+      const numeric = Number(req.tenantId);
+      if (Number.isInteger(numeric) && numeric > 0) return numeric;
+    }
+    if (req.tenant && typeof req.tenant.id === 'number') {
+      const numeric = Number(req.tenant.id);
+      if (Number.isInteger(numeric) && numeric > 0) return numeric;
+    }
+  }
+  const numericFallback = Number(fallback);
+  if (Number.isInteger(numericFallback) && numericFallback > 0) {
+    return numericFallback;
+  }
+  return 1;
+}
+
 function createSession(userId, req, days = 7) {
-  const { token } = sessionService.issueSession(userId, req, { days });
+  const tenantId = resolveTenantIdFromRequest(req);
+  const { token } = sessionService.issueSession(userId, req, { days, tenantId });
   return token;
 }
 
 function getSession(token, req) {
-  return sessionService.getSession(token, req);
+  const tenantId = resolveTenantIdFromRequest(req);
+  return sessionService.getSession(token, req, { tenantId });
 }
 
-function destroySession(token) {
-  sessionService.destroySession(token);
+function destroySession(token, req) {
+  const tenantId = resolveTenantIdFromRequest(req);
+  sessionService.destroySession(token, { tenantId });
 }
 
-function revokeUserSessions(userId) {
-  sessionService.revokeUserSessions(userId);
+function revokeUserSessions(userId, req) {
+  const tenantId = resolveTenantIdFromRequest(req);
+  sessionService.revokeUserSessions(userId, { tenantId });
 }
 
 function requireLogin(req,res,next){
@@ -2648,14 +2738,21 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-sidebar__footer{margin-top:4px;padding-top:12px;border-top:1px solid rgba(251,191,36,.45);}
         .page-backoffice .bo-sidebar__footer-link{display:inline-flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:#b45309;text-decoration:none;}
         .page-backoffice .bo-sidebar__footer-link:hover{color:#9a3412;}
-        .page-backoffice .bo-nav{display:grid;gap:10px;}
+        .page-backoffice .bo-nav{display:grid;gap:16px;}
+        .page-backoffice .bo-nav__section{display:grid;gap:8px;padding:12px 0;border-top:1px solid rgba(251,191,36,.35);}
+        .page-backoffice .bo-nav__section:first-child{padding-top:0;border-top:none;}
+        .page-backoffice .bo-nav__section-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;}
+        .page-backoffice .bo-nav__section-items{display:grid;gap:8px;}
         .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:#c2410c;cursor:pointer;transition:all .2s ease;}
         .page-backoffice .bo-tab.bo-tab--compact{gap:8px;}
+        .page-backoffice .bo-tab--link{text-decoration:none;}
         .page-backoffice .bo-tab i{color:inherit;}
         .page-backoffice .bo-tab:hover{background:rgba(253,230,138,.65);color:#9a3412;transform:translateY(-1px);}
         .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
         .page-backoffice .bo-tab[disabled]{opacity:.45;cursor:not-allowed;}
         .page-backoffice .bo-main{display:grid;gap:24px;}
+        .page-backoffice .bo-page{max-width:1120px;margin:0 auto;padding:0 24px 48px;display:grid;gap:24px;}
+        .page-backoffice .bo-page--wide{max-width:1280px;}
         .page-backoffice .bo-stack{display:grid;gap:24px;}
         .page-backoffice .bo-housekeeping-task{border-radius:22px;border:1px solid rgba(249,115,22,.18);background:#fff;box-shadow:0 16px 32px rgba(249,115,22,.12);padding:18px;display:grid;gap:10px;}
         .page-backoffice .bo-housekeeping-task.is-highlighted{border-color:#fb7185;background:rgba(254,226,226,.6);box-shadow:0 20px 44px rgba(248,113,113,.18);}
@@ -3354,6 +3451,7 @@ const context = {
   paths,
   ExcelJS,
   brandingStore,
+  tenantService,
   normalizeRole,
   buildUserContext,
   userCan,
@@ -3396,6 +3494,7 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  channelContentService,
   channelSync,
   otaDispatcher,
   telemetry,
@@ -3473,6 +3572,7 @@ registerFrontoffice(app, context);
 registerOwnersPortal(app, context);
 registerInternalTelemetry(app, context);
 registerBackoffice(app, context);
+registerTenantAdminModule(app, context);
 
 // ===================== Debug Rotas + 404 =====================
 if (process.env.NODE_ENV !== 'production') {
@@ -3520,7 +3620,7 @@ if (!global.__SERVER_STARTED__ && process.env.SKIP_SERVER_START !== '1') {
 }
 
 if (process.env.SKIP_SERVER_START === '1') {
-  Object.assign(app, { db, requireScope, buildUserContext });
+  Object.assign(app, { db, requireScope, buildUserContext, tenantService });
 }
 
 module.exports = app;
