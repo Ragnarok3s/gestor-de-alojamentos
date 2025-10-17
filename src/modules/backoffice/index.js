@@ -1,4 +1,5 @@
 const registerUxApi = require('./ux-api');
+const registerContentCenter = require('./content-center');
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
@@ -181,17 +182,18 @@ module.exports = function registerBackoffice(app, context) {
   const selectUnitPropertyIdStmt = db.prepare('SELECT property_id FROM units WHERE id = ?');
   const selectRoleByKeyStmt = db.prepare('SELECT id, key, name FROM roles WHERE key = ?');
   const insertUserRoleAssignmentStmt = db.prepare(
-    'INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id) VALUES (?,?,?)'
+    'INSERT OR IGNORE INTO user_roles(user_id, role_id, property_id, tenant_id) VALUES (?,?,?,?)'
   );
-  const deleteUserRoleAssignmentStmt = db.prepare('DELETE FROM user_roles WHERE id = ?');
+  const deleteUserRoleAssignmentStmt = db.prepare('DELETE FROM user_roles WHERE id = ? AND tenant_id = ?');
   const deleteUserRolesByUserAndRoleKeyStmt = db.prepare(
-    'DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE key = ?)'
+    'DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ? AND role_id IN (SELECT id FROM roles WHERE key = ?)'
   );
   const selectUserRoleAssignmentStmt = db.prepare(
     `SELECT ur.id, ur.user_id, ur.property_id, r.key AS role_key, r.name AS role_name
        FROM user_roles ur
        JOIN roles r ON r.id = ur.role_id
-      WHERE ur.id = ?`
+      WHERE ur.id = ?
+        AND ur.tenant_id = ?`
   );
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
@@ -275,6 +277,7 @@ module.exports = function registerBackoffice(app, context) {
   });
 
   registerUxApi(app, context);
+  registerContentCenter(app, context);
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
 
@@ -2534,7 +2537,9 @@ module.exports = function registerBackoffice(app, context) {
     }
 
     const userRows = canManageUsers
-      ? db.prepare('SELECT id, username, role FROM users ORDER BY username').all()
+      ? db
+          .prepare('SELECT id, username, role FROM users WHERE tenant_id = ? ORDER BY username')
+          .all(req.tenant && req.tenant.id ? Number(req.tenant.id) : 1)
       : [];
 
     const calendarPreview = canViewCalendar
@@ -7336,8 +7341,35 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
 });
 
 // ===================== Utilizadores (admin) =====================
+const USER_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+
+function normalizeUserEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isValidUserEmail(email) {
+  if (!email) return false;
+  if (email.length > 160) return false;
+  return USER_EMAIL_REGEX.test(email);
+}
+
+function maskUserEmail(email) {
+  if (!email) return '';
+  const [local, domain] = String(email).split('@');
+  if (!domain) return email;
+  if (local.length <= 2) {
+    return `${local.charAt(0)}…@${domain}`;
+  }
+  return `${local.slice(0, 2)}…@${domain}`;
+}
+
 app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
-  const users = db.prepare('SELECT id, username, role FROM users ORDER BY username').all().map(u => ({
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const users = db
+    .prepare('SELECT id, username, email, role FROM users WHERE tenant_id = ? ORDER BY username')
+    .all(tenantId)
+    .map(u => ({
     ...u,
     role_key: normalizeRole(u.role)
   }));
@@ -7352,7 +7384,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
   if (isDevOperator) {
     roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
   }
-  const propertyChoices = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
+  const propertyChoices = db
+    .prepare('SELECT id, name FROM properties WHERE tenant_id = ? ORDER BY name')
+    .all(tenantId);
   const scopeRoleOptions = db
     .prepare('SELECT key, name FROM roles WHERE key != ? ORDER BY name COLLATE NOCASE')
     .all(MASTER_ROLE)
@@ -7373,11 +7407,13 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
          JOIN users u ON u.id = ur.user_id
          JOIN roles r ON r.id = ur.role_id
     LEFT JOIN properties p ON p.id = ur.property_id
+        WHERE u.tenant_id = ?
+          AND (p.id IS NULL OR p.tenant_id = u.tenant_id)
         ORDER BY u.username COLLATE NOCASE,
                  r.name COLLATE NOCASE,
                  COALESCE(p.name, '') COLLATE NOCASE`
     )
-    .all();
+    .all(tenantId);
   const query = req.query || {};
   let successMessage = null;
   if (query.updated === 'permissions') {
@@ -7484,6 +7520,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <h2 class="font-semibold mb-3">Criar novo utilizador</h2>
         <form method="post" action="/admin/users/create" class="grid gap-2">
           <input required name="username" class="input" placeholder="Utilizador" />
+          <input required type="email" name="email" class="input" placeholder="Email" />
           <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
           <select name="role" id="create-user-role" class="input">
@@ -7519,7 +7556,14 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <form method="post" action="/admin/users/password" class="grid gap-2">
           <label class="text-sm">Selecionar utilizador</label>
           <select required name="user_id" class="input">
-            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`).join('')}
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(
+                    ROLE_LABELS[u.role_key] || u.role_key
+                  )})</option>`
+              )
+              .join('')}
           </select>
           <input required type="password" name="new_password" class="input" placeholder="Nova password (min 8)" />
           <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
@@ -7529,11 +7573,38 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
       </section>
 
       <section class="card p-4">
+        <h2 class="font-semibold mb-3">Atualizar email</h2>
+        <form method="post" action="/admin/users/email" class="grid gap-2">
+          <label class="text-sm">Selecionar utilizador</label>
+          <select required name="user_id" class="input">
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(
+                    ROLE_LABELS[u.role_key] || u.role_key
+                  )})</option>`
+              )
+              .join('')}
+          </select>
+          <input required type="email" name="email" class="input" placeholder="novo email" />
+          <button class="btn btn-primary">Guardar email</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">O email é usado para 2FA e recuperação de password.</p>
+      </section>
+
+      <section class="card p-4">
         <h2 class="font-semibold mb-3">Atualizar privilégios</h2>
         <form method="post" action="/admin/users/role" class="grid gap-2">
           <label class="text-sm" for="user-role-user">Selecionar utilizador</label>
           <select id="user-role-user" required name="user_id" class="input">
-            ${users.map(u=>`<option value="${u.id}">${esc(u.username)} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`).join('')}
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(
+                    ROLE_LABELS[u.role_key] || u.role_key
+                  )})</option>`
+              )
+              .join('')}
           </select>
           <label class="text-sm" for="user-role-role">Novo perfil</label>
           <select id="user-role-role" name="role" class="input">
@@ -7554,7 +7625,12 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                   <select id="user-permissions-user" name="user_id" class="input" required>
                     <option value="">— Escolher —</option>
                     ${users
-                      .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                      .map(
+                        user =>
+                          `<option value="${user.id}">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ''} (${esc(
+                            ROLE_LABELS[user.role_key] || user.role_key
+                          )})</option>`
+                      )
                       .join('')}
                   </select>
                 </label>
@@ -7604,7 +7680,12 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
             <select name="user_id" class="input" required>
               <option value="">— Selecionar —</option>
               ${users
-                .map(user => `<option value="${user.id}">${esc(user.username)} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`)
+                .map(
+                  user =>
+                    `<option value="${user.id}">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ''} (${esc(
+                      ROLE_LABELS[user.role_key] || user.role_key
+                    )})</option>`
+                )
                 .join('')}
             </select>
           </label>
@@ -7683,6 +7764,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           <thead>
             <tr>
               <th class="text-left px-4 py-2">Utilizador</th>
+              <th class="text-left px-4 py-2">Email</th>
               <th class="text-left px-4 py-2">Perfil</th>
               <th class="text-left px-4 py-2">Ações</th>
             </tr>
@@ -7691,6 +7773,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
             ${users.length ? users.map(u => `
               <tr>
                 <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(u.username)}</span></td>
+                <td class="px-4 py-2" data-label="Email">${u.email ? `<span class="table-cell-value">${esc(u.email)}</span>` : '<span class="table-cell-muted">—</span>'}</td>
                 <td class="px-4 py-2" data-label="Perfil"><span class="table-cell-value">${esc(ROLE_LABELS[u.role_key] || u.role_key)}</span></td>
                 <td class="px-4 py-2" data-label="Ações">
                   ${isDevOperator
@@ -7698,7 +7781,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                     : '<span class="text-xs text-slate-400">—</span>'}
                 </td>
               </tr>
-            `).join('') : '<tr><td class="px-4 py-3 text-slate-500" colspan="3">Sem utilizadores registados.</td></tr>'}
+            `).join('') : '<tr><td class="px-4 py-3 text-slate-500" colspan="4">Sem utilizadores registados.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -7916,10 +7999,25 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
 
 app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const { username, password, confirm, role } = req.body;
-  if (!username || !password || password.length < 8) return res.status(400).send('Password inválida (min 8).');
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+  if (!normalizedUsername) return res.status(400).send('Utilizador inválido.');
+  if (!password || password.length < 8) return res.status(400).send('Password inválida (min 8).');
   if (password !== confirm) return res.status(400).send('Passwords não coincidem.');
-  const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
+  const email = normalizeUserEmail(req.body.email);
+  if (!isValidUserEmail(email)) {
+    return res.status(400).send('Indique um email válido (máx. 160 caracteres).');
+  }
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const exists = db
+    .prepare('SELECT 1 FROM users WHERE username = ? AND tenant_id = ?')
+    .get(normalizedUsername, tenantId);
   if (exists) return res.status(400).send('Utilizador já existe.');
+  const emailTaken = db
+    .prepare('SELECT 1 FROM users WHERE tenant_id = ? AND email = ?')
+    .get(tenantId, email);
+  if (emailTaken) {
+    return res.status(400).send('Já existe um utilizador com esse email.');
+  }
   const hash = bcrypt.hashSync(password, 10);
   const roleKey = normalizeRole(role);
   let ownerPropertyIds = [];
@@ -7928,8 +8026,8 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
     const rawPropertyIds = req.body.property_ids;
     const selectable = new Set(
       db
-        .prepare('SELECT id FROM properties ORDER BY id')
-        .all()
+        .prepare('SELECT id FROM properties WHERE tenant_id = ? ORDER BY id')
+        .all(tenantId)
         .map(row => Number(row.id))
     );
     const normalizedSelection = Array.isArray(rawPropertyIds)
@@ -7948,17 +8046,19 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
       return res.status(400).send('Selecione pelo menos uma propriedade para o owner.');
     }
   }
-  const insertUser = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)');
-  const assignOwnerProperty = db.prepare('INSERT INTO property_owners(property_id, user_id) VALUES (?, ?)');
+  const insertUser = db.prepare('INSERT INTO users(username,email,password_hash,role,tenant_id) VALUES (?,?,?,?,?)');
+  const assignOwnerProperty = db.prepare(
+    'INSERT INTO property_owners(property_id, user_id, tenant_id) VALUES (?, ?, ?)'
+  );
   let newUserId = null;
   db.transaction(() => {
-    const result = insertUser.run(username, hash, roleKey);
+    const result = insertUser.run(normalizedUsername, email, hash, roleKey, tenantId);
     newUserId = Number(result.lastInsertRowid);
     if (roleKey === 'owner' && ownerPropertyIds.length) {
       ownerPropertyIds.forEach(propertyId => {
-        assignOwnerProperty.run(propertyId, newUserId);
+        assignOwnerProperty.run(propertyId, newUserId, tenantId);
         if (ownerRoleRow && ownerRoleRow.id) {
-          insertUserRoleAssignmentStmt.run(newUserId, ownerRoleRow.id, propertyId);
+          insertUserRoleAssignmentStmt.run(newUserId, ownerRoleRow.id, propertyId, tenantId);
         }
       });
     }
@@ -7967,9 +8067,39 @@ app.post('/admin/users/create', requireAdmin, (req,res)=>{
     return res.status(500).send('Não foi possível criar o utilizador.');
   }
   logActivity(req.user.id, 'user:create', 'user', newUserId, {
-    username,
+    username: normalizedUsername,
+    email,
     role: roleKey,
     properties: ownerPropertyIds
+  });
+  res.redirect('/admin/utilizadores');
+});
+
+app.post('/admin/users/email', requireAdmin, (req, res) => {
+  const { user_id, email } = req.body;
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const userId = Number.parseInt(user_id, 10);
+  if (!Number.isInteger(userId)) {
+    return res.status(400).send('Utilizador inválido.');
+  }
+  const normalizedEmail = normalizeUserEmail(email);
+  if (!isValidUserEmail(normalizedEmail)) {
+    return res.status(400).send('Indique um email válido (máx. 160 caracteres).');
+  }
+  const target = db.prepare('SELECT id, username, email FROM users WHERE id = ? AND tenant_id = ?').get(userId, tenantId);
+  if (!target) {
+    return res.status(404).send('Utilizador não encontrado');
+  }
+  const conflict = db
+    .prepare('SELECT 1 FROM users WHERE tenant_id = ? AND email = ? AND id != ?')
+    .get(tenantId, normalizedEmail, userId);
+  if (conflict) {
+    return res.status(400).send('Já existe um utilizador com esse email.');
+  }
+  db.prepare('UPDATE users SET email = ? WHERE id = ? AND tenant_id = ?').run(normalizedEmail, userId, tenantId);
+  logActivity(req.user.id, 'user:email_update', 'user', userId, {
+    previous: target.email || null,
+    email: normalizedEmail
   });
   res.redirect('/admin/utilizadores');
 });
@@ -7978,11 +8108,12 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
   const { user_id, new_password, confirm } = req.body;
   if (!new_password || new_password.length < 8) return res.status(400).send('Password inválida (min 8).');
   if (new_password !== confirm) return res.status(400).send('Passwords não coincidem.');
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const user = db.prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?').get(user_id, tenantId);
   if (!user) return res.status(404).send('Utilizador não encontrado');
   const hash = bcrypt.hashSync(new_password, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user_id);
-  revokeUserSessions(user_id);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ? AND tenant_id = ?').run(hash, user_id, tenantId);
+  revokeUserSessions(user_id, req);
   logActivity(req.user.id, 'user:password_reset', 'user', Number(user_id), {});
   res.redirect('/admin/utilizadores');
 });
@@ -7990,7 +8121,8 @@ app.post('/admin/users/password', requireAdmin, (req,res)=>{
 app.post('/admin/users/role', requireAdmin, (req,res)=>{
   const { user_id, role } = req.body;
   if (!user_id || !role) return res.status(400).send('Dados inválidos');
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(user_id);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ? AND tenant_id = ?').get(user_id, tenantId);
   if (!target) return res.status(404).send('Utilizador não encontrado');
   const newRole = normalizeRole(role);
   const currentRole = normalizeRole(target.role);
@@ -8001,12 +8133,12 @@ app.post('/admin/users/role', requireAdmin, (req,res)=>{
   if (newRole === currentRole) {
     return res.redirect('/admin/utilizadores');
   }
-  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, target.id);
+  db.prepare('UPDATE users SET role = ? WHERE id = ? AND tenant_id = ?').run(newRole, target.id, tenantId);
   if (currentRole === 'owner' && newRole !== 'owner') {
-    db.prepare('DELETE FROM property_owners WHERE user_id = ?').run(target.id);
-    deleteUserRolesByUserAndRoleKeyStmt.run(target.id, 'owner');
+    db.prepare('DELETE FROM property_owners WHERE user_id = ? AND tenant_id = ?').run(target.id, tenantId);
+    deleteUserRolesByUserAndRoleKeyStmt.run(target.id, tenantId, 'owner');
   }
-  revokeUserSessions(target.id);
+  revokeUserSessions(target.id, req);
   logChange(req.user.id, 'user', Number(target.id), 'role_change', { role: currentRole }, { role: newRole });
   logActivity(req.user.id, 'user:role_change', 'user', Number(target.id), { from: currentRole, to: newRole });
   res.redirect('/admin/utilizadores');
@@ -8019,7 +8151,8 @@ app.post('/admin/user-roles', requireAdmin, (req, res) => {
   if (!Number.isInteger(userId) || !normalizedRoleKey) {
     return res.redirect('/admin/utilizadores?error=scopes_invalid');
   }
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ? AND tenant_id = ?').get(userId, tenantId);
   if (!target) {
     return res.redirect('/admin/utilizadores?error=scopes_invalid');
   }
@@ -8041,17 +8174,19 @@ app.post('/admin/user-roles', requireAdmin, (req, res) => {
     if (!Number.isInteger(parsedProperty)) {
       return res.redirect('/admin/utilizadores?error=scopes_invalid');
     }
-    const propertyExists = db.prepare('SELECT id FROM properties WHERE id = ?').get(parsedProperty);
+    const propertyExists = db
+      .prepare('SELECT id FROM properties WHERE id = ? AND tenant_id = ?')
+      .get(parsedProperty, tenantId);
     if (!propertyExists) {
       return res.redirect('/admin/utilizadores?error=scopes_invalid');
     }
     resolvedPropertyId = parsedProperty;
   }
-  const result = insertUserRoleAssignmentStmt.run(userId, roleRow.id, resolvedPropertyId);
+  const result = insertUserRoleAssignmentStmt.run(userId, roleRow.id, resolvedPropertyId, tenantId);
   if (!result || result.changes === 0) {
     return res.redirect('/admin/utilizadores?error=scopes_exists');
   }
-  revokeUserSessions(userId);
+  revokeUserSessions(userId, req);
   logActivity(req.user.id, 'user:scope_grant', 'user_role', Number(result.lastInsertRowid), {
     user_id: userId,
     role_key: roleRow.key,
@@ -8065,18 +8200,19 @@ app.post('/admin/user-roles/:id/delete', requireAdmin, (req, res) => {
   if (!Number.isInteger(assignmentId)) {
     return res.redirect('/admin/utilizadores?error=scopes_not_found');
   }
-  const assignment = selectUserRoleAssignmentStmt.get(assignmentId);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const assignment = selectUserRoleAssignmentStmt.get(assignmentId, tenantId);
   if (!assignment) {
     return res.redirect('/admin/utilizadores?error=scopes_not_found');
   }
-  const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(assignment.user_id);
+  const target = db.prepare('SELECT id, role FROM users WHERE id = ? AND tenant_id = ?').get(assignment.user_id, tenantId);
   const actorIsDev = req.user && req.user.role === MASTER_ROLE;
   if (target && normalizeRole(target.role) === MASTER_ROLE && !actorIsDev) {
     return res.redirect('/admin/utilizadores?error=scopes_forbidden');
   }
-  const outcome = deleteUserRoleAssignmentStmt.run(assignmentId);
+  const outcome = deleteUserRoleAssignmentStmt.run(assignmentId, tenantId);
   if (outcome && outcome.changes > 0) {
-    revokeUserSessions(assignment.user_id);
+    revokeUserSessions(assignment.user_id, req);
     logActivity(req.user.id, 'user:scope_revoke', 'user_role', assignmentId, {
       user_id: assignment.user_id,
       role_key: assignment.role_key,
@@ -8092,7 +8228,8 @@ app.post('/admin/users/permissions', requireDev, (req, res) => {
   if (!Number.isInteger(userId) || userId <= 0) {
     return res.redirect('/admin/utilizadores?error=permissions_invalid');
   }
-  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const target = db.prepare('SELECT id, username, role FROM users WHERE id = ? AND tenant_id = ?').get(userId, tenantId);
   if (!target) {
     return res.redirect('/admin/utilizadores?error=permissions_invalid');
   }
@@ -8148,7 +8285,7 @@ app.post('/admin/users/permissions', requireDev, (req, res) => {
       });
     });
     apply();
-    revokeUserSessions(target.id);
+    revokeUserSessions(target.id, req);
     logChange(
       req.user.id,
       'user',
@@ -8173,12 +8310,15 @@ app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{
   if (!user_id || !confirm_password) {
     return res.status(400).json({ error: 'É necessário indicar o utilizador e confirmar a password.' });
   }
-  const self = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const self = db.prepare('SELECT password_hash FROM users WHERE id = ? AND tenant_id = ?').get(req.user.id, tenantId);
   if (!self || !bcrypt.compareSync(confirm_password, self.password_hash)) {
     logActivity(req.user.id, 'user:password_reveal_denied', 'user', Number(user_id), {});
     return res.status(401).json({ error: 'Password inválida.' });
   }
-  const target = db.prepare('SELECT id, username, password_hash FROM users WHERE id = ?').get(user_id);
+  const target = db
+    .prepare('SELECT id, username, password_hash FROM users WHERE id = ? AND tenant_id = ?')
+    .get(user_id, tenantId);
   if (!target) {
     return res.status(404).json({ error: 'Utilizador não encontrado.' });
   }

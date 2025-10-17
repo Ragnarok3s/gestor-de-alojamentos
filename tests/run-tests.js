@@ -19,6 +19,8 @@ const { createChannelIntegrationService } = require('../src/services/channel-int
 const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
 const { createI18nService } = require('../src/services/i18n');
 const { createMessageTemplateService } = require('../src/services/templates');
+const { createTenantService } = require('../src/services/tenants');
+const { createChannelContentService } = require('../src/services/channel-content');
 
 const simpleSlugify = (value) =>
   String(value || '')
@@ -118,13 +120,16 @@ function createMockResponse(targetCookies) {
 
 function testSessionService() {
   const db = createDatabase(':memory:');
-  const userId = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('test', 'hash', 'gestao')
+  const userId = db
+    .prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)')
+    .run('test', 'test@example.com', 'hash', 'gestao')
     .lastInsertRowid;
 
   const sessionService = createSessionService({ db, dayjs });
   const req = createMockRequest({ ip: '192.168.0.1', userAgent: 'UnitTester/1.0' });
+  const tenantId = 1;
 
-  const { token } = sessionService.issueSession(userId, req);
+  const { token } = sessionService.issueSession(userId, req, { tenantId });
   assert.ok(token, 'deve emitir token');
 
   const stored = db.prepare('SELECT token, token_hash, user_id, ip, user_agent FROM sessions').get();
@@ -135,18 +140,22 @@ function testSessionService() {
   assert.equal(stored.ip, req.ip);
   assert.equal(stored.user_agent, req.get('user-agent'));
 
-  const session = sessionService.getSession(token, req);
+  const session = sessionService.getSession(token, req, { tenantId });
   assert.ok(session, 'getSession deve recuperar sessão válida');
   assert.equal(session.user_id, userId);
 
   const mismatched = createMockRequest({ ip: '10.0.0.5', userAgent: 'Other/1.0' });
-  assert.equal(sessionService.getSession(token, mismatched), null, 'sessão deve ser rejeitada com IP/UA diferentes');
+  assert.equal(
+    sessionService.getSession(token, mismatched, { tenantId }),
+    null,
+    'sessão deve ser rejeitada com IP/UA diferentes'
+  );
 
-  sessionService.destroySession(token);
+  sessionService.destroySession(token, { tenantId });
   const count = db.prepare('SELECT COUNT(*) as total FROM sessions').get();
   assert.equal(count.total, 0, 'destroySession deve eliminar sessão');
 
-  sessionService.revokeUserSessions(userId);
+  sessionService.revokeUserSessions(userId, { tenantId });
 }
 
 function testCsrfProtection() {
@@ -186,7 +195,9 @@ function testRequireScopeMiddleware() {
   db
     .prepare('INSERT INTO units(property_id, name, capacity, base_price_cents) VALUES (?,?,?,?)')
     .run(propertyId, 'Casa Pátio', 4, 18000);
-  const userId = db.prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)').run('maria', 'hash', 'rececao')
+  const userId = db
+    .prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)')
+    .run('maria', 'maria@example.com', 'hash', 'rececao')
     .lastInsertRowid;
 
   const req = {
@@ -636,8 +647,8 @@ function testI18nService() {
 function testMessageTemplateService() {
   const db = createDatabase(':memory:');
   const userId = db
-    .prepare('INSERT INTO users(username,password_hash,role) VALUES (?,?,?)')
-    .run('editor', 'hash', 'gestao').lastInsertRowid;
+    .prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)')
+    .run('editor', 'editor@example.com', 'hash', 'gestao').lastInsertRowid;
 
   const i18n = createI18nService();
   const service = createMessageTemplateService({ db, dayjs, i18n });
@@ -814,6 +825,139 @@ function testRatePlanRestrictions() {
   assert.ok(departureError.message.includes('Saídas bloqueadas'), 'motivo de saída deve aparecer na mensagem');
 }
 
+function testTenantService() {
+  const db = createDatabase(':memory:');
+  const tenantService = createTenantService({ db });
+
+  const defaultTenant = tenantService.getDefaultTenant();
+  assert.ok(defaultTenant && defaultTenant.id, 'tenant padrão deve existir');
+
+  const tenantA = tenantService.createTenant({
+    name: 'Tenant Alpha',
+    domain: 'tenant-a.test',
+    branding: { brandName: 'Alpha Stays', primaryColor: '#336699' }
+  });
+  const tenantB = tenantService.createTenant({ name: 'Tenant Beta', domain: 'tenant-b.test' });
+
+  const resolvedA = tenantService.resolveTenant('tenant-a.test');
+  assert.equal(resolvedA.id, tenantA.id, 'resolver por domínio deve devolver tenant correto');
+
+  const resolvedUnknown = tenantService.resolveTenant('inexistente.test');
+  assert.equal(resolvedUnknown.id, defaultTenant.id, 'domínios desconhecidos regressam ao tenant padrão');
+
+  const updatedA = tenantService.updateTenant(tenantA.id, {
+    branding: { brandName: 'Alpha Updated', highlightColor: '#ff6600' }
+  });
+  assert.equal(updatedA.branding.brandName, 'Alpha Updated', 'branding deve poder ser atualizado');
+
+  const userId = db
+    .prepare('INSERT INTO users(username,email,password_hash,role,tenant_id) VALUES (?,?,?,?,?)')
+    .run('alpha-user', 'alpha@example.com', 'hash', 'gestao', tenantA.id).lastInsertRowid;
+
+  const sessionService = createSessionService({ db, dayjs });
+  const req = createMockRequest({ ip: '127.0.0.5', userAgent: 'TenantTest/1.0' });
+  const { token } = sessionService.issueSession(userId, req, { tenantId: tenantA.id });
+
+  const validSession = sessionService.getSession(token, req, { tenantId: tenantA.id });
+  assert.ok(validSession, 'sessão deve ser recuperada para tenant correto');
+  assert.equal(validSession.tenant_id, tenantA.id, 'sessão deve manter tenant associado');
+
+  const crossSession = sessionService.getSession(token, req, { tenantId: tenantB.id });
+  assert.equal(crossSession, null, 'acesso cruzado a sessões deve ser bloqueado');
+
+  const tenants = tenantService.listTenants();
+  assert.ok(tenants.some(t => t.id === tenantA.id) && tenants.some(t => t.id === tenantB.id), 'listagem deve incluir novos tenants');
+
+  const fetched = tenantService.getTenantById(tenantA.id);
+  assert.equal(fetched.branding.brandName, 'Alpha Updated', 'tenant deve refletir branding actualizado');
+
+  assert.throws(() => tenantService.deleteTenant(defaultTenant.id), /tenant padrão/i, 'não deve remover tenant padrão');
+}
+
+function testChannelContentService() {
+  const db = createDatabase(':memory:');
+  const tenantId = 1;
+  const userId = db
+    .prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)')
+    .run('ana', 'ana@example.com', 'hash', 'gestao')
+    .lastInsertRowid;
+  const propertyId = db
+    .prepare('INSERT INTO properties(name, tenant_id) VALUES (?, ?)')
+    .run('Casa Atlântica', tenantId)
+    .lastInsertRowid;
+  const unitId = db
+    .prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, tenant_id) VALUES (?,?,?,?,?)')
+    .run(propertyId, 'Suite Atlântica', 2, 18000, tenantId)
+    .lastInsertRowid;
+
+  const service = createChannelContentService({ db, dayjs });
+
+  const draft = service.saveDraft(
+    unitId,
+    {
+      title: 'Suite Atlântica',
+      description: 'Vista mar deslumbrante com varanda privada.',
+      highlights: ['Vista mar'],
+      amenities: ['Wi-Fi'],
+      photos: [
+        { url: 'https://cdn.example.com/atlantic.jpg', caption: 'Varanda com vista', isPrimary: 1 }
+      ]
+    },
+    { tenantId, userId }
+  );
+
+  assert.equal(draft.version, 1);
+  assert.equal(draft.status, 'draft');
+  assert.equal(draft.content.title, 'Suite Atlântica');
+
+  const publish = service.publishUnitContent(unitId, {
+    tenantId,
+    userId,
+    channels: ['airbnb', 'booking']
+  });
+
+  assert.equal(publish.status, 'published');
+  assert.deepEqual(publish.channels.sort(), ['airbnb', 'booking'].sort());
+
+  const queued = db.prepare('SELECT * FROM channel_sync_queue WHERE unit_id = ?').all(unitId);
+  assert.equal(queued.length, 1, 'publish deve enfileirar atualização de conteúdo');
+  assert.equal(queued[0].type, 'CONTENT_UPDATE');
+  const payload = JSON.parse(queued[0].payload || '{}');
+  assert.ok(Array.isArray(payload.updates) && payload.updates.length === 1, 'payload deve conter uma atualização');
+  const updateEntry = payload.updates[0] || {};
+  assert.equal(updateEntry.type, 'CONTENT_UPDATE');
+  const publishedChannels = Array.isArray(updateEntry.payload && updateEntry.payload.channels)
+    ? updateEntry.payload.channels
+    : [];
+  assert.deepEqual(publishedChannels.sort(), ['airbnb', 'booking'].sort());
+
+  service.saveDraft(
+    unitId,
+    {
+      title: 'Suite Atlântica Premium',
+      description: 'Renovada com varanda panorâmica e piscina exterior.',
+      highlights: ['Vista mar', 'Piscina'],
+      photos: [
+        { url: 'https://cdn.example.com/atlantic-premium.jpg', caption: 'Piscina infinita' }
+      ]
+    },
+    { tenantId, userId }
+  );
+
+  const rollback = service.rollbackUnitContent(unitId, 1, { tenantId, userId });
+  assert.equal(rollback.restoredFrom, 1);
+  assert.equal(rollback.content.title, 'Suite Atlântica');
+
+  const latest = service.getUnitContent(unitId, { tenantId });
+  assert.equal(latest.version, rollback.version);
+  assert.equal(latest.content.title, 'Suite Atlântica');
+
+  const history = service.listVersions(unitId, { tenantId });
+  assert.ok(history.length >= 2, 'histórico deve incluir versões anteriores');
+  assert.ok(history.some(entry => entry.isCurrent && entry.version === latest.version));
+  assert.ok(history.some(entry => entry.version === 1));
+}
+
 async function main() {
   console.log('> testServerBootstrap');
   testServerBootstrap();
@@ -821,6 +965,12 @@ async function main() {
   console.log('> testSessionService');
   testSessionService();
   console.log('✓ testSessionService');
+  console.log('> testTenantService');
+  testTenantService();
+  console.log('✓ testTenantService');
+  console.log('> testChannelContentService');
+  testChannelContentService();
+  console.log('✓ testChannelContentService');
   console.log('> testCsrfProtection');
   testCsrfProtection();
   console.log('✓ testCsrfProtection');
