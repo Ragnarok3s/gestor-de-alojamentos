@@ -253,7 +253,7 @@ function createTwoFactorService({ db, dayjs }) {
     const tokenHash = hashToken(token);
     const row = selectChallengeStmt.get(tokenHash);
     if (!row) return null;
-    return { ...row };
+    return { ...row, metadata: parseChallengeMetadata(row.metadata_json || null), token };
   }
 
   function verifyChallenge(token, code, { window = 1 } = {}) {
@@ -279,22 +279,57 @@ function createTwoFactorService({ db, dayjs }) {
       deleteChallengeStmt.run(tokenHash);
       return { ok: false, reason: 'too_many_attempts' };
     }
+    const metadata = parseChallengeMetadata(row.metadata_json);
+    const nowIso = dayjs().toISOString();
+
+    if (metadata.expected_code_hash) {
+      const normalized = String(code || '').trim().replace(/\s+/g, '');
+      if (!normalized) {
+        const meta = mergeChallengeMetadata(row.metadata_json, {
+          last_failure: nowIso,
+          reason: 'invalid_token'
+        });
+        touchChallengeStmt.run(meta, tokenHash);
+        return { ok: false, reason: 'invalid_token', attempts: attempts + 1 };
+      }
+      const hashed = hashRecoveryCode(normalized);
+      if (!timingSafeEqual(metadata.expected_code_hash, hashed)) {
+        const meta = mergeChallengeMetadata(row.metadata_json, {
+          last_failure: nowIso,
+          reason: 'invalid_token'
+        });
+        touchChallengeStmt.run(meta, tokenHash);
+        return { ok: false, reason: 'invalid_token', attempts: attempts + 1 };
+      }
+      const successMethod = metadata.method || 'email_code';
+      const meta = mergeChallengeMetadata(row.metadata_json, {
+        last_success: nowIso,
+        method: successMethod
+      });
+      const mergedMeta = parseChallengeMetadata(meta);
+      consumeChallengeStmt.run(meta, tokenHash);
+      deleteChallengeStmt.run(tokenHash);
+      return { ok: true, userId: row.user_id, method: successMethod, metadata: mergedMeta };
+    }
+
     const verification = verifyUserToken(row.user_id, code, { window });
     if (!verification.ok) {
       const meta = mergeChallengeMetadata(row.metadata_json, {
-        last_failure: dayjs().toISOString(),
+        last_failure: nowIso,
         reason: verification.reason || 'invalid'
       });
       touchChallengeStmt.run(meta, tokenHash);
       return { ok: false, reason: verification.reason || 'invalid_token', attempts: attempts + 1 };
     }
+    const successMethod = verification.method || 'totp';
     const meta = mergeChallengeMetadata(row.metadata_json, {
-      last_success: dayjs().toISOString(),
-      method: verification.method
+      last_success: nowIso,
+      method: successMethod
     });
+    const mergedMeta = parseChallengeMetadata(meta);
     consumeChallengeStmt.run(meta, tokenHash);
     deleteChallengeStmt.run(tokenHash);
-    return { ok: true, userId: row.user_id, method: verification.method };
+    return { ok: true, userId: row.user_id, method: successMethod, metadata: mergedMeta };
   }
 
   function mergeChallengeMetadata(json, updates = {}) {
@@ -309,6 +344,17 @@ function createTwoFactorService({ db, dayjs }) {
     return JSON.stringify({ ...base, ...updates });
   }
 
+  function parseChallengeMetadata(json) {
+    if (!json) return {};
+    try {
+      const parsed = JSON.parse(json);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return parsed;
+    } catch (err) {
+      return {};
+    }
+  }
+
   function regenerateRecoveryCodes(userId, { count = 8 } = {}) {
     if (!userId) return { ok: false, reason: 'missing_user' };
     const config = getConfig(userId);
@@ -317,6 +363,12 @@ function createTwoFactorService({ db, dayjs }) {
     const hashed = codes.map(code => ({ hash: hashRecoveryCode(code), used_at: null }));
     updateRecoveryStmt.run(serializeRecovery(hashed), userId);
     return { ok: true, codes };
+  }
+
+  function revokeChallenge(token) {
+    if (!token) return;
+    const tokenHash = hashToken(token);
+    deleteChallengeStmt.run(tokenHash);
   }
 
   return {
@@ -333,6 +385,7 @@ function createTwoFactorService({ db, dayjs }) {
     describeChallenge,
     verifyChallenge,
     regenerateRecoveryCodes,
+    revokeChallenge,
     pruneChallenges
   };
 }
