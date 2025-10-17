@@ -130,6 +130,56 @@ CREATE TABLE IF NOT EXISTS unit_blocks (
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_unit ON unit_blocks(unit_id);
 CREATE INDEX IF NOT EXISTS idx_unit_blocks_dates ON unit_blocks(unit_id, start_date, end_date);
 
+CREATE TABLE IF NOT EXISTS unit_content (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
+  published_at TEXT,
+  published_version INTEGER,
+  last_published_channels TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(unit_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_content_unit ON unit_content(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_content_tenant ON unit_content(tenant_id);
+
+CREATE TABLE IF NOT EXISTS unit_content_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_content_id INTEGER NOT NULL REFERENCES unit_content(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  content_json TEXT NOT NULL CHECK (json_valid(content_json)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  restored_from_version INTEGER,
+  note TEXT,
+  UNIQUE(unit_content_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_content_versions_lookup ON unit_content_versions(unit_content_id, version);
+
+CREATE TABLE IF NOT EXISTS unit_policies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  policy_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(unit_id, tenant_id, policy_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_policies_unit ON unit_policies(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_policies_tenant ON unit_policies(tenant_id);
+
 CREATE TABLE IF NOT EXISTS rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,

@@ -51,6 +51,7 @@ const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createRateRuleService } = require('./src/services/rate-rules');
 const { createRatePlanService } = require('./src/services/rate-plans');
 const { createChannelIntegrationService } = require('./src/services/channel-integrations');
+const { createChannelContentService } = require('./src/services/channel-content');
 const { createChannelSync } = require('./src/services/channel-sync');
 const { createOtaDispatcher } = require('./src/services/ota-sync/dispatcher');
 const { createOverbookingGuard } = require('./src/services/overbooking-guard');
@@ -1694,6 +1695,12 @@ const otaDispatcher = createOtaDispatcher({
   channelIntegrations,
   overbookingGuard,
   logger: console
+});
+const channelContentService = createChannelContentService({
+  db,
+  dayjs,
+  channelIntegrations,
+  otaDispatcher
 });
 
 const automationActionDrivers = {
@@ -3482,6 +3489,7 @@ const context = {
   isSafeRedirectTarget,
   resolveBrandingForRequest,
   channelIntegrations,
+  channelContentService,
   channelSync,
   otaDispatcher,
   telemetry,

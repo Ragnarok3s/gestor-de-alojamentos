@@ -1,4 +1,5 @@
 const registerUxApi = require('./ux-api');
+const registerContentCenter = require('./content-center');
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
@@ -284,6 +285,7 @@ module.exports = function registerBackoffice(app, context) {
   });
 
   registerUxApi(app, context);
+  registerContentCenter(app, context);
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
 
@@ -3273,6 +3275,7 @@ module.exports = function registerBackoffice(app, context) {
       { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
       { id: 'housekeeping', label: 'Limpezas', icon: 'broom', iconSvg: broomIconSvg, allowed: canSeeHousekeeping },
       { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
+      { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' },
       { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
       { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
       { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
@@ -3287,12 +3290,21 @@ module.exports = function registerBackoffice(app, context) {
       .map(item => {
         const classes = ['bo-tab'];
         if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-        if (item.id === defaultPane) classes.push('is-active');
-        const disabledAttr = item.allowed ? '' : ' disabled data-disabled="true" title="Sem permissões"';
+        if (!item.href && item.id === defaultPane) classes.push('is-active');
+        if (item.href) classes.push('bo-tab--link');
         const iconMarkup = item.iconSvg
           ? item.iconSvg
           : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
-        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}"${disabledAttr}>${iconMarkup}<span>${esc(item.label)}</span></button>`;
+
+        if (!item.allowed) {
+          return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
+        }
+
+        if (item.href) {
+          return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
+        }
+
+        return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
       })
       .join('');
 

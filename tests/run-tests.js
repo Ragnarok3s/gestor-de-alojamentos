@@ -20,6 +20,10 @@ const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
 const { createI18nService } = require('../src/services/i18n');
 const { createMessageTemplateService } = require('../src/services/templates');
 const { createTenantService } = require('../src/services/tenants');
+<<<<<<< HEAD
+=======
+const { createChannelContentService } = require('../src/services/channel-content');
+>>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
 
 const simpleSlugify = (value) =>
   String(value || '')
@@ -873,6 +877,93 @@ function testTenantService() {
   assert.throws(() => tenantService.deleteTenant(defaultTenant.id), /tenant padrão/i, 'não deve remover tenant padrão');
 }
 
+<<<<<<< HEAD
+=======
+function testChannelContentService() {
+  const db = createDatabase(':memory:');
+  const tenantId = 1;
+  const userId = db
+    .prepare('INSERT INTO users(username,email,password_hash,role) VALUES (?,?,?,?)')
+    .run('ana', 'ana@example.com', 'hash', 'gestao')
+    .lastInsertRowid;
+  const propertyId = db
+    .prepare('INSERT INTO properties(name, tenant_id) VALUES (?, ?)')
+    .run('Casa Atlântica', tenantId)
+    .lastInsertRowid;
+  const unitId = db
+    .prepare('INSERT INTO units(property_id, name, capacity, base_price_cents, tenant_id) VALUES (?,?,?,?,?)')
+    .run(propertyId, 'Suite Atlântica', 2, 18000, tenantId)
+    .lastInsertRowid;
+
+  const service = createChannelContentService({ db, dayjs });
+
+  const draft = service.saveDraft(
+    unitId,
+    {
+      title: 'Suite Atlântica',
+      description: 'Vista mar deslumbrante com varanda privada.',
+      highlights: ['Vista mar'],
+      amenities: ['Wi-Fi'],
+      photos: [
+        { url: 'https://cdn.example.com/atlantic.jpg', caption: 'Varanda com vista', isPrimary: 1 }
+      ]
+    },
+    { tenantId, userId }
+  );
+
+  assert.equal(draft.version, 1);
+  assert.equal(draft.status, 'draft');
+  assert.equal(draft.content.title, 'Suite Atlântica');
+
+  const publish = service.publishUnitContent(unitId, {
+    tenantId,
+    userId,
+    channels: ['airbnb', 'booking']
+  });
+
+  assert.equal(publish.status, 'published');
+  assert.deepEqual(publish.channels.sort(), ['airbnb', 'booking'].sort());
+
+  const queued = db.prepare('SELECT * FROM channel_sync_queue WHERE unit_id = ?').all(unitId);
+  assert.equal(queued.length, 1, 'publish deve enfileirar atualização de conteúdo');
+  assert.equal(queued[0].type, 'CONTENT_UPDATE');
+  const payload = JSON.parse(queued[0].payload || '{}');
+  assert.ok(Array.isArray(payload.updates) && payload.updates.length === 1, 'payload deve conter uma atualização');
+  const updateEntry = payload.updates[0] || {};
+  assert.equal(updateEntry.type, 'CONTENT_UPDATE');
+  const publishedChannels = Array.isArray(updateEntry.payload && updateEntry.payload.channels)
+    ? updateEntry.payload.channels
+    : [];
+  assert.deepEqual(publishedChannels.sort(), ['airbnb', 'booking'].sort());
+
+  service.saveDraft(
+    unitId,
+    {
+      title: 'Suite Atlântica Premium',
+      description: 'Renovada com varanda panorâmica e piscina exterior.',
+      highlights: ['Vista mar', 'Piscina'],
+      photos: [
+        { url: 'https://cdn.example.com/atlantic-premium.jpg', caption: 'Piscina infinita' }
+      ]
+    },
+    { tenantId, userId }
+  );
+
+  const rollback = service.rollbackUnitContent(unitId, 1, { tenantId, userId });
+  assert.equal(rollback.restoredFrom, 1);
+  assert.equal(rollback.content.title, 'Suite Atlântica');
+
+  const latest = service.getUnitContent(unitId, { tenantId });
+  assert.equal(latest.version, rollback.version);
+  assert.equal(latest.content.title, 'Suite Atlântica');
+
+  const history = service.listVersions(unitId, { tenantId });
+  assert.ok(history.length >= 2, 'histórico deve incluir versões anteriores');
+  assert.ok(history.some(entry => entry.isCurrent && entry.version === latest.version));
+  assert.ok(history.some(entry => entry.version === 1));
+}
+
+>>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
 async function main() {
   console.log('> testServerBootstrap');
   testServerBootstrap();
@@ -883,6 +974,12 @@ async function main() {
   console.log('> testTenantService');
   testTenantService();
   console.log('✓ testTenantService');
+<<<<<<< HEAD
+=======
+  console.log('> testChannelContentService');
+  testChannelContentService();
+  console.log('✓ testChannelContentService');
+>>>>>>> 752325740180bb04b8477dd6e2b97ed2beffa10f
   console.log('> testCsrfProtection');
   testCsrfProtection();
   console.log('✓ testCsrfProtection');
