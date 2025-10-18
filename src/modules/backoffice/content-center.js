@@ -1,4 +1,5 @@
 const { ValidationError } = require('../../services/errors');
+const { createBackofficeLayoutHelpers } = require('./backoffice-layout');
 
 function normalizeUnitSelection(units, requestedId) {
   if (!Array.isArray(units) || !units.length) return null;
@@ -25,6 +26,7 @@ module.exports = function registerContentCenter(app, context) {
     html,
     layout,
     esc,
+    userCan,
     channelContentService,
     channelIntegrations,
     rememberActiveBrandingProperty,
@@ -32,8 +34,33 @@ module.exports = function registerContentCenter(app, context) {
     requireLogin,
     requireBackofficeAccess,
     logActivity,
-    logChange
+    logChange,
+    featureFlags,
+    isFeatureEnabled,
+    MASTER_ROLE
   } = context;
+
+  function isFlagEnabled(flagName) {
+    if (typeof isFeatureEnabled === 'function') {
+      try {
+        return !!isFeatureEnabled(flagName);
+      } catch (err) {
+        return false;
+      }
+    }
+    if (featureFlags && Object.prototype.hasOwnProperty.call(featureFlags, flagName)) {
+      return !!featureFlags[flagName];
+    }
+    return false;
+  }
+
+  const { buildBackofficeNavigation, renderBackofficeShell } = createBackofficeLayoutHelpers({
+    html,
+    esc,
+    userCan,
+    isFlagEnabled,
+    MASTER_ROLE
+  });
 
   if (!channelContentService) {
     return;
@@ -75,14 +102,17 @@ module.exports = function registerContentCenter(app, context) {
       const activeUnit = normalizeUnitSelection(units, req.query.unit || req.query.unitId || req.query.id);
 
       if (!activeUnit) {
-        const body = html`
-          <div class="bo-page">
+        const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'content-center-link' });
+        const body = renderBackofficeShell({
+          navButtonsHtml,
+          isWide: true,
+          mainContent: html`
             <section class="bg-white shadow-sm rounded-2xl p-8">
               <h1 class="text-2xl font-semibold text-slate-900 mb-2">Centro de Conteúdos</h1>
               <p class="text-slate-600">Ainda não existem unidades configuradas para este tenant. Crie uma unidade para começar a gerir conteúdos.</p>
             </section>
-          </div>
-        `;
+          `
+        });
         return res.send(
           layout({
             title: 'Centro de Conteúdos',
@@ -119,85 +149,88 @@ module.exports = function registerContentCenter(app, context) {
         actor: req.user && req.user.username ? req.user.username : null
       };
 
-      const pageBody = html`
-        <div class="bo-page bo-page--wide">
+      const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'content-center-link' });
+      const pageBody = renderBackofficeShell({
+        navButtonsHtml,
+        isWide: true,
+        mainContent: html`
           <div class="space-y-10 py-10">
             <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-            <div>
-              <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
-              <p class="text-slate-600 mt-2 max-w-2xl">
-                Centralize descrições, destaques, políticas e galerias de cada unidade antes de publicar rapidamente nas OTAs conectadas.
-              </p>
+              <div>
+                <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
+                <p class="text-slate-600 mt-2 max-w-2xl">
+                  Centralize descrições, destaques, políticas e galerias de cada unidade antes de publicar rapidamente nas OTAs conectadas.
+                </p>
+              </div>
+              <div class="w-full lg:w-80">
+                <label class="block text-sm font-medium text-slate-700 mb-1" for="content-center-unit-select">Unidade</label>
+                <select id="content-center-unit-select" class="bo-input w-full" data-unit-select>
+                  ${units
+                    .map(unit => {
+                      const selected = Number(unit.id) === Number(activeUnit.id) ? 'selected' : '';
+                      return `<option value="${esc(unit.id)}" ${selected}>${esc(formatUnitLabel(unit))}</option>`;
+                    })
+                    .join('')}
+                </select>
+              </div>
             </div>
-            <div class="w-full lg:w-80">
-              <label class="block text-sm font-medium text-slate-700 mb-1" for="content-center-unit-select">Unidade</label>
-              <select id="content-center-unit-select" class="bo-input w-full" data-unit-select>
-                ${units
-                  .map(unit => {
-                    const selected = Number(unit.id) === Number(activeUnit.id) ? 'selected' : '';
-                    return `<option value="${esc(unit.id)}" ${selected}>${esc(formatUnitLabel(unit))}</option>`;
-                  })
-                  .join('')}
-              </select>
-            </div>
-          </div>
 
             <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr),minmax(0,1fr)]">
-            <form class="bg-white shadow-sm rounded-2xl p-6 space-y-6" data-content-form>
-              <div class="grid md:grid-cols-2 gap-5">
+              <form class="bg-white shadow-sm rounded-2xl p-6 space-y-6" data-content-form>
+                <div class="grid md:grid-cols-2 gap-5">
+                  <div>
+                    <label class="bo-label" for="content-title">Título</label>
+                    <input id="content-title" name="title" class="bo-input w-full" maxlength="120" />
+                  </div>
+                  <div>
+                    <label class="bo-label" for="content-subtitle">Subtítulo</label>
+                    <input id="content-subtitle" name="subtitle" class="bo-input w-full" maxlength="160" />
+                  </div>
+                </div>
+
                 <div>
-                  <label class="bo-label" for="content-title">Título</label>
-                  <input id="content-title" name="title" class="bo-input w-full" maxlength="120" />
+                  <label class="bo-label" for="content-description">Descrição</label>
+                  <textarea id="content-description" name="description" class="bo-textarea h-40"></textarea>
                 </div>
+
+                <div class="grid md:grid-cols-2 gap-5">
+                  <div>
+                    <label class="bo-label" for="content-highlights">Destaques (um por linha)</label>
+                    <textarea id="content-highlights" class="bo-textarea h-32" data-array-field="highlights"></textarea>
+                  </div>
+                  <div>
+                    <label class="bo-label" for="content-amenities">Amenidades (uma por linha)</label>
+                    <textarea id="content-amenities" class="bo-textarea h-32" data-array-field="amenities"></textarea>
+                  </div>
+                </div>
+
                 <div>
-                  <label class="bo-label" for="content-subtitle">Subtítulo</label>
-                  <input id="content-subtitle" name="subtitle" class="bo-input w-full" maxlength="160" />
+                  <div class="flex items-center justify-between gap-4 mb-3">
+                    <h2 class="text-lg font-semibold text-slate-900">Galeria de fotos</h2>
+                    <button type="button" class="bo-button bo-button--ghost" data-add-photo>Adicionar foto</button>
+                  </div>
+                  <div class="space-y-4" data-photos-list></div>
                 </div>
-              </div>
 
-              <div>
-                <label class="bo-label" for="content-description">Descrição</label>
-                <textarea id="content-description" name="description" class="bo-textarea h-40"></textarea>
-              </div>
-
-              <div class="grid md:grid-cols-2 gap-5">
                 <div>
-                  <label class="bo-label" for="content-highlights">Destaques (um por linha)</label>
-                  <textarea id="content-highlights" class="bo-textarea h-32" data-array-field="highlights"></textarea>
+                  <div class="flex items-center justify-between gap-4 mb-3">
+                    <h2 class="text-lg font-semibold text-slate-900">Políticas</h2>
+                    <button type="button" class="bo-button bo-button--ghost" data-add-policy>Adicionar política</button>
+                  </div>
+                  <div class="space-y-4" data-policies-list></div>
                 </div>
-                <div>
-                  <label class="bo-label" for="content-amenities">Amenidades (uma por linha)</label>
-                  <textarea id="content-amenities" class="bo-textarea h-32" data-array-field="amenities"></textarea>
-                </div>
-              </div>
 
-              <div>
-                <div class="flex items-center justify-between gap-4 mb-3">
-                  <h2 class="text-lg font-semibold text-slate-900">Galeria de fotos</h2>
-                  <button type="button" class="bo-button bo-button--ghost" data-add-photo>Adicionar foto</button>
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div class="text-sm text-slate-600">
+                    <div>Status atual: <span data-status>${esc(contentRecord.status || 'draft')}</span></div>
+                    <div>Versão: <span data-version>${esc(String(contentRecord.version || 0))}</span></div>
+                  </div>
+                  <div class="flex flex-wrap gap-3">
+                    <button type="submit" class="bo-button bo-button--primary" data-save-button>Guardar rascunho</button>
+                  </div>
                 </div>
-                <div class="space-y-4" data-photos-list></div>
-              </div>
-
-              <div>
-                <div class="flex items-center justify-between gap-4 mb-3">
-                  <h2 class="text-lg font-semibold text-slate-900">Políticas</h2>
-                  <button type="button" class="bo-button bo-button--ghost" data-add-policy>Adicionar política</button>
-                </div>
-                <div class="space-y-4" data-policies-list></div>
-              </div>
-
-              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div class="text-sm text-slate-600">
-                  <div>Status atual: <span data-status>${esc(contentRecord.status || 'draft')}</span></div>
-                  <div>Versão: <span data-version>${esc(String(contentRecord.version || 0))}</span></div>
-                </div>
-                <div class="flex flex-wrap gap-3">
-                  <button type="submit" class="bo-button bo-button--primary" data-save-button>Guardar rascunho</button>
-                </div>
-              </div>
-              <div class="text-sm" data-feedback></div>
-            </form>
+                <div class="text-sm" data-feedback></div>
+              </form>
 
             <aside class="bg-white shadow-sm rounded-2xl p-6 space-y-6">
               <div>

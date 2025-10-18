@@ -1,5 +1,6 @@
 const registerUxApi = require('./ux-api');
 const registerContentCenter = require('./content-center');
+const { createBackofficeLayoutHelpers } = require('./backoffice-layout');
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
@@ -258,6 +259,14 @@ module.exports = function registerBackoffice(app, context) {
     }
   }
 
+  const { buildBackofficeNavigation, renderBackofficeShell } = createBackofficeLayoutHelpers({
+    html,
+    esc,
+    userCan,
+    isFlagEnabled,
+    MASTER_ROLE
+  });
+
   function renderBreadcrumbs(trail) {
     if (!isFlagEnabled('FEATURE_BREADCRUMBS')) return '';
     if (!Array.isArray(trail) || trail.length === 0) return '';
@@ -496,14 +505,17 @@ module.exports = function registerBackoffice(app, context) {
     if (!properties.length) {
       const theme = resolveBrandingForRequest(req);
       serverRender('route:/admin/extras');
+      const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'extras-link' });
       return res.send(
         layout({
           title: 'Extras & serviços',
           user: req.user,
           activeNav: 'backoffice',
           branding: theme,
-          body: html`
-            <div class="bo-page bo-page--wide">
+          body: renderBackofficeShell({
+            navButtonsHtml,
+            isWide: true,
+            mainContent: html`
               ${renderBreadcrumbs([
                 { label: 'Backoffice', href: '/admin' },
                 { label: 'Extras & serviços' }
@@ -518,8 +530,8 @@ module.exports = function registerBackoffice(app, context) {
                   <a class="bo-button bo-button--primary" href="/admin">Ir para o painel de propriedades</a>
                 </div>
               </div>
-            </div>
-          `
+            `
+          })
         })
       );
     }
@@ -550,6 +562,7 @@ module.exports = function registerBackoffice(app, context) {
       propertyName: selectedProperty.name
     });
     rememberActiveBrandingProperty(res, selectedProperty.id);
+    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'extras-link' });
 
     const feedbackBlocks = [];
     if (successMessage) {
@@ -576,8 +589,10 @@ module.exports = function registerBackoffice(app, context) {
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
-        body: html`
-          <div class="bo-page bo-page--wide">
+        body: renderBackofficeShell({
+          navButtonsHtml,
+          isWide: true,
+          mainContent: html`
             ${renderBreadcrumbs([
               { label: 'Backoffice', href: '/admin' },
               { label: 'Extras & serviços' }
@@ -630,8 +645,8 @@ module.exports = function registerBackoffice(app, context) {
             </form>
             <script type="application/json" id="extras-data">${extrasPayloadJson}</script>
             <script>${extrasManagerScript}</script>
-          </div>
-        `
+          `
+        })
       })
     );
   }
@@ -688,8 +703,10 @@ module.exports = function registerBackoffice(app, context) {
               <p class="text-xs text-slate-500">Respeita restrições de chegada (CTA) e saída (CTD) associadas.</p>
             </div>`;
 
-    const body = html`
-      <div class="bo-page">
+    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'bookings-link' });
+    const body = renderBackofficeShell({
+      navButtonsHtml,
+      mainContent: html`
         <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
         <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
         ${feedbackHtml}
@@ -800,8 +817,8 @@ module.exports = function registerBackoffice(app, context) {
             : ''}
         </section>
         </div>
-      </div>
-    `;
+      `
+    });
 
     res.status(statusCode).send(
       layout({
@@ -2012,8 +2029,11 @@ module.exports = function registerBackoffice(app, context) {
       redirectPath: '/limpeza/tarefas',
       variant: 'backoffice'
     });
-    const body = html`
-      <div class="bo-main">
+    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'housekeeping-manage' });
+    const body = renderBackofficeShell({
+      navButtonsHtml,
+      isWide: true,
+      mainContent: html`
         <header class="bo-header">
           <h1>Mapa de limpezas</h1>
           <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
@@ -2029,8 +2049,8 @@ module.exports = function registerBackoffice(app, context) {
         <div class="bo-stack">
           ${boardHtml}
         </div>
-      </div>
-    `;
+      `
+    });
     res.send(
       layout({
         title: 'Mapa de limpezas',
@@ -2395,8 +2415,11 @@ module.exports = function registerBackoffice(app, context) {
     const propertyTableRowsHtml = propertyRows.length
       ? propertyRows.join('')
       : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
-    const body = html`
-      <div class="bo-page bo-page--wide">
+    const { navButtonsHtml: housekeepingNav } = buildBackofficeNavigation(req, { activePaneId: 'housekeeping-manage' });
+    const body = renderBackofficeShell({
+      navButtonsHtml: housekeepingNav,
+      isWide: true,
+      mainContent: html`
         <div class="hk-dashboard space-y-8">
           ${renderBreadcrumbs([
             { label: 'Backoffice', href: '/admin' },
@@ -2632,13 +2655,15 @@ module.exports = function registerBackoffice(app, context) {
           : ''}
         </div>
       </div>
-    `;
+      `
+    });
     res.send(
       layout({
         title: 'Gestão de limpezas',
         activeNav: 'housekeeping',
         user: req.user,
         branding: resolveBrandingForRequest(req),
+        pageClass: 'page-backoffice page-housekeeping',
         body
       })
     );
@@ -3833,137 +3858,7 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
 
-    const broomIconSvg = `
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="M3 21h4l7-7"></path>
-        <path d="M14 14l5-5a3 3 0 0 0-4.24-4.24l-5 5"></path>
-        <path d="M11 11l2 2"></path>
-        <path d="M5 21l-1-4 4 1"></path>
-      </svg>
-    `.trim();
-
-    const navSections = [
-      {
-        id: 'operations',
-        title: 'Operações diárias',
-        items: [
-          { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
-          { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
-          { id: 'bookings-link', label: 'Reservas', icon: 'notebook-text', allowed: canViewBookings, href: '/admin/bookings' },
-          { id: 'housekeeping', label: 'Painel de limpezas', iconSvg: broomIconSvg, icon: 'broom', allowed: canSeeHousekeeping },
-          {
-            id: 'housekeeping-manage',
-            label: 'Gestão de limpezas',
-            icon: 'clipboard-check',
-            allowed: canManageHousekeeping,
-            href: '/admin/limpeza'
-          },
-          {
-            id: 'extras-link',
-            label: 'Extras & serviços',
-            icon: 'gift',
-            allowed: canManageProperties,
-            href: '/admin/extras'
-          },
-          { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-          { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' }
-        ]
-      },
-      {
-        id: 'finance',
-        title: 'Finanças e rendimento',
-        items: [
-          { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
-          {
-            id: 'revenue-calendar-link',
-            label: 'Calendário de receita',
-            icon: 'calendar-range',
-            allowed: canViewRevenueCalendar,
-            href: '/admin/revenue-calendar'
-          },
-          { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
-          { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
-        ]
-      },
-      {
-        id: 'communication',
-        title: 'Comunicação',
-        items: [
-          { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-          { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
-          { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
-          { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates }
-        ]
-      },
-      {
-        id: 'administration',
-        title: 'Administração',
-        items: [
-          ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
-          { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-          { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
-          {
-            id: 'audit-link',
-            label: 'Auditoria',
-            icon: 'clipboard-list',
-            allowed: isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit,
-            href: '/admin/auditoria'
-          }
-        ]
-      }
-    ];
-    const allNavItems = navSections.flatMap(section => section.items);
-    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
-    const navButtonsHtml = navSections
-      .map(section => {
-        const itemsHtml = section.items
-          .map(item => {
-            const classes = ['bo-tab'];
-            if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-            if (!item.href && item.id === defaultPane) classes.push('is-active');
-            if (item.href) classes.push('bo-tab--link');
-            const iconMarkup = item.iconSvg
-              ? item.iconSvg
-              : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
-
-            if (!item.allowed) {
-              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
-            }
-
-            if (item.href) {
-              return `<a class="${classes.join(' ')}" href="${item.href}" target="_self">${iconMarkup}<span>${esc(item.label)}</span></a>`;
-            }
-
-            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
-          })
-          .join('');
-
-        if (!itemsHtml.trim()) {
-          return '';
-        }
-
-        const sectionItemsId = `bo-nav-items-${section.id}`;
-
-        return `
-          <div class="bo-nav__section is-collapsed" data-nav-section data-nav-start-collapsed="true">
-            <button
-              type="button"
-              class="bo-nav__section-toggle"
-              data-nav-toggle
-              aria-expanded="false"
-              aria-controls="${sectionItemsId}"
-            >
-              <span>${esc(section.title)}</span>
-              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
-            </button>
-            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
-          </div>
-        `;
-      })
-      .filter(Boolean)
-      .join('');
-
-    const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
+    const { navButtonsHtml, navLinkTargets } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
     const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
     quickAccessHtml = filteredQuickLinks.length
       ? html`<section class="bo-card space-y-4">
@@ -5551,72 +5446,80 @@ module.exports = function registerBackoffice(app, context) {
     const safeEnd = normalizedEnd.format('YYYY-MM-DD');
     const defaultPickupWindows = pickupParam && pickupParam.trim() ? pickupParam : '7,30';
 
-    const body = `
-      <div class="bo-wrapper">
-        <header class="bo-header">
-          <div>
-            <h1>Calendário de receita</h1>
-            <p class="bo-subtitle">Visão tática diária da performance com alertas de pricing e pickups por período.</p>
-          </div>
-          <div class="text-xs text-slate-500">Período em análise: <span data-revenue-calendar-range>${esc(
-            `${safeStart} a ${safeEnd}`
-          )}</span></div>
-        </header>
-
-        <section class="bo-card space-y-4">
-          <form class="grid gap-4 md:grid-cols-[repeat(4,minmax(0,1fr))]" data-revenue-calendar-form>
-            <label class="form-field">
-              <span class="form-label">Data inicial</span>
-              <input type="date" class="input" name="start" value="${esc(safeStart)}" required />
-            </label>
-            <label class="form-field">
-              <span class="form-label">Data final</span>
-              <input type="date" class="input" name="end" value="${esc(safeEnd)}" required />
-            </label>
-            <label class="form-field">
-              <span class="form-label">Pickups (dias)</span>
-              <input type="text" class="input" name="pickupWindows" value="${esc(defaultPickupWindows)}" placeholder="Ex.: 7,30" />
-              <small class="text-xs text-slate-500">Separar por vírgulas para comparar múltiplos períodos.</small>
-            </label>
-            <div class="flex items-end gap-3">
-              <button class="btn btn-primary" type="submit">Aplicar filtros</button>
-              <button class="btn btn-light" type="button" data-revenue-calendar-refresh>Recarregar</button>
+    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'revenue-calendar-link' });
+    const body = renderBackofficeShell({
+      navButtonsHtml,
+      isWide: true,
+      mainContent: html`
+        <div class="bo-wrapper">
+          <header class="bo-header">
+            <div>
+              <h1>Calendário de receita</h1>
+              <p class="bo-subtitle">Visão tática diária da performance com alertas de pricing e pickups por período.</p>
             </div>
-          </form>
-          <div class="flex flex-col gap-2 text-xs text-slate-500 md:flex-row md:items-center md:justify-between">
-            <span data-revenue-calendar-loading hidden>Carregando dados mais recentes…</span>
-            <span data-revenue-calendar-error hidden class="text-sm text-rose-600"></span>
-          </div>
-          <div class="bo-card bg-white/70" data-revenue-calendar-summary></div>
-        </section>
+            <div class="text-xs text-slate-500">Período em análise: <span data-revenue-calendar-range>${esc(
+              `${safeStart} a ${safeEnd}`
+            )}</span></div>
+          </header>
 
-        <section class="bo-card p-0 overflow-hidden">
-          <div class="overflow-x-auto">
-            <table class="bo-table bo-table--dense min-w-[720px]">
-              <thead>
-                <tr>
-                  <th scope="col">Data</th>
-                  <th scope="col">Ocupação</th>
-                  <th scope="col">Receita</th>
-                  <th scope="col">ADR</th>
-                  <th scope="col">RevPAR</th>
-                  <th scope="col">Reservas</th>
-                  <th scope="col">Noites</th>
-                  <th scope="col">Pickups</th>
-                  <th scope="col">Alertas</th>
-                </tr>
-              </thead>
-              <tbody data-revenue-calendar-table></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-      <script>${revenueCalendarScript}</script>
-    `;
+          <section class="bo-card space-y-4">
+            <form class="grid gap-4 md:grid-cols-[repeat(4,minmax(0,1fr))]" data-revenue-calendar-form>
+              <label class="form-field">
+                <span class="form-label">Data inicial</span>
+                <input type="date" class="input" name="start" value="${esc(safeStart)}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Data final</span>
+                <input type="date" class="input" name="end" value="${esc(safeEnd)}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Pickups (dias)</span>
+                <input type="text" class="input" name="pickupWindows" value="${esc(defaultPickupWindows)}" placeholder="Ex.: 7,30" />
+                <small class="text-xs text-slate-500">Separar por vírgulas para comparar múltiplos períodos.</small>
+              </label>
+              <div class="flex items-end gap-3">
+                <button class="btn btn-primary" type="submit">Aplicar filtros</button>
+                <button class="btn btn-light" type="button" data-revenue-calendar-refresh>Recarregar</button>
+              </div>
+            </form>
+            <div class="flex flex-col gap-2 text-xs text-slate-500 md:flex-row md:items-center md:justify-between">
+              <span data-revenue-calendar-loading hidden>Carregando dados mais recentes…</span>
+              <span data-revenue-calendar-error hidden class="text-sm text-rose-600"></span>
+            </div>
+            <div class="bo-card bg-white/70" data-revenue-calendar-summary></div>
+          </section>
+
+          <section class="bo-card p-0 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="bo-table bo-table--dense min-w-[720px]">
+                <thead>
+                  <tr>
+                    <th scope="col">Data</th>
+                    <th scope="col">Ocupação</th>
+                    <th scope="col">Receita</th>
+                    <th scope="col">ADR</th>
+                    <th scope="col">RevPAR</th>
+                    <th scope="col">Reservas</th>
+                    <th scope="col">Noites</th>
+                    <th scope="col">Pickups</th>
+                    <th scope="col">Alertas</th>
+                  </tr>
+                </thead>
+                <tbody data-revenue-calendar-table></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+        <script>${revenueCalendarScript}</script>
+      `
+    });
 
     res.send(
       layout({
-        pageTitle: 'Calendário de receita',
+        title: 'Calendário de receita',
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: resolveBrandingForRequest(req),
         pageClass: 'page-backoffice page-revenue-calendar',
         body
       })
@@ -6748,144 +6651,152 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
     })();
   `);
 
+  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'rates-link' });
+  const body = renderBackofficeShell({
+    navButtonsHtml,
+    isWide: true,
+    mainContent: html`
+      ${renderBreadcrumbs([
+        { label: 'Backoffice', href: '/admin' },
+        { label: 'Regras de tarifas' }
+      ])}
+      <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+      <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
+      <p class="text-sm text-slate-600 mb-6">
+        Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.
+      </p>
+      ${successMessage
+        ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
+        : ''}
+      ${errorMessage
+        ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
+        : ''}
+      <div class="grid gap-6 lg:grid-cols-2">
+        <section class="card p-6 space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
+            <p class="text-sm text-slate-500">Defina o nome, tipo de condição e o ajuste aplicado ao preço base.</p>
+          </div>
+          <form method="post" action="/admin/rates/rules/save" class="grid gap-4">
+            <input type="hidden" name="rule_id" value="${editingRule ? editingRule.id : ''}" />
+            <label class="grid gap-1 text-sm">
+              <span>Nome da regra</span>
+              <input type="text" name="name" class="input" required maxlength="80" value="${esc(formName)}" />
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>Tipo</span>
+              <select name="type" class="input" data-rule-type required>
+                ${typeOptions}
+              </select>
+            </label>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Ajuste (%)</span>
+                <input type="number" step="0.1" name="adjustment_percent" class="input" value="${esc(formAdjustment)}" required />
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Prioridade</span>
+                <input type="number" step="1" name="priority" class="input" value="${esc(formPriority)}" />
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Preço mínimo (€)</span>
+                <input type="number" step="0.01" name="min_price" class="input" value="${esc(formMinPrice)}" />
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Preço máximo (€)</span>
+                <input type="number" step="0.01" name="max_price" class="input" value="${esc(formMaxPrice)}" />
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Propriedade</span>
+                <select name="property_id" class="input">${propertyOptions}</select>
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Unidade específica</span>
+                <select name="unit_id" class="input">${unitOptions}</select>
+              </label>
+            </div>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="occupancy">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Ocupação</legend>
+              <div class="grid gap-3 md:grid-cols-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Ocupação mínima (%)</span>
+                  <input type="number" step="1" min="0" max="100" name="min_occupancy" class="input" value="${esc(occupancyMin)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Ocupação máxima (%)</span>
+                  <input type="number" step="1" min="0" max="100" name="max_occupancy" class="input" value="${esc(occupancyMax)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Janela (dias)</span>
+                  <input type="number" step="1" min="1" name="occupancy_window" class="input" value="${esc(occupancyWindow)}" />
+                </label>
+              </div>
+              <p class="text-xs text-slate-500">Compara a ocupação da propriedade/unidade para aplicar o ajuste.</p>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="lead_time">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Antecedência</legend>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-1 text-sm">
+                  <span>Antecedência mínima (dias)</span>
+                  <input type="number" step="1" min="0" name="min_lead" class="input" value="${esc(leadMin)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Antecedência máxima (dias)</span>
+                  <input type="number" step="1" min="0" name="max_lead" class="input" value="${esc(leadMax)}" />
+                </label>
+              </div>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="weekday">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Dia da semana</legend>
+              <div class="grid gap-2 md:grid-cols-2">${weekdayInputs}</div>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="event">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Evento / Datas especiais</legend>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-1 text-sm">
+                  <span>Data inicial</span>
+                  <input type="date" name="event_start" class="input" value="${esc(eventStart)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Data final</span>
+                  <input type="date" name="event_end" class="input" value="${esc(eventEnd)}" />
+                </label>
+              </div>
+            </fieldset>
+            <label class="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" name="active" value="1" ${formActive ? 'checked' : ''} />
+              <span>Regra ativa</span>
+            </label>
+            <div class="flex gap-3">
+              <button type="submit" class="btn btn-primary">${editingRule ? 'Atualizar regra' : 'Guardar regra'}</button>
+              ${editingRule ? `<a class="btn btn-light" href="/admin/rates/rules">Cancelar</a>` : ''}
+            </div>
+          </form>
+        </section>
+        <section class="card p-6 space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Regras configuradas</h2>
+            <p class="text-sm text-slate-500">Regras são avaliadas por prioridade e podem combinar entre si. Ajustes percentuais são multiplicativos.</p>
+          </div>
+          <ul class="space-y-4">${ruleItems}</ul>
+        </section>
+      </div>
+      <script>${ruleFormScript}</script>
+    `
+  });
+
   res.send(
     layout({
       title: 'Regras automáticas de tarifas',
       user: req.user,
       activeNav: 'backoffice',
+      branding: resolveBrandingForRequest(req),
       pageClass: 'page-backoffice page-rates',
-      body: html`
-        <div class="bo-page bo-page--wide">
-          ${renderBreadcrumbs([
-            { label: 'Backoffice', href: '/admin' },
-            { label: 'Regras de tarifas' }
-          ])}
-          <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-          <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
-          <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>
-          ${successMessage
-            ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
-            : ''}
-          ${errorMessage
-            ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
-            : ''}
-          <div class="grid gap-6 lg:grid-cols-2">
-          <section class="card p-6 space-y-4">
-            <div>
-              <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
-              <p class="text-sm text-slate-500">Defina o nome, tipo de condição e o ajuste aplicado ao preço base.</p>
-            </div>
-            <form method="post" action="/admin/rates/rules/save" class="grid gap-4">
-              <input type="hidden" name="rule_id" value="${editingRule ? editingRule.id : ''}" />
-              <label class="grid gap-1 text-sm">
-                <span>Nome da regra</span>
-                <input type="text" name="name" class="input" required maxlength="80" value="${esc(formName)}" />
-              </label>
-              <label class="grid gap-1 text-sm">
-                <span>Tipo</span>
-                <select name="type" class="input" data-rule-type required>
-                  ${typeOptions}
-                </select>
-              </label>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Ajuste (%)</span>
-                  <input type="number" step="0.1" name="adjustment_percent" class="input" value="${esc(formAdjustment)}" required />
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Prioridade</span>
-                  <input type="number" step="1" name="priority" class="input" value="${esc(formPriority)}" />
-                </label>
-              </div>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Preço mínimo (€)</span>
-                  <input type="number" step="0.01" name="min_price" class="input" value="${esc(formMinPrice)}" />
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Preço máximo (€)</span>
-                  <input type="number" step="0.01" name="max_price" class="input" value="${esc(formMaxPrice)}" />
-                </label>
-              </div>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Propriedade</span>
-                  <select name="property_id" class="input">${propertyOptions}</select>
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Unidade específica</span>
-                  <select name="unit_id" class="input">${unitOptions}</select>
-                </label>
-              </div>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="occupancy">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Ocupação</legend>
-                <div class="grid gap-3 md:grid-cols-3">
-                  <label class="grid gap-1 text-sm">
-                    <span>Ocupação mínima (%)</span>
-                    <input type="number" step="1" min="0" max="100" name="min_occupancy" class="input" value="${esc(occupancyMin)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Ocupação máxima (%)</span>
-                    <input type="number" step="1" min="0" max="100" name="max_occupancy" class="input" value="${esc(occupancyMax)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Janela (dias)</span>
-                    <input type="number" step="1" min="1" name="occupancy_window" class="input" value="${esc(occupancyWindow)}" />
-                  </label>
-                </div>
-                <p class="text-xs text-slate-500">Compara a ocupação da propriedade/unidade para aplicar o ajuste.</p>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="lead_time">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Antecedência</legend>
-                <div class="grid gap-3 md:grid-cols-2">
-                  <label class="grid gap-1 text-sm">
-                    <span>Antecedência mínima (dias)</span>
-                    <input type="number" step="1" min="0" name="min_lead" class="input" value="${esc(leadMin)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Antecedência máxima (dias)</span>
-                    <input type="number" step="1" min="0" name="max_lead" class="input" value="${esc(leadMax)}" />
-                  </label>
-                </div>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="weekday">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Dia da semana</legend>
-                <div class="grid gap-2 md:grid-cols-2">${weekdayInputs}</div>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="event">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Evento / Datas especiais</legend>
-                <div class="grid gap-3 md:grid-cols-2">
-                  <label class="grid gap-1 text-sm">
-                    <span>Data inicial</span>
-                    <input type="date" name="event_start" class="input" value="${esc(eventStart)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Data final</span>
-                    <input type="date" name="event_end" class="input" value="${esc(eventEnd)}" />
-                  </label>
-                </div>
-              </fieldset>
-              <label class="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" name="active" value="1" ${formActive ? 'checked' : ''} />
-                <span>Regra ativa</span>
-              </label>
-              <div class="flex gap-3">
-                <button type="submit" class="btn btn-primary">${editingRule ? 'Atualizar regra' : 'Guardar regra'}</button>
-                ${editingRule ? `<a class="btn btn-light" href="/admin/rates/rules">Cancelar</a>` : ''}
-              </div>
-            </form>
-          </section>
-          <section class="card p-6 space-y-4">
-            <div>
-              <h2 class="text-lg font-semibold text-slate-800">Regras configuradas</h2>
-              <p class="text-sm text-slate-500">Regras são avaliadas por prioridade e podem combinar entre si. Ajustes percentuais são multiplicativos.</p>
-            </div>
-            <ul class="space-y-4">${ruleItems}</ul>
-          </section>
-          </div>
-          <script>${ruleFormScript}</script>
-        </div>
-      `,
+      body
     })
   );
 });
@@ -7466,17 +7377,13 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
   const canEditBooking = userCan(req.user, 'bookings.edit');
   const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
-  res.send(layout({
-    title: 'Reservas',
-    user: req.user,
-    activeNav: 'bookings',
-    branding: resolveBrandingForRequest(req),
-    pageClass: 'page-backoffice page-bookings',
-    body: html`
-      <div class="bo-page">
-        <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'bookings-link' });
+  const body = renderBackofficeShell({
+    navButtonsHtml,
+    mainContent: html`
+      <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
-        <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+      <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
         <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
         <select class="input" name="status">
           <option value="">Todos os estados</option>
@@ -7527,8 +7434,16 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
         </div>
         ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
       </div>
-      </div>
     `
+  });
+
+  res.send(layout({
+    title: 'Reservas',
+    user: req.user,
+    activeNav: 'bookings',
+    branding: resolveBrandingForRequest(req),
+    pageClass: 'page-backoffice page-bookings',
+    body
   }));
 });
 
@@ -8434,29 +8349,26 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
 
   const theme = resolveBrandingForRequest(req);
 
-  res.send(layout({
-    title: 'Auditoria',
-    user: req.user,
-    activeNav: 'audit',
-    branding: theme,
-    pageClass: 'page-backoffice page-audit',
-    body: html`
-      <div class="bo-page bo-page--wide">
-        <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
-        ${canViewAudit ? `
-          <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
-            <div class="grid gap-1">
-              <label class="text-sm text-slate-600">Entidade</label>
-              <select class="input" name="entity">
-                <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
-                <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
-                <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
-              </select>
-            </div>
-            <div class="grid gap-1">
-              <label class="text-sm text-slate-600">ID</label>
-              <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
-            </div>
+  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'audit-link' });
+  const body = renderBackofficeShell({
+    navButtonsHtml,
+    isWide: true,
+    mainContent: html`
+      <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
+      ${canViewAudit ? `
+        <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">Entidade</label>
+            <select class="input" name="entity">
+              <option value="" ${!entityRaw ? 'selected' : ''}>Todas</option>
+              <option value="booking" ${entityRaw === 'booking' ? 'selected' : ''}>Reservas</option>
+              <option value="block" ${entityRaw === 'block' ? 'selected' : ''}>Bloqueios</option>
+            </select>
+          </div>
+          <div class="grid gap-1">
+            <label class="text-sm text-slate-600">ID</label>
+            <input class="input" name="id" value="${esc(idRaw)}" placeholder="Opcional" />
+          </div>
           <div class="self-end">
             <button class="btn btn-primary w-full">Filtrar</button>
           </div>
@@ -8512,7 +8424,9 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             </div>
           </div>
         </section>
+      ` : ''}
 
+      ${canViewLogs ? `
         <section class="mt-8 space-y-4">
           <div class="flex items-center justify-between">
             <h2 class="text-xl font-semibold">Atividade da aplicação</h2>
@@ -8546,8 +8460,16 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
           </div>
         </section>
       ` : ''}
-      </div>
     `
+  });
+
+  res.send(layout({
+    title: 'Auditoria',
+    user: req.user,
+    activeNav: 'audit',
+    branding: theme,
+    pageClass: 'page-backoffice page-audit',
+    body
   }));
 });
 
