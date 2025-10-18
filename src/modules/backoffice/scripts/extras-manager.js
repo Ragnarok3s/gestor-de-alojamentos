@@ -60,19 +60,27 @@
       .toLowerCase();
   }
 
-  function setState(updater) {
+  function setState(updater, options = {}) {
     const next = typeof updater === 'function' ? updater(state.extras.slice()) : updater;
     state.extras = Array.isArray(next) ? next.map(normalizeExtra) : [];
-    render();
+    if (!options.skipRender) {
+      render();
+    }
   }
 
-  function updateExtra(index, patch) {
-    setState(current => {
-      if (index < 0 || index >= current.length) return current;
-      const next = current.slice();
-      next[index] = normalizeExtra({ ...next[index], ...patch });
-      return next;
-    });
+  function updateExtra(index, patch, options = {}) {
+    let updated;
+    setState(
+      current => {
+        if (index < 0 || index >= current.length) return current;
+        const next = current.slice();
+        updated = normalizeExtra({ ...next[index], ...patch });
+        next[index] = updated;
+        return next;
+      },
+      options
+    );
+    return updated;
   }
 
   function removeExtra(index) {
@@ -174,7 +182,10 @@
         const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
         input.addEventListener(eventName, event => {
           const value = event.target.value;
-          updateExtra(index, { [field]: value });
+          const updated = updateExtra(index, { [field]: value }, { skipRender: true });
+          if (updated && field in updated && updated[field] !== value && field !== 'description') {
+            input.value = updated[field];
+          }
         });
       });
 
@@ -189,7 +200,7 @@
       if (ruleSelect) {
         ruleSelect.value = extra.pricingRule;
         ruleSelect.addEventListener('change', () => {
-          updateExtra(index, { pricingRule: ruleSelect.value });
+          updateExtra(index, { pricingRule: ruleSelect.value }, { skipRender: true });
         });
       }
 
@@ -208,7 +219,10 @@
           if (!currentCode && nameInput.value.trim()) {
             const generated = slugify(nameInput.value.trim());
             if (generated) {
-              updateExtra(index, { code: generated });
+              const updated = updateExtra(index, { code: generated }, { skipRender: true });
+              if (updated && updated.code !== codeInput.value) {
+                codeInput.value = updated.code;
+              }
             }
           }
         });
