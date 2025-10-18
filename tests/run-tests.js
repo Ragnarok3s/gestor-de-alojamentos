@@ -12,8 +12,9 @@ const { createRateManagementService } = require('../src/services/rate-management
 const { createRatePlanService } = require('../src/services/rate-plans');
 const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
+const { createReviewRequestService } = require('../src/services/review-requests');
 const { createReportingService } = require('../src/services/reporting');
-const { ConflictError } = require('../src/services/errors');
+const { ConflictError, ValidationError } = require('../src/services/errors');
 const { createOverbookingGuard } = require('../src/services/overbooking-guard');
 const { createChannelIntegrationService } = require('../src/services/channel-integrations');
 const { createOtaDispatcher } = require('../src/services/ota-sync/dispatcher');
@@ -380,6 +381,20 @@ function seedPropertyAndUnit(db) {
     'INSERT INTO units(property_id, name, capacity, base_price_cents) VALUES (?,?,?,?)'
   ).run(propertyId, 'Douro Suite', 2, 12000).lastInsertRowid;
   return { propertyId, unitId };
+}
+
+function createFakeMailer() {
+  const sent = [];
+  return {
+    sent,
+    getDefaultFrom() {
+      return 'Reservas <reservas@example.com>';
+    },
+    async sendMail(message = {}) {
+      sent.push(message);
+      return true;
+    }
+  };
 }
 
 function testRateManagementService() {
@@ -759,6 +774,99 @@ function testReviewService() {
   assert.equal(updated.response_text.startsWith('Obrigado'), true, 'texto de resposta deve ser guardado');
 }
 
+async function testReviewRequestService() {
+  const db = createDatabase(':memory:');
+  const { propertyId, unitId } = seedPropertyAndUnit(db);
+  const checkin = dayjs().subtract(3, 'day').format('YYYY-MM-DD');
+  const checkout = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+
+  const bookingId = db
+    .prepare(
+      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, adults, children, checkin, checkout, total_cents, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      unitId,
+      'Joana Silva',
+      'joana@example.com',
+      'PT',
+      2,
+      0,
+      checkin,
+      checkout,
+      45000,
+      'CONFIRMED'
+    ).lastInsertRowid;
+
+  const i18n = createI18nService();
+  const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
+  const fakeMailer = createFakeMailer();
+  const service = createReviewRequestService({
+    db,
+    dayjs,
+    messageTemplates,
+    mailer: fakeMailer,
+    getBranding: () => ({ brandName: 'Casas de Pousadouro' }),
+    i18n
+  });
+
+  const firstResult = await service.requestReviewForBooking({ bookingId });
+  assert.equal(firstResult.status, 'requested');
+  assert.equal(firstResult.language, 'pt', 'idioma deve respeitar nacionalidade portuguesa');
+  assert.equal(fakeMailer.sent.length, 1, 'primeiro pedido deve enviar email');
+  assert.ok(fakeMailer.sent[0].subject.includes('Casas de Pousadouro'), 'assunto deve mencionar propriedade');
+
+  const stored = service.getRequestForBooking(bookingId);
+  assert.equal(stored.request_count, 1, 'pedido deve ficar registado com contagem 1');
+  assert.equal(stored.status, 'requested', 'estado deve ficar em requested');
+
+  await assert.rejects(
+    () => service.requestReviewForBooking({ bookingId }),
+    err => err instanceof ValidationError,
+    'não deve permitir duplicar pedido sem autorização'
+  );
+
+  db.prepare("UPDATE review_requests SET last_requested_at = datetime('now', '-80 hours') WHERE booking_id = ?")
+    .run(bookingId);
+
+  const retryResult = await service.requestReviewForBooking({ bookingId, allowRetry: true, minHoursBetween: 12 });
+  assert.equal(retryResult.status, 'requested', 'reenvio autorizado deve atualizar estado');
+  assert.equal(fakeMailer.sent.length, 2, 'reenvio deve enviar novo email');
+
+  const marked = service.markRequestReceived({ bookingId, reviewId: 99 });
+  assert.equal(marked, true, 'marcar como recebido deve devolver true');
+  const afterMark = service.getRequestForBooking(bookingId);
+  assert.equal(afterMark.status, 'received', 'estado deve passar para received');
+  assert.equal(afterMark.review_id, 99, 'review_id deve ser registado');
+
+  const secondBookingId = db
+    .prepare(
+      `INSERT INTO bookings(unit_id, guest_name, guest_email, guest_nationality, adults, children, checkin, checkout, total_cents, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      unitId,
+      'Alex Johnson',
+      'alex@example.com',
+      'GB',
+      2,
+      0,
+      checkin,
+      checkout,
+      52000,
+      'CONFIRMED'
+    ).lastInsertRowid;
+
+  const batch = await service.processDailyRequests({ targetDate: checkout });
+  assert.equal(batch.length >= 1, true, 'processamento diário deve retornar pedidos executados');
+  const secondStored = service.getRequestForBooking(secondBookingId);
+  assert.equal(secondStored.status, 'requested', 'pedido diário deve ficar em requested');
+  assert.equal(fakeMailer.sent.length, 3, 'processamento diário deve enviar email adicional');
+
+  const repeatBatch = await service.processDailyRequests({ targetDate: checkout });
+  assert.equal(repeatBatch.length, 0, 'segunda execução no mesmo dia não deve duplicar pedidos');
+}
+
 function testReportingService() {
   const db = createDatabase(':memory:');
   const { unitId } = seedPropertyAndUnit(db);
@@ -1007,6 +1115,9 @@ async function main() {
   console.log('> testMessageTemplateService');
   testMessageTemplateService();
   console.log('✓ testMessageTemplateService');
+  console.log('> testReviewRequestService');
+  await testReviewRequestService();
+  console.log('✓ testReviewRequestService');
   console.log('> testReviewService');
   testReviewService();
   console.log('✓ testReviewService');

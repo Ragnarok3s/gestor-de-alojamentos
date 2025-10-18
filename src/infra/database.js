@@ -306,6 +306,29 @@ CREATE INDEX IF NOT EXISTS idx_reviews_property ON reviews(property_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_unit ON reviews(unit_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at);
 
+CREATE TABLE IF NOT EXISTS review_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+  guest_email TEXT NOT NULL,
+  guest_name TEXT,
+  guest_language TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','requested','received')),
+  request_count INTEGER NOT NULL DEFAULT 0,
+  first_requested_at TEXT,
+  last_requested_at TEXT,
+  last_requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  last_error TEXT,
+  review_id INTEGER REFERENCES reviews(id) ON DELETE SET NULL,
+  received_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_requests_status ON review_requests(status);
+CREATE INDEX IF NOT EXISTS idx_review_requests_last_requested ON review_requests(last_requested_at);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

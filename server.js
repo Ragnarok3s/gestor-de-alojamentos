@@ -46,6 +46,7 @@ const { createCsrfProtection } = require('./src/security/csrf');
 const { createEmailTemplateService } = require('./src/services/email-templates');
 const { createI18nService } = require('./src/services/i18n');
 const { createMessageTemplateService } = require('./src/services/templates');
+const { createReviewRequestService } = require('./src/services/review-requests');
 const { createMailer } = require('./src/services/mailer');
 const { createBookingEmailer } = require('./src/services/booking-emails');
 const { createRateRuleService } = require('./src/services/rate-rules');
@@ -1679,6 +1680,14 @@ const mailerLogger = SKIP_SERVER_BOOT
   : console;
 const mailer = createMailer({ logger: mailerLogger });
 const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
+const reviewRequestService = createReviewRequestService({
+  db,
+  dayjs,
+  messageTemplates,
+  mailer,
+  getBranding,
+  i18n
+});
 const channelIntegrations = createChannelIntegrationService({
   db,
   dayjs,
@@ -1808,6 +1817,13 @@ if (!skipStartupTasks) {
   scheduleDailyTask(() => {
     automationEngine.handleEvent('daily.cron', { ts: Date.now() });
   }, 3, 30);
+
+  scheduleDailyTask(() => {
+    const targetDate = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+    reviewRequestService
+      .processDailyRequests({ targetDate })
+      .catch(err => console.warn('Pedido diário de reviews falhou:', err.message));
+  }, 4, 0);
 
   try {
     runAutomationSweep('startup');
@@ -3567,6 +3583,7 @@ const context = {
   messageTemplates,
   mailer,
   bookingEmailer,
+  reviewRequestService,
   rateRuleService,
   ratePlanService,
   twoFactorService,
