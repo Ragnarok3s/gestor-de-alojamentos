@@ -3858,7 +3858,7 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
 
-    const { navButtonsHtml, navLinkTargets } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
+    const { navButtonsHtml, navLinkTargets, defaultPane } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
     const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
     quickAccessHtml = filteredQuickLinks.length
       ? html`<section class="bo-card space-y-4">
