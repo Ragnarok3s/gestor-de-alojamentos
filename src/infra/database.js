@@ -1096,6 +1096,31 @@ function runLightMigrations(db) {
     );
 
     ensureTable(
+      'booking_extras',
+      `CREATE TABLE IF NOT EXISTS booking_extras (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        extra_id TEXT NOT NULL,
+        extra_name TEXT NOT NULL,
+        pricing_rule TEXT,
+        pricing_payload_json TEXT CHECK (pricing_payload_json IS NULL OR json_valid(pricing_payload_json)),
+        quantity INTEGER NOT NULL,
+        unit_price_cents INTEGER NOT NULL,
+        total_cents INTEGER NOT NULL,
+        refunded_cents INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'confirmed',
+        availability_checked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    );
+
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_booking_extras_booking ON booking_extras(booking_id);
+       CREATE INDEX IF NOT EXISTS idx_booking_extras_status ON booking_extras(status);`
+    );
+
+    ensureTable(
       'kb_articles',
       `CREATE TABLE IF NOT EXISTS kb_articles (
         id TEXT PRIMARY KEY,

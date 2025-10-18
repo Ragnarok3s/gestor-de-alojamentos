@@ -47,7 +47,7 @@ module.exports = function registerFrontoffice(app, context) {
     slugify
   } = context;
 
-  function summarizePaymentDetailsForBooking(booking, summary) {
+  function summarizePaymentDetailsForBooking(booking, summary, extrasSummary = null) {
     if (!summary) {
       return ['Sem pagamentos registados'];
     }
@@ -65,10 +65,12 @@ module.exports = function registerFrontoffice(app, context) {
     }
 
     const bookingTotalCents = Number(booking.total_cents || 0);
-    const outstandingCents = computeOutstandingCents(summary, bookingTotalCents);
+    const extrasOutstandingCents = extrasSummary ? Number(extrasSummary.outstandingCents || 0) : 0;
+    const combinedTotal = bookingTotalCents + extrasOutstandingCents;
+    const outstandingCents = computeOutstandingCents(summary, combinedTotal);
 
     let statusLabel = null;
-    if (bookingTotalCents > 0 && summary.netCapturedCents >= bookingTotalCents) {
+    if (combinedTotal > 0 && summary.netCapturedCents >= combinedTotal) {
       statusLabel = describePaymentStatus('captured').label;
     } else if ((summary.actionRequiredCents || 0) > 0) {
       statusLabel = describePaymentStatus('requires_action').label;
@@ -86,8 +88,9 @@ module.exports = function registerFrontoffice(app, context) {
     if (statusLabel) {
       lines.push(`Estado: ${statusLabel}`);
     }
-    if ((summary.netCapturedCents || 0) > 0) {
-      lines.push(`Pago: € ${eur(summary.netCapturedCents)}`);
+    const netCaptured = Number(summary.netCapturedCents || 0);
+    if (netCaptured > 0) {
+      lines.push(`Pago: € ${eur(netCaptured)}`);
     }
     if ((summary.refundedCents || 0) > 0) {
       lines.push(`Reembolsado: € ${eur(summary.refundedCents)}`);
@@ -104,9 +107,19 @@ module.exports = function registerFrontoffice(app, context) {
     if ((summary.cancelledCents || 0) > 0) {
       lines.push(`Cancelado: € ${eur(summary.cancelledCents)}`);
     }
+    if (extrasSummary && extrasSummary.totalCents > 0) {
+      lines.push(`Extras: € ${eur(extrasSummary.totalCents)}`);
+      if (extrasSummary.refundedCents > 0) {
+        lines.push(`Extras reembolsados: € ${eur(extrasSummary.refundedCents)}`);
+      }
+      if (extrasSummary.outstandingCents > 0) {
+        lines.push(`Extras por cobrar: € ${eur(extrasSummary.outstandingCents)}`);
+      }
+    }
+
     if (outstandingCents > 0) {
       lines.push(`Por cobrar: € ${eur(outstandingCents)}`);
-    } else if (bookingTotalCents > 0 && summary.netCapturedCents >= bookingTotalCents) {
+    } else if (combinedTotal > 0 && summary.netCapturedCents >= combinedTotal) {
       lines.push('Saldo liquidado');
     }
 
@@ -146,42 +159,206 @@ module.exports = function registerFrontoffice(app, context) {
           priceCents = Math.round(Number(item.price) * 100);
         }
 
+        const id = typeof item.id === 'string' && item.id.trim() ? item.id.trim() : code;
+        const pricingRule = normalizePricingRule(item.pricing_rule);
+        const pricingConfig = parsePricingConfig(item.pricing_config);
+        const availability = parseExtraAvailability(item);
+
         return {
+          id,
           code,
           name,
           description,
           priceCents: priceCents != null ? priceCents : null,
-          priceFormatted: priceCents != null ? `€ ${eur(priceCents)}` : null
+          priceFormatted: priceCents != null ? `€ ${eur(priceCents)}` : null,
+          pricingRule,
+          pricingConfig,
+          pricingRuleDescription: describePricingRule(pricingRule, pricingConfig),
+          availability,
+          availabilityDescription: describeAvailability(availability)
         };
       })
       .filter(Boolean);
   }
 
-  function listExtraRequests(bookingId) {
+  function normalizePricingRule(value) {
+    if (typeof value !== 'string') return 'standard';
+    const normalized = value.trim().toLowerCase();
+    return normalized || 'standard';
+  }
+
+  function parsePricingConfig(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const config = {};
+    if (raw.min_nights != null && Number.isFinite(Number(raw.min_nights))) {
+      config.minNights = Math.max(1, Math.round(Number(raw.min_nights)));
+    }
+    if (raw.discount_percent != null && Number.isFinite(Number(raw.discount_percent))) {
+      const discount = Math.round(Number(raw.discount_percent));
+      config.discountPercent = Math.max(0, Math.min(100, discount));
+    }
+    return Object.keys(config).length ? config : null;
+  }
+
+  function parseExtraAvailability(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const from = typeof raw.available_from === 'string' ? raw.available_from.trim() : raw.availableFrom;
+    const to = typeof raw.available_until === 'string' ? raw.available_until.trim() : raw.availableUntil;
+    const availabilityField = raw.availability && typeof raw.availability === 'object' ? raw.availability : null;
+    const altFrom = availabilityField && typeof availabilityField.from === 'string' ? availabilityField.from.trim() : null;
+    const altTo = availabilityField && typeof availabilityField.to === 'string' ? availabilityField.to.trim() : null;
+    const start = (from || altFrom || '').trim();
+    const end = (to || altTo || '').trim();
+    if (!start && !end) return null;
+    return { from: start || null, to: end || null };
+  }
+
+  function describePricingRule(rule, config) {
+    if (rule === 'long_stay') {
+      const minNights = config && config.minNights ? config.minNights : 7;
+      const discount = config && config.discountPercent ? config.discountPercent : null;
+      if (discount) {
+        return `Desconto de ${discount}% para estadias de ${minNights} noite(s) ou mais.`;
+      }
+      return `Disponível para estadias de ${minNights} noite(s) ou mais.`;
+    }
+    return null;
+  }
+
+  function describeAvailability(availability) {
+    if (!availability) return null;
+    const parts = [];
+    if (availability.from) parts.push(`a partir das ${availability.from}`);
+    if (availability.to) parts.push(`até às ${availability.to}`);
+    if (!parts.length) return null;
+    return `Disponível ${parts.join(' ')}`.trim();
+  }
+
+  function parseTimeToMinutes(value) {
+    if (!value || typeof value !== 'string') return null;
+    const normalized = value.trim();
+    if (!normalized) return null;
+    const formats = ['HH:mm', 'H:mm'];
+    for (const fmt of formats) {
+      const parsed = dayjs(normalized, fmt, true);
+      if (parsed.isValid()) {
+        return parsed.hour() * 60 + parsed.minute();
+      }
+    }
+    return null;
+  }
+
+  function isExtraAvailableNow(extra, referenceTime = dayjs()) {
+    if (!extra || !extra.availability) return true;
+    const minutesNow = referenceTime.diff(referenceTime.startOf('day'), 'minute');
+    const fromMinutes = parseTimeToMinutes(extra.availability.from);
+    const toMinutes = parseTimeToMinutes(extra.availability.to);
+    if (fromMinutes != null && minutesNow < fromMinutes) return false;
+    if (toMinutes != null && minutesNow > toMinutes) return false;
+    return true;
+  }
+
+  function validateExtraEligibility(extra, bookingRow, referenceTime = dayjs()) {
+    if (!extra) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (!isExtraAvailableNow(extra, referenceTime)) {
+      return { ok: false, reason: 'schedule' };
+    }
+    if (extra.pricingRule === 'long_stay') {
+      const nights = dateRangeNights(bookingRow.checkin, bookingRow.checkout).length;
+      const minNights = extra.pricingConfig && extra.pricingConfig.minNights ? extra.pricingConfig.minNights : 7;
+      if (nights < minNights) {
+        return { ok: false, reason: 'long_stay' };
+      }
+    }
+    return { ok: true };
+  }
+
+  function computeExtraPricing(extra, bookingRow, quantity) {
+    const safeQuantity = Math.max(1, Math.round(Number(quantity) || 0));
+    const baseUnitPrice = Number(extra.priceCents || 0);
+    const payload = {
+      pricingRule: extra.pricingRule || 'standard',
+      quantity: safeQuantity,
+      baseUnitPriceCents: baseUnitPrice
+    };
+
+    let unitPrice = baseUnitPrice;
+    if (extra.pricingRule === 'long_stay') {
+      const nights = dateRangeNights(bookingRow.checkin, bookingRow.checkout).length;
+      const minNights = extra.pricingConfig && extra.pricingConfig.minNights ? extra.pricingConfig.minNights : 7;
+      const discountPercent = extra.pricingConfig && extra.pricingConfig.discountPercent ? extra.pricingConfig.discountPercent : 0;
+      payload.minNights = minNights;
+      payload.nights = nights;
+      payload.discountPercent = discountPercent;
+      if (discountPercent > 0 && nights >= minNights) {
+        const effective = Math.max(0, Math.min(100, discountPercent));
+        unitPrice = Math.round(baseUnitPrice * (1 - effective / 100));
+        payload.discountApplied = true;
+      } else {
+        payload.discountApplied = false;
+      }
+    }
+
+    const unitPriceCents = Math.max(0, Math.round(unitPrice));
+    const totalCents = Math.max(0, unitPriceCents * safeQuantity);
+    return { unitPriceCents, totalCents, pricingPayload: payload };
+  }
+
+  function listBookingExtras(bookingId) {
     const rows = db
       .prepare(
-        `SELECT payload_json, created_at
-           FROM guest_portal_events
+        `SELECT id, extra_id, extra_name, pricing_rule, pricing_payload_json, quantity, unit_price_cents,
+                total_cents, refunded_cents, status, created_at, updated_at
+           FROM booking_extras
           WHERE booking_id = ?
-            AND event_type = 'extra_requested'
-          ORDER BY created_at ASC`
+          ORDER BY created_at ASC, id ASC`
       )
       .all(bookingId);
 
     return rows.map(row => {
-      const payload = safeParseJson(row.payload_json, {});
-      const quantityRaw = payload && payload.quantity != null ? Number(payload.quantity) : 1;
-      const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.round(quantityRaw) : 1;
+      const pricingPayload = safeParseJson(row.pricing_payload_json, null);
+      const totalCents = Number(row.total_cents) || 0;
+      const refundedCents = Number(row.refunded_cents) || 0;
+      const outstandingCents = Math.max(0, totalCents - refundedCents);
       return {
-        code: payload && typeof payload.code === 'string' ? payload.code : null,
-        name: payload && typeof payload.name === 'string' ? payload.name : 'Extra',
-        quantity,
+        id: row.id,
+        extraId: row.extra_id,
+        name: row.extra_name,
+        pricingRule: row.pricing_rule || null,
+        pricingPayload,
+        quantity: Number(row.quantity) || 0,
+        unitPriceCents: Number(row.unit_price_cents) || 0,
+        unitPriceFormatted: `€ ${eur(row.unit_price_cents || 0)}`,
+        totalCents,
+        totalFormatted: `€ ${eur(totalCents)}`,
+        refundedCents,
+        refundedFormatted: refundedCents > 0 ? `€ ${eur(refundedCents)}` : null,
+        outstandingCents,
+        outstandingFormatted: `€ ${eur(outstandingCents)}`,
+        status: row.status || 'confirmed',
         createdAt: row.created_at || null,
-        createdAtLabel: row.created_at && dayjs(row.created_at).isValid()
-          ? dayjs(row.created_at).format('DD/MM/YYYY HH:mm')
-          : null
+        createdAtLabel:
+          row.created_at && dayjs(row.created_at).isValid() ? dayjs(row.created_at).format('DD/MM/YYYY HH:mm') : null,
+        updatedAt: row.updated_at || null
       };
     });
+  }
+
+  function summarizeBookingExtras(entries) {
+    return entries.reduce(
+      (acc, entry) => {
+        if (entry.status && entry.status.toLowerCase() === 'cancelled') {
+          return acc;
+        }
+        acc.totalCents += Number(entry.totalCents) || 0;
+        acc.refundedCents += Number(entry.refundedCents) || 0;
+        acc.outstandingCents += Number(entry.outstandingCents) || 0;
+        return acc;
+      },
+      { totalCents: 0, refundedCents: 0, outstandingCents: 0 }
+    );
   }
 
   function loadGuestBookingRow(bookingId) {
@@ -243,10 +420,19 @@ module.exports = function registerFrontoffice(app, context) {
           .all(...paymentIds)
       : [];
 
+    const extrasAvailable = parsePolicyExtras(bookingRow.policy_extras);
+    const bookedExtras = listBookingExtras(bookingRow.id);
+    const extrasSummary = summarizeBookingExtras(bookedExtras);
+    const combinedTotalCents = (Number(bookingRow.total_cents) || 0) + Number(extrasSummary.outstandingCents || 0);
+
     const { bookingSummaries } = aggregatePaymentData({ payments, refunds });
     const paymentSummary = bookingSummaries.get(bookingRow.id) || null;
-    const outstandingCents = computeOutstandingCents(paymentSummary, bookingRow.total_cents);
-    const paymentLines = summarizePaymentDetailsForBooking(bookingRow, paymentSummary);
+    const outstandingCents = computeOutstandingCents(paymentSummary, combinedTotalCents);
+    const paymentLines = summarizePaymentDetailsForBooking(
+      { ...bookingRow, total_cents: combinedTotalCents },
+      paymentSummary,
+      extrasSummary
+    );
 
     const paymentEntries = payments.map(payment => {
       const descriptor = describePaymentStatus(payment.status);
@@ -268,9 +454,6 @@ module.exports = function registerFrontoffice(app, context) {
     const instructionsAddressParts = [bookingRow.property_address, bookingRow.property_locality, bookingRow.property_district]
       .map(part => (part || '').trim())
       .filter(Boolean);
-
-    const extrasAvailable = parsePolicyExtras(bookingRow.policy_extras);
-    const extraRequests = listExtraRequests(bookingRow.id);
 
     return {
       booking: {
@@ -315,8 +498,8 @@ module.exports = function registerFrontoffice(app, context) {
           : null
       },
       payments: {
-        totalCents: Number(bookingRow.total_cents) || 0,
-        totalFormatted: `€ ${eur(bookingRow.total_cents || 0)}`,
+        totalCents: combinedTotalCents,
+        totalFormatted: `€ ${eur(combinedTotalCents)}`,
         outstandingCents,
         outstandingFormatted: `€ ${eur(outstandingCents || 0)}`,
         summaryLines: paymentLines,
@@ -324,7 +507,16 @@ module.exports = function registerFrontoffice(app, context) {
       },
       extras: {
         available: extrasAvailable,
-        requests: extraRequests
+        purchases: bookedExtras,
+        summary: {
+          totalCents: extrasSummary.totalCents,
+          totalFormatted: `€ ${eur(extrasSummary.totalCents || 0)}`,
+          refundedCents: extrasSummary.refundedCents,
+          refundedFormatted:
+            extrasSummary.refundedCents > 0 ? `€ ${eur(extrasSummary.refundedCents)}` : null,
+          outstandingCents: extrasSummary.outstandingCents,
+          outstandingFormatted: `€ ${eur(extrasSummary.outstandingCents || 0)}`
+        }
       }
     };
   }
@@ -1501,7 +1693,30 @@ app.post('/book', (req, res) => {
       : [];
     const paymentEntries = Array.isArray(payload.payments.entries) ? payload.payments.entries : [];
     const extrasAvailable = Array.isArray(payload.extras.available) ? payload.extras.available : [];
-    const extraRequests = Array.isArray(payload.extras.requests) ? payload.extras.requests : [];
+    const extraPurchases = Array.isArray(payload.extras.purchases) ? payload.extras.purchases : [];
+    const extrasSummary = payload.extras && payload.extras.summary
+      ? {
+          totalCents: Number(payload.extras.summary.totalCents) || 0,
+          totalFormatted: payload.extras.summary.totalFormatted || `€ ${eur(payload.extras.summary.totalCents || 0)}`,
+          refundedCents: Number(payload.extras.summary.refundedCents) || 0,
+          refundedFormatted:
+            payload.extras.summary.refundedFormatted ||
+            (Number(payload.extras.summary.refundedCents) > 0
+              ? `€ ${eur(payload.extras.summary.refundedCents)}`
+              : null),
+          outstandingCents: Number(payload.extras.summary.outstandingCents) || 0,
+          outstandingFormatted:
+            payload.extras.summary.outstandingFormatted ||
+            `€ ${eur(payload.extras.summary.outstandingCents || 0)}`
+        }
+      : {
+          totalCents: 0,
+          totalFormatted: '€ 0,00',
+          refundedCents: 0,
+          refundedFormatted: null,
+          outstandingCents: 0,
+          outstandingFormatted: '€ 0,00'
+        };
 
     const formatMultiline = (value) => (value ? esc(String(value)).replace(/\n/g, '<br/>') : '');
 
@@ -1579,41 +1794,82 @@ app.post('/book', (req, res) => {
           .join('')
       : '<li class="text-sm text-slate-500">Sem movimentos registados.</li>';
 
-    const extrasAvailableHtml = extrasAvailable.length
+    const extrasFormVisible = extrasAvailable.length > 0;
+
+    const extrasAvailableHtml = extrasFormVisible
       ? extrasAvailable
           .map(extra => {
             const descriptionHtml = extra.description
               ? `<p class="text-sm text-slate-600">${esc(extra.description)}</p>`
               : '';
+            const pricingRuleHtml = extra.pricingRuleDescription
+              ? `<p class="text-xs text-slate-500">${esc(extra.pricingRuleDescription)}</p>`
+              : '';
+            const availabilityHtml = extra.availabilityDescription
+              ? `<p class="text-xs text-slate-500">${esc(extra.availabilityDescription)}</p>`
+              : '';
             const priceHtml = extra.priceFormatted
               ? `<div class="text-sm font-semibold text-slate-700">${esc(extra.priceFormatted)}</div>`
               : '';
-            return `<li class="border border-slate-200 rounded px-3 py-3">
+            const identifier = esc(extra.id || extra.code);
+            return `<div class="border border-slate-200 rounded px-3 py-3 space-y-3" data-extra-item data-extra-id="${identifier}">
               <div class="flex items-start justify-between gap-4">
-                <div>
+                <div class="space-y-1">
                   <div class="font-medium text-slate-800">${esc(extra.name)}</div>
                   ${descriptionHtml}
+                  ${pricingRuleHtml}
+                  ${availabilityHtml}
                 </div>
                 ${priceHtml}
+              </div>
+              <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <span>Quantidade</span>
+                <input type="number" min="0" value="0" class="input w-24" data-extra-quantity />
+              </label>
+            </div>`;
+          })
+          .join('')
+      : '';
+
+    const extraPurchasesHtml = extraPurchases.length
+      ? extraPurchases
+          .map(extra => {
+            const created = extra.createdAtLabel ? `<div class="text-xs text-slate-500">${esc(extra.createdAtLabel)}</div>` : '';
+            const statusLabel = extra.status && extra.status !== 'confirmed'
+              ? `<span class="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">${esc(extra.status)}</span>`
+              : '';
+            const refundedHtml = extra.refundedFormatted
+              ? `<div class="text-xs text-slate-500">Reembolsado: ${esc(extra.refundedFormatted)}</div>`
+              : '';
+            return `<li class="border border-slate-200 rounded px-3 py-3">
+              <div class="flex items-start justify-between gap-4">
+                <div class="space-y-1">
+                  <div class="font-medium text-slate-800">${esc(extra.name)}</div>
+                  <div class="text-xs text-slate-500">Quantidade: ${esc(String(extra.quantity))}</div>
+                  ${created}
+                  ${refundedHtml}
+                  ${statusLabel}
+                </div>
+                <div class="text-sm font-semibold text-slate-700">${esc(extra.totalFormatted)}</div>
               </div>
             </li>`;
           })
           .join('')
-      : '<p class="text-sm text-slate-600">Sem extras disponíveis.</p>';
+      : '<p class="text-sm text-slate-600">Ainda não adicionou extras.</p>';
 
-    const extraRequestsHtml = extraRequests.length
-      ? extraRequests
-          .map(req => {
-            const created = req.createdAtLabel ? ` · ${esc(req.createdAtLabel)}` : '';
-            return `<li class="border border-slate-200 rounded px-3 py-2">
-              <div class="font-medium text-slate-800">${esc(req.name)}</div>
-              <div class="text-xs text-slate-500">Quantidade: ${esc(String(req.quantity))}${created}</div>
-            </li>`;
-          })
-          .join('')
-      : '<p class="text-sm text-slate-600">Ainda não solicitou extras.</p>';
-
-    const extrasFormVisible = extrasAvailable.length > 0;
+    const extrasSummaryLines = [];
+    if (extrasSummary.totalCents > 0) {
+      extrasSummaryLines.push(`<li>Total extras: <strong>${esc(extrasSummary.totalFormatted)}</strong></li>`);
+    }
+    if (extrasSummary.refundedCents > 0) {
+      extrasSummaryLines.push(`<li>Reembolsado: ${esc(extrasSummary.refundedFormatted)}</li>`);
+    }
+    if (extrasSummary.outstandingCents > 0 || extrasSummary.totalCents > 0) {
+      extrasSummaryLines.push(`<li>Por cobrar: <strong>${esc(extrasSummary.outstandingFormatted)}</strong></li>`);
+    }
+    const extrasSummaryHtml = extrasSummaryLines.length
+      ? `<ul class="space-y-1 text-sm text-slate-600">${extrasSummaryLines.join('')}</ul>`
+      : '<p class="text-sm text-slate-600">Sem extras registados.</p>';
 
     const inlineState = serializeGuestPortalState({
       bookingId: bookingSummary.id,
@@ -1681,26 +1937,21 @@ app.post('/book', (req, res) => {
           </section>
           <section class="card p-6 space-y-4">
             <h2 class="text-xl font-semibold text-slate-800">Extras &amp; serviços</h2>
-            <div data-guest-extras-available class="space-y-3">${extrasAvailableHtml}</div>
-            <form data-extra-form class="space-y-3" style="${extrasFormVisible ? '' : 'display:none;'}">
-              <div>
-                <label for="extraCode" class="text-sm font-medium text-slate-700">Selecionar extra</label>
-                <select id="extraCode" name="extraCode" class="input">
-                  ${extrasAvailable
-                    .map(extra => `<option value="${esc(extra.code)}">${esc(extra.name)}${extra.priceFormatted ? ` – ${esc(extra.priceFormatted)}` : ''}</option>`)
-                    .join('')}
-                </select>
+            <div class="grid gap-6 md:grid-cols-2">
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-700">Catálogo</h3>
+                <p class="text-sm text-slate-600" data-extra-empty style="${extrasFormVisible ? 'display:none;' : ''}">Sem extras disponíveis.</p>
+                <form data-extra-form class="space-y-3" style="${extrasFormVisible ? '' : 'display:none;'}">
+                  <div class="space-y-3" data-guest-extras-available>${extrasAvailableHtml}</div>
+                  <button type="submit" class="btn btn-primary w-full md:w-auto" data-extra-submit>Adicionar extras</button>
+                  <p class="text-sm text-slate-500" data-extra-feedback role="status"></p>
+                </form>
               </div>
-              <div>
-                <label for="extraQuantity" class="text-sm font-medium text-slate-700">Quantidade</label>
-                <input id="extraQuantity" name="quantity" type="number" min="1" value="1" class="input" />
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-700">Reservados</h3>
+                <div class="space-y-2 text-sm" data-guest-extra-purchases>${extraPurchasesHtml}</div>
+                <div data-guest-extras-summary>${extrasSummaryHtml}</div>
               </div>
-              <button type="submit" class="btn btn-primary w-full md:w-auto">Pedir extra</button>
-              <p class="text-sm text-slate-500" data-extra-feedback role="status"></p>
-            </form>
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700">Pedidos efetuados</h3>
-              <div class="mt-2 space-y-2 text-sm" data-guest-extra-requests>${extraRequestsHtml}</div>
             </div>
           </section>
         </div>
@@ -1715,11 +1966,12 @@ app.post('/book', (req, res) => {
             const paymentEntriesEl = root.querySelector('[data-guest-payment-entries]');
             const outstandingEl = root.querySelector('[data-guest-outstanding]');
             const extrasAvailableEl = root.querySelector('[data-guest-extras-available]');
-            const extraRequestsEl = root.querySelector('[data-guest-extra-requests]');
+            const extraPurchasesEl = root.querySelector('[data-guest-extra-purchases]');
+            const extrasSummaryEl = root.querySelector('[data-guest-extras-summary]');
+            const extrasEmptyEl = root.querySelector('[data-extra-empty]');
             const form = root.querySelector('[data-extra-form]');
             const feedbackEl = root.querySelector('[data-extra-feedback]');
-            const selectEl = form ? form.querySelector('select[name="extraCode"]') : null;
-            const quantityEl = form ? form.querySelector('input[name="quantity"]') : null;
+            const submitBtn = root.querySelector('[data-extra-submit]');
 
             function escapeHtml(value) {
               return String(value == null ? '')
@@ -1778,76 +2030,124 @@ app.post('/book', (req, res) => {
                 .join('');
             }
 
+            function toggleExtrasForm(extras) {
+              if (!form) return;
+              const hasExtras = Array.isArray(extras) && extras.length > 0;
+              form.style.display = hasExtras ? '' : 'none';
+              if (extrasEmptyEl) {
+                extrasEmptyEl.style.display = hasExtras ? 'none' : '';
+              }
+            }
+
             function renderExtrasAvailable(extras) {
               if (!extrasAvailableEl) return;
               if (!Array.isArray(extras) || !extras.length) {
-                extrasAvailableEl.innerHTML = '<p class="text-sm text-slate-600">Sem extras disponíveis.</p>';
+                extrasAvailableEl.innerHTML = '';
+                toggleExtrasForm([]);
                 return;
               }
+              toggleExtrasForm(extras);
               const list = extras
                 .map(extra => {
                   const description = extra.description
                     ? '<p class="text-sm text-slate-600">' + escapeHtml(extra.description) + '</p>'
                     : '';
+                  const pricing = extra.pricingRuleDescription
+                    ? '<p class="text-xs text-slate-500">' + escapeHtml(extra.pricingRuleDescription) + '</p>'
+                    : '';
+                  const availability = extra.availabilityDescription
+                    ? '<p class="text-xs text-slate-500">' + escapeHtml(extra.availabilityDescription) + '</p>'
+                    : '';
                   const price = extra.priceFormatted
                     ? '<div class="text-sm font-semibold text-slate-700">' + escapeHtml(extra.priceFormatted) + '</div>'
+                    : '';
+                  const identifier = escapeHtml(extra.id || extra.code);
+                  return (
+                    '<div class="border border-slate-200 rounded px-3 py-3 space-y-3" data-extra-item data-extra-id="' + identifier + '">' +
+                      '<div class="flex items-start justify-between gap-4">' +
+                        '<div class="space-y-1">' +
+                          '<div class="font-medium text-slate-800">' + escapeHtml(extra.name) + '</div>' +
+                          description +
+                          pricing +
+                          availability +
+                        '</div>' +
+                        price +
+                      '</div>' +
+                      '<label class="flex items-center gap-2 text-sm font-medium text-slate-700">' +
+                        '<span>Quantidade</span>' +
+                        '<input type="number" min="0" value="0" class="input w-24" data-extra-quantity />' +
+                      '</label>' +
+                    '</div>'
+                  );
+                })
+                .join('');
+              extrasAvailableEl.innerHTML = list;
+              extrasAvailableEl.querySelectorAll('[data-extra-quantity]').forEach(input => {
+                input.value = '0';
+                input.setAttribute('min', '0');
+              });
+            }
+
+            function renderExtraPurchases(purchases) {
+              if (!extraPurchasesEl) return;
+              if (!Array.isArray(purchases) || !purchases.length) {
+                extraPurchasesEl.innerHTML = '<p class="text-sm text-slate-600">Ainda não adicionou extras.</p>';
+                return;
+              }
+              const list = purchases
+                .map(extra => {
+                  const created = extra.createdAtLabel
+                    ? '<div class="text-xs text-slate-500">' + escapeHtml(extra.createdAtLabel) + '</div>'
+                    : '';
+                  const refunded = extra.refundedFormatted
+                    ? '<div class="text-xs text-slate-500">Reembolsado: ' + escapeHtml(extra.refundedFormatted) + '</div>'
+                    : '';
+                  const status = extra.status && extra.status !== 'confirmed'
+                    ? '<span class="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">' +
+                      escapeHtml(extra.status) +
+                      '</span>'
                     : '';
                   return (
                     '<li class="border border-slate-200 rounded px-3 py-3">' +
                       '<div class="flex items-start justify-between gap-4">' +
-                        '<div>' +
+                        '<div class="space-y-1">' +
                           '<div class="font-medium text-slate-800">' + escapeHtml(extra.name) + '</div>' +
-                          description +
+                          '<div class="text-xs text-slate-500">Quantidade: ' + escapeHtml(String(extra.quantity)) + '</div>' +
+                          created +
+                          refunded +
+                          status +
                         '</div>' +
-                        price +
+                        '<div class="text-sm font-semibold text-slate-700">' + escapeHtml(extra.totalFormatted) + '</div>' +
                       '</div>' +
                     '</li>'
                   );
                 })
                 .join('');
-              extrasAvailableEl.innerHTML = '<ul class="space-y-3">' + list + '</ul>';
+              extraPurchasesEl.innerHTML = list;
             }
 
-            function renderExtraRequests(requests) {
-              if (!extraRequestsEl) return;
-              if (!Array.isArray(requests) || !requests.length) {
-                extraRequestsEl.innerHTML = '<p class="text-sm text-slate-600">Ainda não solicitou extras.</p>';
+            function renderExtrasSummary(summary) {
+              if (!extrasSummaryEl) return;
+              if (!summary) {
+                extrasSummaryEl.innerHTML = '<p class="text-sm text-slate-600">Sem extras registados.</p>';
                 return;
               }
-              const list = requests
-                .map(req => {
-                  const created = req.createdAtLabel ? ' · ' + escapeHtml(req.createdAtLabel) : '';
-                  return (
-                    '<li class="border border-slate-200 rounded px-3 py-2">' +
-                      '<div class="font-medium text-slate-800">' + escapeHtml(req.name) + '</div>' +
-                      '<div class="text-xs text-slate-500">Quantidade: ' + escapeHtml(String(req.quantity)) + created + '</div>' +
-                    '</li>'
-                  );
-                })
-                .join('');
-              extraRequestsEl.innerHTML = '<ul class="space-y-2">' + list + '</ul>';
-            }
-
-            function toggleForm(extras) {
-              if (!form) return;
-              const hasExtras = Array.isArray(extras) && extras.length > 0;
-              form.style.display = hasExtras ? '' : 'none';
-              if (selectEl) {
-                selectEl.innerHTML = '';
-                if (hasExtras) {
-                  extras.forEach(extra => {
-                    const option = document.createElement('option');
-                    option.value = extra.code;
-                    option.textContent = extra.priceFormatted
-                      ? extra.name + ' – ' + extra.priceFormatted
-                      : extra.name;
-                    selectEl.appendChild(option);
-                  });
-                }
+              const lines = [];
+              const total = summary.totalFormatted || summary.totalCents;
+              if (summary.totalCents > 0) {
+                lines.push('<li>Total extras: <strong>' + escapeHtml(String(total)) + '</strong></li>');
               }
-              if (quantityEl) {
-                quantityEl.value = '1';
+              if (summary.refundedCents > 0) {
+                const refunded = summary.refundedFormatted || summary.refundedCents;
+                lines.push('<li>Reembolsado: ' + escapeHtml(String(refunded)) + '</li>');
               }
+              if ((summary.outstandingCents || 0) > 0 || (summary.totalCents || 0) > 0) {
+                const outstanding = summary.outstandingFormatted || summary.outstandingCents;
+                lines.push('<li>Por cobrar: <strong>' + escapeHtml(String(outstanding)) + '</strong></li>');
+              }
+              extrasSummaryEl.innerHTML = lines.length
+                ? '<ul class="space-y-1 text-sm text-slate-600">' + lines.join('') + '</ul>'
+                : '<p class="text-sm text-slate-600">Sem extras registados.</p>';
             }
 
             function renderData(data) {
@@ -1861,8 +2161,12 @@ app.post('/book', (req, res) => {
               }
               if (data.extras) {
                 renderExtrasAvailable(data.extras.available);
-                renderExtraRequests(data.extras.requests);
-                toggleForm(data.extras.available);
+                renderExtraPurchases(data.extras.purchases);
+                renderExtrasSummary(data.extras.summary);
+              } else {
+                renderExtrasAvailable([]);
+                renderExtraPurchases([]);
+                renderExtrasSummary(null);
               }
             }
 
@@ -1891,36 +2195,68 @@ app.post('/book', (req, res) => {
               form.addEventListener('submit', event => {
                 event.preventDefault();
                 if (!bookingId || !token) return;
-                const extraCode = selectEl ? selectEl.value : '';
-                const qtyValue = quantityEl ? Number(quantityEl.value || '1') : 1;
-                const payload = {
-                  bookingId: Number(bookingId),
-                  token,
-                  extraCode,
-                  quantity: Number.isFinite(qtyValue) && qtyValue > 0 ? qtyValue : 1
-                };
-                fetch('/api/guest/extra', {
+                const items = [];
+                if (extrasAvailableEl) {
+                  extrasAvailableEl.querySelectorAll('[data-extra-item]').forEach(itemEl => {
+                    const id = itemEl.getAttribute('data-extra-id');
+                    const input = itemEl.querySelector('[data-extra-quantity]');
+                    const qtyValue = input ? Number(input.value || '0') : 0;
+                    const quantity = Number.isFinite(qtyValue) && qtyValue > 0 ? Math.round(qtyValue) : 0;
+                    if (id && quantity > 0) {
+                      items.push({ id, quantity });
+                    }
+                  });
+                }
+
+                if (!items.length) {
+                  if (feedbackEl) {
+                    feedbackEl.textContent = 'Selecione ao menos um extra.';
+                    feedbackEl.classList.remove('text-emerald-600');
+                    feedbackEl.classList.add('text-rose-600');
+                  }
+                  return;
+                }
+
+                if (feedbackEl) {
+                  feedbackEl.textContent = 'A processar...';
+                  feedbackEl.classList.remove('text-rose-600');
+                  feedbackEl.classList.remove('text-emerald-600');
+                }
+                if (submitBtn) {
+                  submitBtn.setAttribute('disabled', 'disabled');
+                }
+
+                fetch('/api/guest/extras/checkout', {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
                     Accept: 'application/json'
                   },
-                  body: JSON.stringify(payload)
+                  body: JSON.stringify({
+                    bookingId: Number(bookingId),
+                    token,
+                    items
+                  })
                 })
                   .then(res => (res.ok ? res.json() : res.json().catch(() => ({})).then(body => Promise.reject(body))))
                   .then(data => {
                     renderData(data);
                     if (feedbackEl) {
-                      feedbackEl.textContent = 'Pedido registado com sucesso.';
+                      feedbackEl.textContent = 'Extras adicionados com sucesso.';
                       feedbackEl.classList.remove('text-rose-600');
                       feedbackEl.classList.add('text-emerald-600');
                     }
                   })
                   .catch(err => {
                     if (feedbackEl) {
-                      feedbackEl.textContent = err && err.error ? err.error : 'Não foi possível registar o pedido.';
+                      feedbackEl.textContent = err && err.error ? err.error : 'Não foi possível registar os extras.';
                       feedbackEl.classList.remove('text-emerald-600');
                       feedbackEl.classList.add('text-rose-600');
+                    }
+                  })
+                  .finally(() => {
+                    if (submitBtn) {
+                      submitBtn.removeAttribute('disabled');
                     }
                   });
               });
@@ -1978,15 +2314,13 @@ app.post('/book', (req, res) => {
     res.json(payload);
   });
 
-  app.post('/api/guest/extra', (req, res) => {
+  app.post('/api/guest/extras/checkout', (req, res) => {
     const body = req.body || {};
     const bookingId = Number.parseInt(body.bookingId, 10);
     const requestedToken = normalizeGuestToken(body.token);
-    const extraCode = typeof body.extraCode === 'string' ? body.extraCode.trim() : '';
-    const quantityRaw = Number(body.quantity);
-    const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.min(20, Math.round(quantityRaw)) : 1;
+    const itemsRaw = Array.isArray(body.items) ? body.items : [];
 
-    if (!Number.isInteger(bookingId) || bookingId <= 0 || !requestedToken || !extraCode) {
+    if (!Number.isInteger(bookingId) || bookingId <= 0 || !requestedToken) {
       return res.status(400).json({ error: 'Parâmetros inválidos.' });
     }
 
@@ -2013,30 +2347,110 @@ app.post('/book', (req, res) => {
       return res.status(400).json({ error: 'Nenhum extra disponível para esta reserva.' });
     }
 
-    const selected = extrasAvailable.find(extra => extra.code === extraCode);
-    if (!selected) {
-      return res.status(400).json({ error: 'Extra inválido.' });
+    const extrasIndex = new Map();
+    extrasAvailable.forEach(extra => {
+      if (!extra) return;
+      extrasIndex.set(extra.id, extra);
+      if (extra.code && !extrasIndex.has(extra.code)) {
+        extrasIndex.set(extra.code, extra);
+      }
+    });
+
+    const consolidated = new Map();
+    for (const item of itemsRaw) {
+      if (!item) continue;
+      const idRaw = typeof item.id === 'string' ? item.id.trim() : '';
+      const codeRaw = typeof item.code === 'string' ? item.code.trim() : '';
+      const key = idRaw || codeRaw;
+      const quantityRaw = item.quantity != null ? Number(item.quantity) : 0;
+      const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.min(50, Math.round(quantityRaw)) : 0;
+      if (!key || quantity <= 0) continue;
+      const existing = consolidated.get(key) || 0;
+      const newQuantity = Math.min(100, existing + quantity);
+      consolidated.set(key, newQuantity);
+    }
+
+    if (consolidated.size === 0) {
+      return res.status(400).json({ error: 'Selecione ao menos um extra.' });
+    }
+
+    const now = dayjs();
+    const selections = [];
+    for (const [key, quantity] of consolidated.entries()) {
+      const extra = extrasIndex.get(key);
+      if (!extra) {
+        return res.status(400).json({ error: 'Extra inválido.' });
+      }
+      const eligibility = validateExtraEligibility(extra, bookingRow, now);
+      if (!eligibility.ok) {
+        const message =
+          eligibility.reason === 'schedule'
+            ? 'Extra indisponível no horário atual.'
+            : eligibility.reason === 'long_stay'
+              ? 'Extra disponível apenas para estadias longas.'
+              : 'Extra inválido.';
+        return res.status(409).json({ error: message });
+      }
+      const pricing = computeExtraPricing(extra, bookingRow, quantity);
+      selections.push({ extra, quantity, pricing });
+    }
+
+    try {
+      const insertExtras = db.transaction(records => {
+        const stmt = db.prepare(
+          `INSERT INTO booking_extras(
+            booking_id, extra_id, extra_name, pricing_rule, pricing_payload_json,
+            quantity, unit_price_cents, total_cents, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`
+        );
+        for (const record of records) {
+          stmt.run(
+            bookingId,
+            record.extra.id || record.extra.code,
+            record.extra.name,
+            record.extra.pricingRule || 'standard',
+            JSON.stringify(record.pricing.pricingPayload || null),
+            record.quantity,
+            record.pricing.unitPriceCents,
+            record.pricing.totalCents
+          );
+        }
+      });
+      insertExtras(selections);
+    } catch (err) {
+      console.error('Failed to store booking extras', err);
+      return res.status(500).json({ error: 'Não foi possível registar os extras.' });
     }
 
     if (guestPortalService) {
-      guestPortalService.recordEvent({
-        bookingId,
-        token: requestedToken,
-        eventType: 'extra_requested',
-        payload: {
-          code: selected.code,
-          name: selected.name,
-          quantity
-        },
-        request: req
-      });
+      try {
+        guestPortalService.recordEvent({
+          bookingId,
+          token: requestedToken,
+          eventType: 'extras_checkout',
+          payload: {
+            items: selections.map(selection => ({
+              id: selection.extra.id,
+              name: selection.extra.name,
+              quantity: selection.quantity,
+              pricingRule: selection.extra.pricingRule,
+              totalCents: selection.pricing.totalCents
+            }))
+          },
+          request: req
+        });
+      } catch (err) {
+        console.warn('Failed to record guest portal event for extras checkout', err);
+      }
     }
 
-    const payload = buildGuestPortalPayload(bookingRow);
+    const payload = buildGuestPortalPayload(loadGuestBookingRow(bookingId));
     res.json({
       booking: payload ? payload.booking : null,
       payments: payload ? payload.payments : null,
-      extras: payload ? payload.extras : { available: [], requests: [] }
+      extras: payload
+        ? payload.extras
+        : { available: [], purchases: [], summary: { totalCents: 0, refundedCents: 0, outstandingCents: 0 } }
     });
   });
 
