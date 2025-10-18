@@ -3842,6 +3842,8 @@ module.exports = function registerBackoffice(app, context) {
       </svg>
     `.trim();
 
+    const enableNavLinksAsTabs = isFlagEnabled('FEATURE_NAV_LINKS_AS_TABS');
+
     const navSections = [
       {
         id: 'operations',
@@ -3849,7 +3851,15 @@ module.exports = function registerBackoffice(app, context) {
         items: [
           { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
           { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
-          { id: 'bookings-link', label: 'Reservas', icon: 'notebook-text', allowed: canViewBookings, href: '/admin/bookings' },
+          {
+            id: 'bookings-link',
+            label: 'Reservas',
+            icon: 'notebook-text',
+            allowed: canViewBookings,
+            href: '/admin/bookings',
+            paneId: 'bookings',
+            loadMode: 'fragment'
+          },
           { id: 'housekeeping', label: 'Painel de limpezas', iconSvg: broomIconSvg, icon: 'broom', allowed: canSeeHousekeeping },
           {
             id: 'housekeeping-manage',
@@ -3913,14 +3923,25 @@ module.exports = function registerBackoffice(app, context) {
       }
     ];
     const allNavItems = navSections.flatMap(section => section.items);
-    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
+    const defaultPaneCandidate = allNavItems.find(
+      item => item.allowed && (!item.href || (enableNavLinksAsTabs && item.paneId))
+    );
+    const defaultPane = sanitizeId(
+      defaultPaneCandidate ? defaultPaneCandidate.paneId || defaultPaneCandidate.id : 'overview',
+      'overview'
+    );
     const navButtonsHtml = navSections
       .map(section => {
         const itemsHtml = section.items
           .map(item => {
             const classes = ['bo-tab'];
             if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-            if (!item.href && item.id === defaultPane) classes.push('is-active');
+            const paneTarget = !item.href
+              ? sanitizeId(item.id, item.id)
+              : enableNavLinksAsTabs && item.paneId
+                ? sanitizeId(item.paneId, item.paneId)
+                : '';
+            if (paneTarget && paneTarget === defaultPane) classes.push('is-active');
             if (item.href) classes.push('bo-tab--link');
             const iconMarkup = item.iconSvg
               ? item.iconSvg
@@ -3931,10 +3952,27 @@ module.exports = function registerBackoffice(app, context) {
             }
 
             if (item.href) {
-              return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
+              const attrParts = [];
+              if (paneTarget) {
+                attrParts.push(`data-bo-target="${paneTarget}"`);
+                attrParts.push('role="tab"');
+                attrParts.push(`aria-controls="pane-${paneTarget}"`);
+                if (item.loadMode) {
+                  attrParts.push(`data-bo-load="${esc(item.loadMode)}"`);
+                }
+                attrParts.push(`aria-selected="${paneTarget === defaultPane ? 'true' : 'false'}"`);
+                if (paneTarget !== defaultPane) {
+                  attrParts.push('tabindex="-1"');
+                }
+              }
+              return `<a class="${classes.join(' ')}" href="${esc(item.href)}"${attrParts.length ? ' ' + attrParts.join(' ') : ''}>${iconMarkup}<span>${esc(item.label)}</span></a>`;
             }
 
-            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
+            const buttonAttrs = [`data-bo-target="${paneTarget || sanitizeId(item.id, item.id)}"`];
+            if (paneTarget) {
+              buttonAttrs.push(`aria-controls="pane-${paneTarget}"`);
+            }
+            return `<button type="button" class="${classes.join(' ')}" ${buttonAttrs.join(' ')}>${iconMarkup}<span>${esc(item.label)}</span></button>`;
           })
           .join('');
 
@@ -4926,7 +4964,7 @@ module.exports = function registerBackoffice(app, context) {
 
                 <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
-                <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                <section class="bo-pane bo-pane--split is-active" id="pane-overview" data-bo-pane="overview" role="tabpanel" aria-hidden="false">
                 <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
                   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                     <div>
@@ -5091,7 +5129,15 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="finance">
+              <section class="bo-pane" id="pane-bookings" data-bo-pane="bookings" role="tabpanel" aria-hidden="true">
+                <div class="bo-pane__columns bo-span-all" data-bo-pane-placeholder>
+                  <div class="bo-card bo-span-all">
+                    <p class="bo-empty">Seleciona "Reservas" para carregar o painel.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" id="pane-finance" data-bo-pane="finance" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card">
                     <h2>Resumo financeiro</h2>
@@ -5130,7 +5176,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="revenue">
+              <section class="bo-pane" id="pane-revenue" data-bo-pane="revenue" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card bo-span-all">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -5210,7 +5256,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="channel-manager">
+              <section class="bo-pane" id="pane-channel-manager" data-bo-pane="channel-manager" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card bo-span-all">
                     <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -5271,13 +5317,13 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
+              <section class="bo-pane" id="pane-estatisticas" data-bo-pane="estatisticas" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canViewAutomation ? statisticsCard : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="reviews" data-reviews-pane>
+              <section class="bo-pane" id="pane-reviews" data-bo-pane="reviews" data-reviews-pane role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
                     <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -5330,7 +5376,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="housekeeping">
+              <section class="bo-pane" id="pane-housekeeping" data-bo-pane="housekeeping" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canSeeHousekeeping
                     ? html`
@@ -5363,7 +5409,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="emails">
+              <section class="bo-pane" id="pane-emails" data-bo-pane="emails" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canManageEmailTemplates
                     ? html`
@@ -5377,7 +5423,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="messages">
+              <section class="bo-pane" id="pane-messages" data-bo-pane="messages" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canManageEmailTemplates
                     ? html`
@@ -5393,7 +5439,7 @@ module.exports = function registerBackoffice(app, context) {
 
               ${canViewHistory
                 ? html`
-                    <section class="bo-pane" data-bo-pane="history">
+                    <section class="bo-pane" id="pane-history" data-bo-pane="history" role="tabpanel" aria-hidden="true">
                       <div class="bo-pane__columns">
                         <div class="bo-card bo-span-all space-y-6">
                           <div>
@@ -5418,7 +5464,7 @@ module.exports = function registerBackoffice(app, context) {
                   `
                 : ''}
 
-              <section class="bo-pane" data-bo-pane="branding">
+              <section class="bo-pane" id="pane-branding" data-bo-pane="branding" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card bo-span-all">
                     <h2>Identidade visual</h2>
@@ -5442,7 +5488,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="users">
+              <section class="bo-pane" id="pane-users" data-bo-pane="users" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canManageUsers
                     ? html`
@@ -5467,7 +5513,7 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
-              <section class="bo-pane" data-bo-pane="calendar">
+              <section class="bo-pane" id="pane-calendar" data-bo-pane="calendar" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   ${canViewCalendar
                     ? html`
@@ -5537,6 +5583,7 @@ module.exports = function registerBackoffice(app, context) {
           <script>${sidebarControlsScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
+          <script>window.FEATURE_NAV_LINKS_AS_TABS = ${enableNavLinksAsTabs ? 'true' : 'false'};</script>
           <script>${renderDashboardTabsScript(defaultPane)}</script>
           <script>${uxEnhancementsScript}</script>
         `
@@ -7477,6 +7524,70 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
   const canEditBooking = userCan(req.user, 'bookings.edit');
   const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
+  const bookingsContent = html`
+    <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+
+    <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+      <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
+      <select class="input" name="status">
+        <option value="">Todos os estados</option>
+        <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
+        <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
+      </select>
+      <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
+      <button class="btn btn-primary">Filtrar</button>
+    </form>
+
+    <div class="card p-0">
+      <div class="responsive-table">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-slate-500">
+              <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(b => `
+              <tr>
+                <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
+                <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
+                <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
+                <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
+                <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
+                <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
+                <td data-label="Status">
+                  <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
+                    ${b.status}
+                  </span>
+                </td>
+                <td data-label="Ações">
+                  <div class="table-cell-actions">
+                    <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
+                    ${canCancelBooking ? `
+                      <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
+                        <button class="text-rose-600">Cancelar</button>
+                      </form>
+                    ` : ''}
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
+    </div>
+  `;
+
+  const wantsFragment = req.query.fragment === '1' || req.get('X-Fragment') === '1';
+  res.set('Vary', 'X-Fragment, Accept');
+
+  if (wantsFragment) {
+    res.type('text/html; charset=utf-8').send(bookingsContent);
+    return;
+  }
+
   res.send(layout({
     title: 'Reservas',
     user: req.user,
@@ -7485,59 +7596,7 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
     pageClass: 'page-backoffice page-bookings',
     body: html`
       <div class="bo-page">
-        <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
-
-        <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-        <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
-        <select class="input" name="status">
-          <option value="">Todos os estados</option>
-          <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-          <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
-        </select>
-        <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
-        <button class="btn btn-primary">Filtrar</button>
-      </form>
-
-      <div class="card p-0">
-        <div class="responsive-table">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-slate-500">
-                <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(b => `
-                <tr>
-                  <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
-                  <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
-                  <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
-                  <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
-                  <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
-                  <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                  <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                  <td data-label="Status">
-                    <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
-                      ${b.status}
-                    </span>
-                  </td>
-                  <td data-label="Ações">
-                    <div class="table-cell-actions">
-                      <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
-                      ${canCancelBooking ? `
-                        <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-                          <button class="text-rose-600">Cancelar</button>
-                        </form>
-                      ` : ''}
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-        ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
-      </div>
+        ${bookingsContent}
       </div>
     `
   }));
