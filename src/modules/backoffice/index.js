@@ -1456,7 +1456,7 @@ module.exports = function registerBackoffice(app, context) {
       : '';
 
     const bucketGrid = bucketsForGrid && bucketsForGrid.length
-      ? html`<div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+      ? html`<div class="grid gap-6" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
           ${bucketsForGrid
             .map(
               (bucket) => html`<section class="${cardClass} p-4 space-y-4 ${
