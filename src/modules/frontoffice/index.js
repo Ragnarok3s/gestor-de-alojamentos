@@ -3700,6 +3700,36 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
     ? `<a class="btn btn-primary" data-export-download href="${esc(downloadUrl)}">Descarregar Excel</a>`
     : '<button class="btn btn-primary" type="button" disabled>Configuração indisponível</button>';
 
+  const wantsFragment = req.query.fragment === '1' || req.get('X-Fragment') === '1';
+  res.set('Vary', 'X-Fragment, Accept');
+
+  const exportContent = html`
+    <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
+    <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
+    <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
+      <div>
+        <label class="text-sm">Mês inicial</label>
+        <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
+      </div>
+      <div>
+        <label class="text-sm">Quantos meses (1–12)</label>
+        <input type="number" min="1" max="12" name="months" value="${monthsSelected}" class="input" required />
+      </div>
+      <button class="btn btn-light" type="submit">Atualizar link</button>
+    </form>
+    <div class="mt-4 space-y-2">
+      ${downloadCta}
+      ${linkNotice}
+      ${generatedAt}
+    </div>
+    <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
+  `;
+
+  if (wantsFragment) {
+    res.type('text/html; charset=utf-8').send(exportContent);
+    return;
+  }
+
   res.send(
     layout({
       title: 'Exportar Mapa (Excel)',
@@ -3709,25 +3739,7 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
       pageClass: 'page-backoffice page-export',
       body: html`
         <div class="bo-page">
-          <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
-          <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
-          <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
-            <div>
-              <label class="text-sm">Mês inicial</label>
-              <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
-            </div>
-            <div>
-              <label class="text-sm">Quantos meses (1–12)</label>
-              <input type="number" min="1" max="12" name="months" value="${monthsSelected}" class="input" required />
-            </div>
-            <button class="btn btn-light" type="submit">Atualizar link</button>
-          </form>
-          <div class="mt-4 space-y-2">
-            ${downloadCta}
-            ${linkNotice}
-            ${generatedAt}
-          </div>
-          <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
+          ${exportContent}
         </div>
       `
     })

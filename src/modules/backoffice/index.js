@@ -3876,7 +3876,15 @@ module.exports = function registerBackoffice(app, context) {
             href: '/admin/extras'
           },
           { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-          { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' }
+          {
+            id: 'content-center-link',
+            label: 'Centro de Conteúdos',
+            icon: 'notebook-pen',
+            allowed: true,
+            href: '/admin/content-center',
+            paneId: 'content-center',
+            loadMode: 'iframe'
+          }
         ]
       },
       {
@@ -3889,10 +3897,28 @@ module.exports = function registerBackoffice(app, context) {
             label: 'Calendário de receita',
             icon: 'calendar-range',
             allowed: canViewRevenueCalendar,
-            href: '/admin/revenue-calendar'
+            href: '/admin/revenue-calendar',
+            paneId: 'revenue-calendar',
+            loadMode: 'fragment'
           },
-          { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
-          { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
+          {
+            id: 'exports-link',
+            label: 'Exportações',
+            icon: 'file-spreadsheet',
+            allowed: canExportBookings,
+            href: '/admin/export',
+            paneId: 'exports',
+            loadMode: 'fragment'
+          },
+          {
+            id: 'rates-link',
+            label: 'Regras de tarifas',
+            icon: 'wand-2',
+            allowed: canManageRates,
+            href: '/admin/rates/rules',
+            paneId: 'rates-rules',
+            loadMode: 'fragment'
+          }
         ]
       },
       {
@@ -5137,6 +5163,13 @@ module.exports = function registerBackoffice(app, context) {
                 </div>
               </section>
 
+              <section class="bo-pane" id="pane-content-center" data-bo-pane="content-center" role="tabpanel" aria-hidden="true">
+                <div class="bo-pane__columns bo-span-all" data-bo-pane-placeholder>
+                  <div class="bo-card bo-span-all">
+                    <p class="bo-empty">Seleciona "Centro de Conteúdos" para carregar o painel.</p>
+                  </div>
+                </div>
+              </section>
               <section class="bo-pane" id="pane-finance" data-bo-pane="finance" role="tabpanel" aria-hidden="true">
                 <div class="bo-pane__columns">
                   <div class="bo-card">
@@ -5172,6 +5205,30 @@ module.exports = function registerBackoffice(app, context) {
                           .join('')}</tbody>
                       </table>
                     </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" id="pane-revenue-calendar" data-bo-pane="revenue-calendar" role="tabpanel" aria-hidden="true">
+                <div class="bo-pane__columns bo-span-all" data-bo-pane-placeholder>
+                  <div class="bo-card bo-span-all">
+                    <p class="bo-empty">Seleciona "Calendário de receita" para carregar o painel.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" id="pane-exports" data-bo-pane="exports" role="tabpanel" aria-hidden="true">
+                <div class="bo-pane__columns bo-span-all" data-bo-pane-placeholder>
+                  <div class="bo-card bo-span-all">
+                    <p class="bo-empty">Seleciona "Exportações" para carregar o painel.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="bo-pane" id="pane-rates-rules" data-bo-pane="rates-rules" role="tabpanel" aria-hidden="true">
+                <div class="bo-pane__columns bo-span-all" data-bo-pane-placeholder>
+                  <div class="bo-card bo-span-all">
+                    <p class="bo-empty">Seleciona "Regras de tarifas" para carregar o painel.</p>
                   </div>
                 </div>
               </section>
@@ -5671,6 +5728,14 @@ module.exports = function registerBackoffice(app, context) {
       </div>
       <script>${revenueCalendarScript}</script>
     `;
+
+    const wantsFragment = req.query.fragment === '1' || req.get('X-Fragment') === '1';
+    res.set('Vary', 'X-Fragment, Accept');
+
+    if (wantsFragment) {
+      res.type('text/html; charset=utf-8').send(body);
+      return;
+    }
 
     res.send(
       layout({
@@ -6672,6 +6737,7 @@ app.post('/admin/rates/:rateId/delete', requireLogin, requirePermission('rates.m
 });
 
 app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (req, res) => {
+  const wantsFragment = req.query.fragment === '1' || req.get('X-Fragment') === '1';
   const rules = rateRuleService.listRules({ currency: 'eur' });
   const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
   const units = db
@@ -6806,144 +6872,152 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
     })();
   `);
 
+  const pageContent = html`
+    <div class="bo-page bo-page--wide">
+      ${renderBreadcrumbs([
+        { label: 'Backoffice', href: '/admin' },
+        { label: 'Regras de tarifas' }
+      ])}
+      <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+      <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
+      <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>
+      ${successMessage
+        ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
+        : ''}
+      ${errorMessage
+        ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
+        : ''}
+      <div class="grid gap-6 lg:grid-cols-2">
+        <section class="card p-6 space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
+            <p class="text-sm text-slate-500">Defina o nome, tipo de condição e o ajuste aplicado ao preço base.</p>
+          </div>
+          <form method="post" action="/admin/rates/rules/save" class="grid gap-4">
+            <input type="hidden" name="rule_id" value="${editingRule ? editingRule.id : ''}" />
+            <label class="grid gap-1 text-sm">
+              <span>Nome da regra</span>
+              <input type="text" name="name" class="input" required maxlength="80" value="${esc(formName)}" />
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span>Tipo</span>
+              <select name="type" class="input" data-rule-type required>
+                ${typeOptions}
+              </select>
+            </label>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Ajuste (%)</span>
+                <input type="number" step="0.1" name="adjustment_percent" class="input" value="${esc(formAdjustment)}" required />
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Prioridade</span>
+                <input type="number" step="1" name="priority" class="input" value="${esc(formPriority)}" />
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Preço mínimo (€)</span>
+                <input type="number" step="0.01" name="min_price" class="input" value="${esc(formMinPrice)}" />
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Preço máximo (€)</span>
+                <input type="number" step="0.01" name="max_price" class="input" value="${esc(formMaxPrice)}" />
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-1 text-sm">
+                <span>Propriedade</span>
+                <select name="property_id" class="input">${propertyOptions}</select>
+              </label>
+              <label class="grid gap-1 text-sm">
+                <span>Unidade específica</span>
+                <select name="unit_id" class="input">${unitOptions}</select>
+              </label>
+            </div>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="occupancy">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Ocupação</legend>
+              <div class="grid gap-3 md:grid-cols-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Ocupação mínima (%)</span>
+                  <input type="number" step="1" min="0" max="100" name="min_occupancy" class="input" value="${esc(occupancyMin)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Ocupação máxima (%)</span>
+                  <input type="number" step="1" min="0" max="100" name="max_occupancy" class="input" value="${esc(occupancyMax)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Janela (dias)</span>
+                  <input type="number" step="1" min="1" name="occupancy_window" class="input" value="${esc(occupancyWindow)}" />
+                </label>
+              </div>
+              <p class="text-xs text-slate-500">Compara a ocupação da propriedade/unidade para aplicar o ajuste.</p>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="lead_time">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Antecedência</legend>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-1 text-sm">
+                  <span>Antecedência mínima (dias)</span>
+                  <input type="number" step="1" min="0" name="min_lead" class="input" value="${esc(leadMin)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Antecedência máxima (dias)</span>
+                  <input type="number" step="1" min="0" name="max_lead" class="input" value="${esc(leadMax)}" />
+                </label>
+              </div>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="weekday">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Dia da semana</legend>
+              <div class="grid gap-2 md:grid-cols-2">${weekdayInputs}</div>
+            </fieldset>
+            <fieldset class="grid gap-3" data-rule-fields data-rule-type="event">
+              <legend class="text-sm font-semibold text-slate-700">Condição: Evento / Datas especiais</legend>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-1 text-sm">
+                  <span>Data inicial</span>
+                  <input type="date" name="event_start" class="input" value="${esc(eventStart)}" />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>Data final</span>
+                  <input type="date" name="event_end" class="input" value="${esc(eventEnd)}" />
+                </label>
+              </div>
+            </fieldset>
+            <label class="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" name="active" value="1" ${formActive ? 'checked' : ''} />
+              <span>Regra ativa</span>
+            </label>
+            <div class="flex gap-3">
+              <button type="submit" class="btn btn-primary">${editingRule ? 'Atualizar regra' : 'Guardar regra'}</button>
+              ${editingRule ? `<a class="btn btn-light" href="/admin/rates/rules">Cancelar</a>` : ''}
+            </div>
+          </form>
+        </section>
+        <section class="card p-6 space-y-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800">Regras configuradas</h2>
+            <p class="text-sm text-slate-500">Regras são avaliadas por prioridade e podem combinar entre si. Ajustes percentuais são multiplicativos.</p>
+          </div>
+          <ul class="space-y-4">${ruleItems}</ul>
+        </section>
+      </div>
+      <script>${ruleFormScript}</script>
+    </div>
+  `;
+
+  res.set('Vary', 'X-Fragment, Accept');
+  if (wantsFragment) {
+    res.type('text/html; charset=utf-8').send(pageContent);
+    return;
+  }
+
   res.send(
     layout({
       title: 'Regras automáticas de tarifas',
       user: req.user,
       activeNav: 'backoffice',
       pageClass: 'page-backoffice page-rates',
-      body: html`
-        <div class="bo-page bo-page--wide">
-          ${renderBreadcrumbs([
-            { label: 'Backoffice', href: '/admin' },
-            { label: 'Regras de tarifas' }
-          ])}
-          <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-          <h1 class="text-2xl font-semibold mb-4">Regras automáticas de tarifas</h1>
-          <p class="text-sm text-slate-600 mb-6">Configure ajustes dinâmicos que combinam ocupação, antecedência, dias da semana e eventos especiais.</p>
-          ${successMessage
-            ? `<div class="inline-feedback" data-variant="success" role="status">${esc(successMessage)}</div>`
-            : ''}
-          ${errorMessage
-            ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
-            : ''}
-          <div class="grid gap-6 lg:grid-cols-2">
-          <section class="card p-6 space-y-4">
-            <div>
-              <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
-              <p class="text-sm text-slate-500">Defina o nome, tipo de condição e o ajuste aplicado ao preço base.</p>
-            </div>
-            <form method="post" action="/admin/rates/rules/save" class="grid gap-4">
-              <input type="hidden" name="rule_id" value="${editingRule ? editingRule.id : ''}" />
-              <label class="grid gap-1 text-sm">
-                <span>Nome da regra</span>
-                <input type="text" name="name" class="input" required maxlength="80" value="${esc(formName)}" />
-              </label>
-              <label class="grid gap-1 text-sm">
-                <span>Tipo</span>
-                <select name="type" class="input" data-rule-type required>
-                  ${typeOptions}
-                </select>
-              </label>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Ajuste (%)</span>
-                  <input type="number" step="0.1" name="adjustment_percent" class="input" value="${esc(formAdjustment)}" required />
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Prioridade</span>
-                  <input type="number" step="1" name="priority" class="input" value="${esc(formPriority)}" />
-                </label>
-              </div>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Preço mínimo (€)</span>
-                  <input type="number" step="0.01" name="min_price" class="input" value="${esc(formMinPrice)}" />
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Preço máximo (€)</span>
-                  <input type="number" step="0.01" name="max_price" class="input" value="${esc(formMaxPrice)}" />
-                </label>
-              </div>
-              <div class="grid gap-4 md:grid-cols-2">
-                <label class="grid gap-1 text-sm">
-                  <span>Propriedade</span>
-                  <select name="property_id" class="input">${propertyOptions}</select>
-                </label>
-                <label class="grid gap-1 text-sm">
-                  <span>Unidade específica</span>
-                  <select name="unit_id" class="input">${unitOptions}</select>
-                </label>
-              </div>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="occupancy">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Ocupação</legend>
-                <div class="grid gap-3 md:grid-cols-3">
-                  <label class="grid gap-1 text-sm">
-                    <span>Ocupação mínima (%)</span>
-                    <input type="number" step="1" min="0" max="100" name="min_occupancy" class="input" value="${esc(occupancyMin)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Ocupação máxima (%)</span>
-                    <input type="number" step="1" min="0" max="100" name="max_occupancy" class="input" value="${esc(occupancyMax)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Janela (dias)</span>
-                    <input type="number" step="1" min="1" name="occupancy_window" class="input" value="${esc(occupancyWindow)}" />
-                  </label>
-                </div>
-                <p class="text-xs text-slate-500">Compara a ocupação da propriedade/unidade para aplicar o ajuste.</p>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="lead_time">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Antecedência</legend>
-                <div class="grid gap-3 md:grid-cols-2">
-                  <label class="grid gap-1 text-sm">
-                    <span>Antecedência mínima (dias)</span>
-                    <input type="number" step="1" min="0" name="min_lead" class="input" value="${esc(leadMin)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Antecedência máxima (dias)</span>
-                    <input type="number" step="1" min="0" name="max_lead" class="input" value="${esc(leadMax)}" />
-                  </label>
-                </div>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="weekday">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Dia da semana</legend>
-                <div class="grid gap-2 md:grid-cols-2">${weekdayInputs}</div>
-              </fieldset>
-              <fieldset class="grid gap-3" data-rule-fields data-rule-type="event">
-                <legend class="text-sm font-semibold text-slate-700">Condição: Evento / Datas especiais</legend>
-                <div class="grid gap-3 md:grid-cols-2">
-                  <label class="grid gap-1 text-sm">
-                    <span>Data inicial</span>
-                    <input type="date" name="event_start" class="input" value="${esc(eventStart)}" />
-                  </label>
-                  <label class="grid gap-1 text-sm">
-                    <span>Data final</span>
-                    <input type="date" name="event_end" class="input" value="${esc(eventEnd)}" />
-                  </label>
-                </div>
-              </fieldset>
-              <label class="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" name="active" value="1" ${formActive ? 'checked' : ''} />
-                <span>Regra ativa</span>
-              </label>
-              <div class="flex gap-3">
-                <button type="submit" class="btn btn-primary">${editingRule ? 'Atualizar regra' : 'Guardar regra'}</button>
-                ${editingRule ? `<a class="btn btn-light" href="/admin/rates/rules">Cancelar</a>` : ''}
-              </div>
-            </form>
-          </section>
-          <section class="card p-6 space-y-4">
-            <div>
-              <h2 class="text-lg font-semibold text-slate-800">Regras configuradas</h2>
-              <p class="text-sm text-slate-500">Regras são avaliadas por prioridade e podem combinar entre si. Ajustes percentuais são multiplicativos.</p>
-            </div>
-            <ul class="space-y-4">${ruleItems}</ul>
-          </section>
-          </div>
-          <script>${ruleFormScript}</script>
-        </div>
-      `,
+      body: pageContent
     })
   );
 });
