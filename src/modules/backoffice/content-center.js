@@ -734,7 +734,8 @@ module.exports = function registerContentCenter(app, context) {
             hydrateForm();
           })();
         </script>
-      `;
+      `
+      });
 
       res.send(
         layout({
