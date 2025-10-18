@@ -1222,6 +1222,8 @@ module.exports = function registerBackoffice(app, context) {
       if (priority === 'baixa') return 'bg-slate-100 text-slate-600';
       return 'bg-sky-100 text-sky-700';
     };
+    const todayBucket = !isBackofficeVariant && Array.isArray(buckets) ? buckets.find((bucket) => bucket.isToday) : null;
+    const bucketsForGrid = isBackofficeVariant || !Array.isArray(buckets) ? buckets : buckets.filter((bucket) => !bucket.isToday);
 
     const renderTaskActions = (task) => {
       const actions = [];
@@ -1243,36 +1245,27 @@ module.exports = function registerBackoffice(app, context) {
     const renderTaskCard = (task, { highlight = false, showDate = false } = {}) => {
       const propertyUnitLine = `${task.property_name ? `${task.property_name} · ` : ''}${task.unit_name || 'Sem unidade associada'}`;
       const meta = [];
+      const buildMetaBadge = (label, value) =>
+        html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+          <span class="font-semibold text-slate-700">${esc(label)}:</span>
+          <span class="text-slate-600">${esc(value)}</span>
+        </span>`;
       if (showDate && task.effective_date) {
-        meta.push(
-          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">${esc(
-            capitalizeMonth(dayjs(task.effective_date).format('D [de] MMMM'))
-          )}</span>`
-        );
+        meta.push(buildMetaBadge('Data', capitalizeMonth(dayjs(task.effective_date).format('D [de] MMMM'))));
       }
       if (task.due_time) {
-        meta.push(
-          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">${esc(
-            task.due_time
-          )}</span>`
-        );
+        meta.push(buildMetaBadge('Hora', task.due_time));
       }
       if (task.source && task.source !== 'manual') {
-        meta.push(
-          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Automático</span>`
-        );
+        meta.push(buildMetaBadge('Origem', 'Automático'));
       }
       if (task.created_by_username) {
-        meta.push(
-          html`<span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Por ${esc(
-            task.created_by_username
-          )}</span>`
-        );
+        meta.push(buildMetaBadge('Criado por', task.created_by_username));
       }
 
       const articleBaseClass = isBackofficeVariant
         ? `bo-housekeeping-task${highlight ? ' is-highlighted' : ''}`
-        : `rounded-lg border ${highlight ? 'border-rose-200 bg-rose-50/70' : 'border-slate-200 bg-white'} shadow-sm`;
+        : `rounded-xl border ${highlight ? 'border-rose-200 ring-1 ring-rose-200/60 bg-rose-50/40' : 'border-slate-200 bg-white'} shadow-sm`;
       const headerClass = isBackofficeVariant
         ? 'bo-housekeeping-task__header'
         : 'flex items-start justify-between gap-3';
@@ -1281,27 +1274,27 @@ module.exports = function registerBackoffice(app, context) {
         : 'flex flex-col items-end gap-1 text-right';
       const metaClass = isBackofficeVariant
         ? 'bo-housekeeping-task__meta'
-        : 'flex flex-wrap gap-2 text-xs text-slate-500';
+        : 'flex flex-wrap gap-2 text-xs text-slate-600';
       const actionsClass = isBackofficeVariant
         ? 'bo-housekeeping-task__actions'
-        : 'flex flex-wrap gap-2 pt-1';
+        : 'flex flex-wrap gap-2 pt-2';
 
-      return html`<article class="${articleBaseClass} p-3 shadow-sm space-y-2">
+      return html`<article class="${articleBaseClass} p-4 shadow-sm space-y-3">
         <div class="${headerClass}">
-          <div>
-            <p class="font-medium text-slate-900">${esc(task.title)}</p>
+          <div class="space-y-1">
+            <p class="font-semibold text-slate-900">${esc(task.title)}</p>
             <p class="text-sm text-slate-500">${esc(propertyUnitLine)}</p>
           </div>
           <div class="${statusWrapperClass}">
-            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(task.status)}">${esc(
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(task.status)}">${esc(
               statusLabels[task.status] || task.status
             )}</span>
-            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${priorityBadgeClass(task.priority)}">${esc(
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${priorityBadgeClass(task.priority)}">${esc(
               priorityLabels[task.priority] || task.priority
             )}</span>
           </div>
         </div>
-        ${task.booking_guest_name ? `<p class="text-sm text-slate-600">Hóspede: ${esc(task.booking_guest_name)}</p>` : ''}
+        ${task.booking_guest_name ? `<p class="text-sm text-slate-600"><span class="font-medium text-slate-700">Hóspede:</span> ${esc(task.booking_guest_name)}</p>` : ''}
         ${task.booking_checkin && task.booking_checkout
           ? `<p class="text-xs text-slate-500">Estadia: ${esc(formatDateRangeShort(task.booking_checkin, task.booking_checkout))}</p>`
           : ''}
@@ -1315,17 +1308,25 @@ module.exports = function registerBackoffice(app, context) {
 
     const renderBookingCard = (booking, type) => {
       const badgeClass =
-        type === 'checkout' ? 'bg-rose-100 text-rose-700' : type === 'backlog' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700';
+        type === 'checkout'
+          ? 'bg-rose-50 text-rose-600'
+          : type === 'backlog'
+          ? 'bg-amber-50 text-amber-600'
+          : 'bg-sky-50 text-sky-600';
+      const accentBorderClass =
+        type === 'checkout'
+          ? 'ring-1 ring-rose-200/70'
+          : type === 'backlog'
+          ? 'ring-1 ring-amber-200/70'
+          : 'ring-1 ring-sky-200/70';
       const label = type === 'checkout' ? 'Checkout' : type === 'backlog' ? 'Pendente' : 'Check-in';
       const cardClassName = isBackofficeVariant
         ? `bo-housekeeping-booking bo-housekeeping-booking--${type}`
-        : `rounded-lg border ${
-            type === 'checkout' || type === 'backlog' ? 'border-rose-200 bg-rose-50/60' : 'border-sky-200 bg-sky-50/60'
-          } p-3 shadow-sm space-y-1`;
-      return html`<article class="${cardClassName} space-y-1">
-        <div class="flex items-center justify-between text-sm font-medium text-slate-800">
+        : `rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-2 ${accentBorderClass}`;
+      return html`<article class="${cardClassName}">
+        <div class="flex items-center justify-between text-sm font-semibold text-slate-800">
           <span>${esc(booking.property_name || '')} · ${esc(booking.unit_name || '')}</span>
-          <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass}">${label}</span>
+          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${badgeClass}">${label}</span>
         </div>
         <div class="text-sm text-slate-600">${esc(booking.guest_name || '—')}</div>
         <div class="text-xs text-slate-500">${esc(booking.range_label || '')}</div>
@@ -1333,36 +1334,136 @@ module.exports = function registerBackoffice(app, context) {
     };
 
     const backlogSection = backlogCheckouts.length
-      ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
-          <div>
-            <h3 class="text-base font-semibold text-rose-700">Check-outs recentes a aguardar limpeza</h3>
-            <p class="text-sm text-rose-600">Garanta a higienização destas unidades para libertar novas entradas.</p>
-          </div>
-          <div class="grid gap-3 md:grid-cols-2">
-            ${backlogCheckouts.map((item) => renderBookingCard(item, 'backlog')).join('')}
-          </div>
-        </section>`
+      ? isBackofficeVariant
+        ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+            <div>
+              <h3 class="text-base font-semibold text-rose-700">Check-outs recentes a aguardar limpeza</h3>
+              <p class="text-sm text-rose-600">Garanta a higienização destas unidades para libertar novas entradas.</p>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              ${backlogCheckouts.map((item) => renderBookingCard(item, 'backlog')).join('')}
+            </div>
+          </section>`
+        : html`<section id="backlog-checkouts" class="${cardClass} p-5 space-y-4 border border-rose-200/80 bg-white shadow-sm ring-1 ring-rose-100/60">
+            <div class="space-y-1">
+              <p class="text-xs font-semibold uppercase tracking-wide text-rose-600">Atenção imediata</p>
+              <h3 class="text-lg font-semibold text-slate-900">Check-outs a aguardar limpeza</h3>
+              <p class="text-sm text-slate-600">Libertar estas unidades garante disponibilidade para novas reservas.</p>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              ${backlogCheckouts.map((item) => renderBookingCard(item, 'backlog')).join('')}
+            </div>
+          </section>`
       : '';
 
     const overdueSection = overdueTasks.length
-      ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
-          <div class="flex items-center justify-between">
-            <h3 class="text-base font-semibold text-rose-700">Tarefas de limpeza em atraso</h3>
-            <span class="text-sm text-rose-600 font-medium">${overdueTasks.length}</span>
+      ? isBackofficeVariant
+        ? html`<section class="${cardClass} border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-base font-semibold text-rose-700">Tarefas de limpeza em atraso</h3>
+              <span class="text-sm text-rose-600 font-medium">${overdueTasks.length}</span>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              ${overdueTasks.map((task) => renderTaskCard(task, { highlight: true, showDate: true })).join('')}
+            </div>
+          </section>`
+        : html`<section id="tarefas-em-atraso" class="${cardClass} p-5 space-y-4 border border-rose-200/80 bg-white shadow-sm ring-1 ring-rose-100/60">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wide text-rose-600">Em atraso</p>
+                <h3 class="text-lg font-semibold text-slate-900">Tarefas de limpeza pendentes</h3>
+              </div>
+              <span class="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600">${overdueTasks.length} tarefa${
+                overdueTasks.length === 1 ? '' : 's'
+              }</span>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              ${overdueTasks.map((task) => renderTaskCard(task, { highlight: true, showDate: true })).join('')}
+            </div>
+          </section>`
+      : '';
+
+    const toolbarSection = isBackofficeVariant
+      ? ''
+      : html`<section class="${cardClass} p-4 border border-slate-200 bg-white shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+              <span class="text-xs uppercase tracking-wide text-slate-500">Legenda</span>
+              <span class="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 text-rose-600"><span class="h-2 w-2 rounded-full bg-rose-400"></span>Check-out</span>
+              <span class="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-sky-600"><span class="h-2 w-2 rounded-full bg-sky-400"></span>Check-in</span>
+              <span class="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-amber-600"><span class="h-2 w-2 rounded-full bg-amber-400"></span>Prioridade alta</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <a class="btn btn-light btn-sm" href="#hoje">Ir para hoje</a>
+              <a class="btn btn-light btn-sm" href="#agenda-futura">Ver agenda futura</a>
+            </div>
           </div>
-          <div class="grid gap-3 md:grid-cols-2">
-            ${overdueTasks.map((task) => renderTaskCard(task, { highlight: true, showDate: true })).join('')}
+        </section>`;
+
+    const todaySection = !isBackofficeVariant && todayBucket
+      ? html`<section id="hoje" class="${cardClass} p-5 space-y-5 border border-emerald-200/70 bg-white shadow-sm ring-1 ring-emerald-100/60">
+          <header class="flex flex-wrap items-center justify-between gap-3">
+            <div class="space-y-1">
+              <p class="text-xs font-semibold uppercase tracking-wide text-emerald-600">Hoje</p>
+              <h3 class="text-xl font-semibold text-slate-900">${esc(todayBucket.displayLabel)}</h3>
+              <p class="text-sm text-slate-500">${esc(todayBucket.shortLabel)}</p>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              ${todayBucket.checkouts.length
+                ? `<span class="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 text-rose-600"><span class="h-2 w-2 rounded-full bg-rose-400"></span>${
+                    todayBucket.checkouts.length
+                  } saída${todayBucket.checkouts.length === 1 ? '' : 's'}</span>`
+                : ''}
+              ${todayBucket.checkins.length
+                ? `<span class="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-emerald-600"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>${
+                    todayBucket.checkins.length
+                  } entrada${todayBucket.checkins.length === 1 ? '' : 's'}</span>`
+                : ''}
+              ${todayBucket.tasks.length
+                ? `<span class="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-600"><span class="h-2 w-2 rounded-full bg-slate-400"></span>${
+                    todayBucket.tasks.length
+                  } tarefa${todayBucket.tasks.length === 1 ? '' : 's'}</span>`
+                : ''}
+            </div>
+          </header>
+          <div class="grid gap-4 lg:grid-cols-2">
+            ${todayBucket.checkouts.length
+              ? html`<div class="space-y-3">
+                  <h4 class="text-xs font-semibold uppercase tracking-wide text-rose-600">Saídas de hoje</h4>
+                  <div class="space-y-3">
+                    ${todayBucket.checkouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
+                  </div>
+                </div>`
+              : ''}
+            ${todayBucket.checkins.length
+              ? html`<div class="space-y-3">
+                  <h4 class="text-xs font-semibold uppercase tracking-wide text-sky-600">Entradas de hoje</h4>
+                  <div class="space-y-3">
+                    ${todayBucket.checkins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
+                  </div>
+                </div>`
+              : ''}
+            ${todayBucket.tasks.length
+              ? html`<div class="space-y-3 lg:col-span-2">
+                  <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-600">Tarefas atribuídas</h4>
+                  <div class="grid gap-3 md:grid-cols-2">
+                    ${todayBucket.tasks.map((task) => renderTaskCard(task)).join('')}
+                  </div>
+                </div>`
+              : '<p class="text-sm text-slate-500">Sem tarefas programadas para hoje.</p>'}
           </div>
         </section>`
       : '';
 
-    const bucketGrid = buckets.length
+    const bucketGrid = bucketsForGrid && bucketsForGrid.length
       ? html`<div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          ${buckets
+          ${bucketsForGrid
             .map(
-              (bucket) => html`<section class="${cardClass} p-4 space-y-4">
+              (bucket) => html`<section class="${cardClass} p-4 space-y-4 ${
+                  isBackofficeVariant ? '' : 'border border-slate-200 bg-white shadow-sm'
+                }">
                 <header class="flex items-start justify-between gap-2">
-                  <div>
+                  <div class="space-y-1">
                     <p class="text-xs uppercase tracking-wide text-slate-500">${esc(bucket.weekdayLabel)}</p>
                     <h3 class="text-lg font-semibold text-slate-900">${esc(bucket.displayLabel)}</h3>
                     <p class="text-xs text-slate-500">${esc(bucket.shortLabel)}</p>
@@ -1374,24 +1475,24 @@ module.exports = function registerBackoffice(app, context) {
                 <div class="space-y-4">
                   ${bucket.checkouts.length
                     ? html`<div class="space-y-2">
-                        <h4 class="text-sm font-semibold text-rose-700">Saídas</h4>
-                        <div class="space-y-2">
+                        <h4 class="text-xs font-semibold uppercase tracking-wide text-rose-600">Saídas</h4>
+                        <div class="space-y-3">
                           ${bucket.checkouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
                         </div>
                       </div>`
                     : ''}
                   ${bucket.checkins.length
                     ? html`<div class="space-y-2">
-                        <h4 class="text-sm font-semibold text-sky-700">Entradas</h4>
-                        <div class="space-y-2">
+                        <h4 class="text-xs font-semibold uppercase tracking-wide text-sky-600">Entradas</h4>
+                        <div class="space-y-3">
                           ${bucket.checkins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
                         </div>
                       </div>`
                     : ''}
                   ${bucket.tasks.length
                     ? html`<div class="space-y-2">
-                        <h4 class="text-sm font-semibold text-slate-700">Tarefas</h4>
-                        <div class="space-y-2">
+                        <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-600">Tarefas</h4>
+                        <div class="space-y-3">
                           ${bucket.tasks.map((task) => renderTaskCard(task)).join('')}
                         </div>
                       </div>`
@@ -1424,55 +1525,107 @@ module.exports = function registerBackoffice(app, context) {
     });
 
     const futureSection = futureGroups.length
-      ? html`<section class="${cardClass} p-4 space-y-4">
-          <h3 class="text-base font-semibold text-slate-800">Próximas limpezas</h3>
-          ${futureGroups
-            .map(
-              (group) => html`<div class="space-y-2">
-                <h4 class="text-sm font-semibold text-slate-600">${esc(group.label)}</h4>
-                <div class="space-y-2">
-                  ${group.tasks.map((task) => renderTaskCard(task, { showDate: true })).join('')}
-                </div>
-              </div>`
-            )
-            .join('')}
-        </section>`
+      ? isBackofficeVariant
+        ? html`<section class="${cardClass} p-4 space-y-4">
+            <h3 class="text-base font-semibold text-slate-800">Próximas limpezas</h3>
+            ${futureGroups
+              .map(
+                (group) => html`<div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-slate-600">${esc(group.label)}</h4>
+                  <div class="space-y-2">
+                    ${group.tasks.map((task) => renderTaskCard(task, { showDate: true })).join('')}
+                  </div>
+                </div>`
+              )
+              .join('')}
+          </section>`
+        : html`<section id="limpezas-futuras" class="${cardClass} p-5 space-y-4 border border-slate-200 bg-white shadow-sm">
+            <div class="space-y-1">
+              <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Planeamento</p>
+              <h3 class="text-lg font-semibold text-slate-900">Próximas limpezas</h3>
+            </div>
+            ${futureGroups
+              .map(
+                (group) => html`<div class="space-y-3">
+                  <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500">${esc(group.label)}</h4>
+                  <div class="grid gap-3 md:grid-cols-2">
+                    ${group.tasks.map((task) => renderTaskCard(task, { showDate: true })).join('')}
+                  </div>
+                </div>`
+              )
+              .join('')}
+          </section>`
       : '';
 
     const unscheduledSection = unscheduledTasks.length
-      ? html`<section class="${cardClass} p-4 space-y-3">
-          <h3 class="text-base font-semibold text-slate-800">Tarefas sem data definida</h3>
-          <div class="grid gap-3 md:grid-cols-2">
-            ${unscheduledTasks.map((task) => renderTaskCard(task)).join('')}
-          </div>
-        </section>`
+      ? isBackofficeVariant
+        ? html`<section class="${cardClass} p-4 space-y-3">
+            <h3 class="text-base font-semibold text-slate-800">Tarefas sem data definida</h3>
+            <div class="grid gap-3 md:grid-cols-2">
+              ${unscheduledTasks.map((task) => renderTaskCard(task)).join('')}
+            </div>
+          </section>`
+        : html`<section id="tarefas-sem-data" class="${cardClass} p-5 space-y-4 border border-slate-200 bg-white shadow-sm">
+            <div class="space-y-1">
+              <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">A programar</p>
+              <h3 class="text-lg font-semibold text-slate-900">Tarefas sem data definida</h3>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              ${unscheduledTasks.map((task) => renderTaskCard(task)).join('')}
+            </div>
+          </section>`
       : '';
 
     const futureEventsSection = futureCheckins.length || futureCheckouts.length
-      ? html`<section class="${cardClass} p-4 space-y-4">
-          <h3 class="text-base font-semibold text-slate-800">Agenda futura</h3>
-          <div class="grid gap-4 md:grid-cols-2">
-            ${futureCheckouts.length
-              ? html`<div class="space-y-2">
-                  <h4 class="text-sm font-semibold text-rose-700">Saídas planeadas</h4>
-                  <div class="space-y-2">
-                    ${futureCheckouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
-                  </div>
-                </div>`
-              : ''}
-            ${futureCheckins.length
-              ? html`<div class="space-y-2">
-                  <h4 class="text-sm font-semibold text-sky-700">Entradas planeadas</h4>
-                  <div class="space-y-2">
-                    ${futureCheckins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
-                  </div>
-                </div>`
-              : ''}
-          </div>
-        </section>`
+      ? isBackofficeVariant
+        ? html`<section class="${cardClass} p-4 space-y-4">
+            <h3 class="text-base font-semibold text-slate-800">Agenda futura</h3>
+            <div class="grid gap-4 md:grid-cols-2">
+              ${futureCheckouts.length
+                ? html`<div class="space-y-2">
+                    <h4 class="text-sm font-semibold text-rose-700">Saídas planeadas</h4>
+                    <div class="space-y-2">
+                      ${futureCheckouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
+                    </div>
+                  </div>`
+                : ''}
+              ${futureCheckins.length
+                ? html`<div class="space-y-2">
+                    <h4 class="text-sm font-semibold text-sky-700">Entradas planeadas</h4>
+                    <div class="space-y-2">
+                      ${futureCheckins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
+                    </div>
+                  </div>`
+                : ''}
+            </div>
+          </section>`
+        : html`<section id="agenda-futura" class="${cardClass} p-5 space-y-4 border border-slate-200 bg-white shadow-sm">
+            <div class="space-y-1">
+              <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reservas</p>
+              <h3 class="text-lg font-semibold text-slate-900">Agenda futura</h3>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              ${futureCheckouts.length
+                ? html`<div class="space-y-3">
+                    <h4 class="text-xs font-semibold uppercase tracking-wide text-rose-600">Saídas planeadas</h4>
+                    <div class="space-y-3">
+                      ${futureCheckouts.map((booking) => renderBookingCard(booking, 'checkout')).join('')}
+                    </div>
+                  </div>`
+                : ''}
+              ${futureCheckins.length
+                ? html`<div class="space-y-3">
+                    <h4 class="text-xs font-semibold uppercase tracking-wide text-sky-600">Entradas planeadas</h4>
+                    <div class="space-y-3">
+                      ${futureCheckins.map((booking) => renderBookingCard(booking, 'checkin')).join('')}
+                    </div>
+                  </div>`
+                : ''}
+            </div>
+          </section>`
       : '';
 
-    return [backlogSection, overdueSection, bucketGrid, futureSection, unscheduledSection, futureEventsSection]
+    return [toolbarSection, backlogSection, overdueSection, todaySection, bucketGrid, futureSection, unscheduledSection, futureEventsSection]
       .filter(Boolean)
       .join('');
   }
