@@ -24,6 +24,7 @@ module.exports = function registerUxApi(app, context) {
     telemetry,
     otaDispatcher,
     messageTemplates,
+    reviewRequestService,
     ratePlanService,
     userCan
   } = context;
@@ -298,6 +299,48 @@ module.exports = function registerUxApi(app, context) {
           error: err && err.message ? err.message : 'Erro inesperado',
           reviewId: Number.isInteger(Number(req.params.id)) ? Number(req.params.id) : null
         }
+      });
+      return handleError(res, err);
+    }
+  });
+
+  router.post('/reviews/request/:bookingId', async (req, res) => {
+    const startedAt = Date.now();
+    const bookingId = Number(req.params.bookingId);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(400).json({ ok: false, error: 'Identificador de reserva inválido.' });
+    }
+
+    try {
+      if (!reviewRequestService || typeof reviewRequestService.requestReviewForBooking !== 'function') {
+        throw new Error('Serviço de pedidos de review indisponível.');
+      }
+      const allowRetry = req.body && (req.body.allowRetry === true || req.body.force === true);
+      const minHoursBetween = req.body && Number.isFinite(Number(req.body.minHoursBetween))
+        ? Math.max(1, Number(req.body.minHoursBetween))
+        : reviewRequestService.constants.MIN_HOURS_BETWEEN_REQUESTS;
+
+      const result = await reviewRequestService.requestReviewForBooking({
+        bookingId,
+        requestedBy: req.user && req.user.id ? req.user.id : null,
+        allowRetry,
+        minHoursBetween
+      });
+
+      emitTelemetry('review_request_triggered', {
+        req,
+        startedAt,
+        success: true,
+        meta: { bookingId, language: result.language }
+      });
+
+      return res.json({ ok: true, request: result });
+    } catch (err) {
+      emitTelemetry('review_request_triggered', {
+        req,
+        startedAt,
+        success: false,
+        meta: { bookingId, error: err && err.message ? err.message : 'erro' }
       });
       return handleError(res, err);
     }

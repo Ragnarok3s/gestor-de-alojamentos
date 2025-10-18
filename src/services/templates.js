@@ -71,6 +71,29 @@ const TEMPLATE_DEFINITIONS = [
       welcome_link: 'https://example.com/welcome',
       brand_name: 'Casas de Pousadouro'
     }
+  },
+  {
+    key: 'review_request_post_checkout',
+    name: 'Pedido de avaliação pós check-out',
+    description: 'Mensagem enviada após a estadia para convidar o hóspede a deixar uma avaliação.',
+    placeholders: [
+      { key: 'guest_first_name', label: 'Primeiro nome do hóspede' },
+      { key: 'property_name', label: 'Nome da propriedade' },
+      { key: 'checkout', label: 'Data de check-out (DD/MM/AAAA)' },
+      { key: 'review_link', label: 'Ligação para recolha de avaliação' },
+      { key: 'brand_name', label: 'Nome da marca configurada' }
+    ],
+    defaults: {
+      pt: `Olá {{guest_first_name}},\n\nEsperamos que tenhas gostado da estadia em {{property_name}} (check-out a {{checkout}}). Partilha a tua experiência connosco para continuarmos a melhorar.\n\nDeixa a tua avaliação aqui: {{review_link}}\n\nObrigado,\n{{brand_name}}`,
+      en: `Hi {{guest_first_name}},\n\nWe hope you enjoyed your stay at {{property_name}} (check-out on {{checkout}}). We would love to hear how it went.\n\nShare your feedback here: {{review_link}}\n\nThank you,\n{{brand_name}}`
+    },
+    sampleVariables: {
+      guest_first_name: 'Jamie',
+      property_name: 'Casa da Ribeira',
+      checkout: '15/08/2025',
+      review_link: 'https://example.com/review/123',
+      brand_name: 'Casas de Pousadouro'
+    }
   }
 ];
 
