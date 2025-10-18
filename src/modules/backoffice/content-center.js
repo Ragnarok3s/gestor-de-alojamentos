@@ -102,9 +102,14 @@ module.exports = function registerContentCenter(app, context) {
       const activeUnit = normalizeUnitSelection(units, req.query.unit || req.query.unitId || req.query.id);
 
       if (!activeUnit) {
-        const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'content-center-link' });
+        const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+          activePaneId: 'content-center-link'
+        });
         const body = renderBackofficeShell({
           navButtonsHtml,
+          navPanels,
+          activeTarget,
+          defaultTarget: defaultPane,
           isWide: true,
           mainContent: html`
             <section class="bg-white shadow-sm rounded-2xl p-8">
@@ -149,9 +154,14 @@ module.exports = function registerContentCenter(app, context) {
         actor: req.user && req.user.username ? req.user.username : null
       };
 
-      const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'content-center-link' });
+      const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+        activePaneId: 'content-center-link'
+      });
       const pageBody = renderBackofficeShell({
         navButtonsHtml,
+        navPanels,
+        activeTarget,
+        defaultTarget: defaultPane,
         isWide: true,
         mainContent: html`
           <div class="space-y-10 py-10">

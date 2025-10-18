@@ -505,7 +505,9 @@ module.exports = function registerBackoffice(app, context) {
     if (!properties.length) {
       const theme = resolveBrandingForRequest(req);
       serverRender('route:/admin/extras');
-      const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'extras-link' });
+      const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+        activePaneId: 'extras-link'
+      });
       return res.send(
         layout({
           title: 'Extras & serviços',
@@ -514,6 +516,9 @@ module.exports = function registerBackoffice(app, context) {
           branding: theme,
           body: renderBackofficeShell({
             navButtonsHtml,
+            navPanels,
+            activeTarget,
+            defaultTarget: defaultPane,
             isWide: true,
             mainContent: html`
               ${renderBreadcrumbs([
@@ -562,7 +567,9 @@ module.exports = function registerBackoffice(app, context) {
       propertyName: selectedProperty.name
     });
     rememberActiveBrandingProperty(res, selectedProperty.id);
-    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'extras-link' });
+    const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+      activePaneId: 'extras-link'
+    });
 
     const feedbackBlocks = [];
     if (successMessage) {
@@ -591,6 +598,9 @@ module.exports = function registerBackoffice(app, context) {
         branding: theme,
         body: renderBackofficeShell({
           navButtonsHtml,
+          navPanels,
+          activeTarget,
+          defaultTarget: defaultPane,
           isWide: true,
           mainContent: html`
             ${renderBreadcrumbs([
@@ -703,9 +713,14 @@ module.exports = function registerBackoffice(app, context) {
               <p class="text-xs text-slate-500">Respeita restrições de chegada (CTA) e saída (CTD) associadas.</p>
             </div>`;
 
-    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'bookings-link' });
+    const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+      activePaneId: 'bookings-link'
+    });
     const body = renderBackofficeShell({
       navButtonsHtml,
+      navPanels,
+      activeTarget,
+      defaultTarget: defaultPane,
       mainContent: html`
         <a class="text-slate-600 underline" href="/admin/bookings">&larr; Reservas</a>
         <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
@@ -1057,7 +1072,7 @@ module.exports = function registerBackoffice(app, context) {
 
   const scriptsDir = path.join(__dirname, 'scripts');
   const featureBuilderSource = fs.readFileSync(path.join(scriptsDir, 'feature-builder-runtime.js'), 'utf8');
-  const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
+  const backofficeTabsSource = fs.readFileSync(path.join(scriptsDir, 'backoffice-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
   const revenueCalendarSource = fs.readFileSync(path.join(scriptsDir, 'revenue-calendar.js'), 'utf8');
@@ -1073,14 +1088,8 @@ module.exports = function registerBackoffice(app, context) {
   const revenueCalendarScript = inlineScript(revenueCalendarSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
+  const backofficeTabsScript = inlineScript(backofficeTabsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
-
-  function renderDashboardTabsScript(defaultPaneId) {
-    const safePane = typeof defaultPaneId === 'string' ? defaultPaneId : '';
-    return inlineScript(
-      dashboardTabsSource.replace('__DEFAULT_PANE__', JSON.stringify(safePane))
-    );
-  }
 
   function renderFeatureBuilderField({ name, value, helperText, label } = {}) {
     const fieldName = name ? esc(name) : 'features_raw';
@@ -2029,9 +2038,14 @@ module.exports = function registerBackoffice(app, context) {
       redirectPath: '/limpeza/tarefas',
       variant: 'backoffice'
     });
-    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'housekeeping-manage' });
+    const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+      activePaneId: 'housekeeping-manage'
+    });
     const body = renderBackofficeShell({
       navButtonsHtml,
+      navPanels,
+      activeTarget,
+      defaultTarget: defaultPane,
       isWide: true,
       mainContent: html`
         <header class="bo-header">
@@ -2415,9 +2429,17 @@ module.exports = function registerBackoffice(app, context) {
     const propertyTableRowsHtml = propertyRows.length
       ? propertyRows.join('')
       : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
-    const { navButtonsHtml: housekeepingNav } = buildBackofficeNavigation(req, { activePaneId: 'housekeeping-manage' });
+    const {
+      navButtonsHtml: housekeepingNav,
+      navPanels,
+      activeTarget,
+      defaultPane
+    } = buildBackofficeNavigation(req, { activePaneId: 'housekeeping-manage' });
     const body = renderBackofficeShell({
       navButtonsHtml: housekeepingNav,
+      navPanels,
+      activeTarget,
+      defaultTarget: defaultPane,
       isWide: true,
       mainContent: html`
         <div class="hk-dashboard space-y-8">
@@ -3858,7 +3880,13 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
 
-    const { navButtonsHtml, navLinkTargets, defaultPane } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
+    const {
+      navButtonsHtml,
+      navLinkTargets,
+      defaultPane,
+      navPanels,
+      activeTarget
+    } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
     const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
     quickAccessHtml = filteredQuickLinks.length
       ? html`<section class="bo-card space-y-4">
@@ -5418,10 +5446,10 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
+          <script>${backofficeTabsScript}</script>
           <script>${sidebarControlsScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>
-          <script>${renderDashboardTabsScript(defaultPane)}</script>
           <script>${uxEnhancementsScript}</script>
         `
       })
@@ -5446,9 +5474,14 @@ module.exports = function registerBackoffice(app, context) {
     const safeEnd = normalizedEnd.format('YYYY-MM-DD');
     const defaultPickupWindows = pickupParam && pickupParam.trim() ? pickupParam : '7,30';
 
-    const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'revenue-calendar-link' });
+    const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+      activePaneId: 'revenue-calendar-link'
+    });
     const body = renderBackofficeShell({
       navButtonsHtml,
+      navPanels,
+      activeTarget,
+      defaultTarget: defaultPane,
       isWide: true,
       mainContent: html`
         <div class="bo-wrapper">
@@ -6651,9 +6684,14 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
     })();
   `);
 
-  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'rates-link' });
+  const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+    activePaneId: 'rates-link'
+  });
   const body = renderBackofficeShell({
     navButtonsHtml,
+    navPanels,
+    activeTarget,
+    defaultTarget: defaultPane,
     isWide: true,
     mainContent: html`
       ${renderBreadcrumbs([
@@ -7377,9 +7415,14 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
   const canEditBooking = userCan(req.user, 'bookings.edit');
   const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
-  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'bookings-link' });
+  const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+    activePaneId: 'bookings-link'
+  });
   const body = renderBackofficeShell({
     navButtonsHtml,
+    navPanels,
+    activeTarget,
+    defaultTarget: defaultPane,
     mainContent: html`
       <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
@@ -8349,9 +8392,14 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
 
   const theme = resolveBrandingForRequest(req);
 
-  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'audit-link' });
+  const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+    activePaneId: 'audit-link'
+  });
   const body = renderBackofficeShell({
     navButtonsHtml,
+    navPanels,
+    activeTarget,
+    defaultTarget: defaultPane,
     isWide: true,
     mainContent: html`
       <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>

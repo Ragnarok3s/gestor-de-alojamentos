@@ -1,6 +1,74 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MASTER_ROLE }) {
+  const tabsScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'backoffice-tabs.js'), 'utf8');
+
+  function inlineScript(source) {
+    return source.replace(/<\/(script)/gi, '<\\/$1');
+  }
+
+  function escAttr(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function normalizeTargetFromHref(href) {
+    if (typeof href !== 'string' || !href.trim()) return '';
+    const sanitized = href.split('#')[0].split('?')[0];
+    const segments = sanitized.split('/').filter(Boolean);
+    return normalizeTargetSegment(segments.length ? segments[segments.length - 1] : sanitized);
+  }
+
+  function normalizeTargetFromId(id) {
+    if (typeof id !== 'string') return '';
+    return normalizeTargetSegment(id.replace(/-link$/, ''));
+  }
+
+  function normalizeTargetSegment(segment) {
+    if (typeof segment !== 'string') return '';
+    const cleaned = segment
+      .trim()
+      .replace(/[\s_]+/g, '-')
+      .replace(/[^a-zA-Z0-9-]/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+    return cleaned || 'panel';
+  }
+
+  function deriveTargetForItem(item) {
+    if (!item || typeof item !== 'object') return 'panel';
+    if (typeof item.target === 'string' && item.target.trim()) {
+      return normalizeTargetSegment(item.target);
+    }
+    if (typeof item.href === 'string' && item.href.trim()) {
+      const fromHref = normalizeTargetFromHref(item.href);
+      if (fromHref) return fromHref;
+    }
+    if (typeof item.id === 'string' && item.id.trim()) {
+      const fromId = normalizeTargetFromId(item.id);
+      if (fromId) return fromId;
+    }
+    if (typeof item.label === 'string' && item.label.trim()) {
+      return normalizeTargetSegment(item.label);
+    }
+    return 'panel';
+  }
+
+  function deriveSourceForItem(item, target) {
+    if (item && typeof item.href === 'string' && item.href.trim()) {
+      return item.href;
+    }
+    if (!target) return '/admin';
+    return `/admin?tab=${encodeURIComponent(target)}`;
+  }
+
   const broomIconSvg = `
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M3 21h4l7-7"></path>
@@ -112,20 +180,48 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
       }
     ];
 
-    const allNavItems = navSections.flatMap(section => section.items);
-    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
+    const enrichedSections = navSections.map(section => ({
+      ...section,
+      items: section.items
+        .map(item => {
+          if (!item) return null;
+          const target = deriveTargetForItem(item);
+          const source = deriveSourceForItem(item, target);
+          return { ...item, target, source };
+        })
+        .filter(Boolean)
+    }));
+
+    const allNavItems = enrichedSections.flatMap(section => section.items);
+    const defaultItem = allNavItems.find(item => item.allowed && !item.href) || allNavItems.find(item => item.allowed);
+    const defaultPane = defaultItem ? defaultItem.target : 'overview';
+    let activeItem = null;
+    if (activePaneId) {
+      activeItem = allNavItems.find(item => item.id === activePaneId) || allNavItems.find(item => item.target === activePaneId);
+    }
+    const activeTarget = activeItem ? activeItem.target : defaultPane;
     const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
 
-    const navButtonsHtml = navSections
+    const navPanels = [];
+    const seenTargets = new Set();
+
+    enrichedSections.forEach(section => {
+      section.items.forEach(item => {
+        if (!item.allowed) return;
+        if (!item.target || seenTargets.has(item.target)) return;
+        navPanels.push({ target: item.target, href: item.href || null, source: item.source });
+        seenTargets.add(item.target);
+      });
+    });
+
+    const navButtonsHtml = enrichedSections
       .map(section => {
         const itemsHtml = section.items
           .map(item => {
             const classes = ['bo-tab'];
             if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-            if (item.href) classes.push('bo-tab--link');
-
-            const isActive = item.id === activePaneId;
-            if (isActive || (!activePaneId && !item.href && item.id === defaultPane)) {
+            const isActive = item.target === activeTarget;
+            if (isActive) {
               classes.push('is-active');
             }
 
@@ -134,15 +230,11 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
               : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
 
             if (!item.allowed) {
-              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
+              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" data-bo-target="${escAttr(item.target)}" data-bo-source="${escAttr(item.source)}" id="bo-tab-${escAttr(item.target)}" role="tab" aria-controls="bo-panel-${escAttr(item.target)}" aria-selected="false" aria-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
             }
 
-            if (item.href) {
-              const ariaCurrent = isActive ? ' aria-current="page"' : '';
-              return `<a class="${classes.join(' ')}" href="${item.href}" target="_self"${ariaCurrent}>${iconMarkup}<span>${esc(item.label)}</span></a>`;
-            }
-
-            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
+            const ariaSelected = isActive ? 'true' : 'false';
+            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${escAttr(item.target)}" data-bo-source="${escAttr(item.source)}" id="bo-tab-${escAttr(item.target)}" role="tab" aria-controls="bo-panel-${escAttr(item.target)}" aria-selected="${ariaSelected}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
           })
           .join('');
 
@@ -163,18 +255,61 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
               <span>${esc(section.title)}</span>
               <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
             </button>
-            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
+            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" role="tablist" hidden>${itemsHtml}</div>
           </div>
         `;
       })
       .filter(Boolean)
       .join('');
 
-    return { navButtonsHtml, navLinkTargets, defaultPane };
+    return { navButtonsHtml, navLinkTargets, defaultPane, activeTarget, navPanels };
   }
 
-  function renderBackofficeShell({ navButtonsHtml, mainContent, isWide = false }) {
+  function renderBackofficeShell({
+    navButtonsHtml,
+    mainContent,
+    navPanels = [],
+    activeTarget = '',
+    defaultTarget = '',
+    isWide = false
+  }) {
     const pageClass = ['bo-page', isWide ? 'bo-page--wide' : ''].filter(Boolean).join(' ');
+    const safeActiveTarget = typeof activeTarget === 'string' ? activeTarget : '';
+    const safeDefaultTarget = typeof defaultTarget === 'string' && defaultTarget ? defaultTarget : safeActiveTarget;
+    const activePanelDescriptor = navPanels.find(panel => panel.target === safeActiveTarget);
+    const shouldWrapActiveContent = activePanelDescriptor ? !!activePanelDescriptor.href : true;
+    const activePanelSource = activePanelDescriptor ? activePanelDescriptor.source : `/admin?tab=${encodeURIComponent(safeActiveTarget || safeDefaultTarget || 'overview')}`;
+    const activePanelHtml = shouldWrapActiveContent
+      ? html`
+          <section
+            id="bo-panel-${safeActiveTarget || 'overview'}"
+            class="bo-panel is-active"
+            role="tabpanel"
+            aria-labelledby="bo-tab-${safeActiveTarget || 'overview'}"
+            data-bo-panel-src="${escAttr(activePanelSource)}"
+            data-bo-panel-loaded="true"
+          >
+            ${mainContent}
+          </section>
+        `
+      : mainContent;
+
+    const placeholderPanelsHtml = navPanels
+      .filter(panel => panel.target !== safeActiveTarget && panel.href)
+      .map(
+        panel => `
+          <section
+            id="bo-panel-${escAttr(panel.target)}"
+            class="bo-panel"
+            role="tabpanel"
+            aria-labelledby="bo-tab-${escAttr(panel.target)}"
+            data-bo-panel-src="${escAttr(panel.source)}"
+            hidden
+          ></section>
+        `
+      )
+      .join('');
+
     return html`
       <div class="${pageClass}">
         <div class="bo-shell" data-bo-shell>
@@ -202,10 +337,14 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
               <i data-lucide="menu" aria-hidden="true"></i>
               <span>Menu</span>
             </button>
-            ${mainContent}
+            <div class="bo-panels" data-bo-panels data-active-target="${escAttr(safeActiveTarget)}" data-default-target="${escAttr(safeDefaultTarget)}">
+              ${activePanelHtml}
+              ${placeholderPanelsHtml}
+            </div>
           </div>
         </div>
       </div>
+      <script>${inlineScript(tabsScriptSource)}</script>
     `;
   }
 
