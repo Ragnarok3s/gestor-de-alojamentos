@@ -1043,6 +1043,7 @@ module.exports = function registerBackoffice(app, context) {
   const dashboardTabsSource = fs.readFileSync(path.join(scriptsDir, 'dashboard-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
+  const revenueCalendarSource = fs.readFileSync(path.join(scriptsDir, 'revenue-calendar.js'), 'utf8');
   const uxEnhancementsSource = fs.readFileSync(path.join(scriptsDir, 'ux-enhancements.js'), 'utf8');
   const sidebarControlsSource = fs.readFileSync(path.join(scriptsDir, 'sidebar-controls.js'), 'utf8');
   const extrasManagerSource = fs.readFileSync(path.join(scriptsDir, 'extras-manager.js'), 'utf8');
@@ -1052,6 +1053,7 @@ module.exports = function registerBackoffice(app, context) {
   );
   const galleryManagerScript = inlineScript(galleryManagerSource);
   const revenueDashboardScript = inlineScript(revenueDashboardSource);
+  const revenueCalendarScript = inlineScript(revenueCalendarSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
@@ -3122,6 +3124,7 @@ module.exports = function registerBackoffice(app, context) {
     const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
     const canManageIntegrations = canManageEmailTemplates;
     const canViewCalendar = userCan(req.user, 'calendar.view');
+    const canViewRevenueCalendar = userCan(req.user, 'dashboard.view');
     const isDevOperator = req.user && req.user.role === MASTER_ROLE;
     const isDirectorOperator = req.user && req.user.role === 'direcao';
     const canViewHistory = !!(isDevOperator || isDirectorOperator);
@@ -3871,6 +3874,13 @@ module.exports = function registerBackoffice(app, context) {
         title: 'Finanças e rendimento',
         items: [
           { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
+          {
+            id: 'revenue-calendar-link',
+            label: 'Calendário de receita',
+            icon: 'calendar-range',
+            allowed: canViewRevenueCalendar,
+            href: '/admin/revenue-calendar'
+          },
           { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
           { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
         ]
@@ -5519,6 +5529,96 @@ module.exports = function registerBackoffice(app, context) {
           <script>${renderDashboardTabsScript(defaultPane)}</script>
           <script>${uxEnhancementsScript}</script>
         `
+      })
+    );
+  });
+
+  app.get('/admin/revenue-calendar', requireLogin, requirePermission('dashboard.view'), (req, res) => {
+    setNoIndex(res);
+    const startParam = typeof req.query.start === 'string' ? req.query.start : null;
+    const endParam = typeof req.query.end === 'string' ? req.query.end : null;
+    const pickupParam = typeof req.query.pickupWindows === 'string' ? req.query.pickupWindows : null;
+
+    const defaultStart = startParam && dayjs(startParam, 'YYYY-MM-DD', true).isValid()
+      ? dayjs(startParam)
+      : dayjs();
+    const parsedEnd = endParam && dayjs(endParam, 'YYYY-MM-DD', true).isValid()
+      ? dayjs(endParam)
+      : null;
+    const defaultEnd = parsedEnd || defaultStart.add(29, 'day');
+    const normalizedEnd = defaultEnd.isBefore(defaultStart) ? defaultStart : defaultEnd;
+    const safeStart = defaultStart.format('YYYY-MM-DD');
+    const safeEnd = normalizedEnd.format('YYYY-MM-DD');
+    const defaultPickupWindows = pickupParam && pickupParam.trim() ? pickupParam : '7,30';
+
+    const body = `
+      <div class="bo-wrapper">
+        <header class="bo-header">
+          <div>
+            <h1>Calendário de receita</h1>
+            <p class="bo-subtitle">Visão tática diária da performance com alertas de pricing e pickups por período.</p>
+          </div>
+          <div class="text-xs text-slate-500">Período em análise: <span data-revenue-calendar-range>${esc(
+            `${safeStart} a ${safeEnd}`
+          )}</span></div>
+        </header>
+
+        <section class="bo-card space-y-4">
+          <form class="grid gap-4 md:grid-cols-[repeat(4,minmax(0,1fr))]" data-revenue-calendar-form>
+            <label class="form-field">
+              <span class="form-label">Data inicial</span>
+              <input type="date" class="input" name="start" value="${esc(safeStart)}" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Data final</span>
+              <input type="date" class="input" name="end" value="${esc(safeEnd)}" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Pickups (dias)</span>
+              <input type="text" class="input" name="pickupWindows" value="${esc(defaultPickupWindows)}" placeholder="Ex.: 7,30" />
+              <small class="text-xs text-slate-500">Separar por vírgulas para comparar múltiplos períodos.</small>
+            </label>
+            <div class="flex items-end gap-3">
+              <button class="btn btn-primary" type="submit">Aplicar filtros</button>
+              <button class="btn btn-light" type="button" data-revenue-calendar-refresh>Recarregar</button>
+            </div>
+          </form>
+          <div class="flex flex-col gap-2 text-xs text-slate-500 md:flex-row md:items-center md:justify-between">
+            <span data-revenue-calendar-loading hidden>Carregando dados mais recentes…</span>
+            <span data-revenue-calendar-error hidden class="text-sm text-rose-600"></span>
+          </div>
+          <div class="bo-card bg-white/70" data-revenue-calendar-summary></div>
+        </section>
+
+        <section class="bo-card p-0 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="bo-table bo-table--dense min-w-[720px]">
+              <thead>
+                <tr>
+                  <th scope="col">Data</th>
+                  <th scope="col">Ocupação</th>
+                  <th scope="col">Receita</th>
+                  <th scope="col">ADR</th>
+                  <th scope="col">RevPAR</th>
+                  <th scope="col">Reservas</th>
+                  <th scope="col">Noites</th>
+                  <th scope="col">Pickups</th>
+                  <th scope="col">Alertas</th>
+                </tr>
+              </thead>
+              <tbody data-revenue-calendar-table></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <script>${revenueCalendarScript}</script>
+    `;
+
+    res.send(
+      layout({
+        pageTitle: 'Calendário de receita',
+        pageClass: 'page-backoffice page-revenue-calendar',
+        body
       })
     );
   });
