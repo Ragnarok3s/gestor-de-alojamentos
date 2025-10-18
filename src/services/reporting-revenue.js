@@ -297,7 +297,7 @@ function createRevenueReportingService({ db, dayjs }) {
         const count = record.bookingCreations.filter(createdAt => {
           const created = dayjs(createdAt);
           if (!created.isValid()) return false;
-          return created.isAfter(threshold) && created.isSameOrBefore(dayEnd);
+          return created.isAfter(threshold) && !created.isAfter(dayEnd);
         }).length;
         pickups[String(window)] = count;
       });
