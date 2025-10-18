@@ -4003,17 +4003,17 @@ module.exports = function registerBackoffice(app, context) {
             const revenueRow = propertyRevenueRows.find(row => row.id === p.id);
             const revenueLabel = revenueRow ? eur(revenueRow.confirmed_revenue_cents || 0) : '0,00';
             return `
-              <li class="rounded-xl border border-amber-200 bg-white/80 p-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div>
-                    <div class="font-semibold text-slate-800">${esc(p.name)}</div>
-                    ${location ? `<div class="text-xs text-amber-700">${esc(location)}</div>` : ''}
+              <li class="bo-property-card rounded-xl border border-amber-200 bg-white/80 p-3">
+                <div class="bo-property-card__header">
+                  <div class="bo-property-card__title">
+                    <div class="bo-property-card__name">${esc(p.name)}</div>
+                    ${location ? `<div class="bo-property-card__location">${esc(location)}</div>` : ''}
                   </div>
-                  <a class="btn btn-light text-sm" href="/admin/properties/${p.id}">Abrir</a>
+                  <a class="btn btn-light bo-property-card__cta" href="/admin/properties/${p.id}">Abrir</a>
                 </div>
-                <div class="text-xs text-amber-700 mt-2 flex flex-wrap gap-2">
-                  <span>Unidades: ${propertyUnits.length}</span>
-                  <span>Receita: € ${revenueLabel}</span>
+                <div class="bo-property-card__meta">
+                  <span class="bo-property-card__meta-item">Unidades: ${propertyUnits.length}</span>
+                  <span class="bo-property-card__meta-item">Receita: € ${revenueLabel}</span>
                 </div>
               </li>`;
           })
@@ -4041,8 +4041,10 @@ module.exports = function registerBackoffice(app, context) {
               <tr data-unit-row="${u.id}">
                 <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
                 <td data-label="Unidade">
-                  <span class="table-cell-value">${esc(u.name)}</span>
-                  ${blockBadge}
+                  <div class="table-cell-content">
+                    <span class="table-cell-value">${esc(u.name)}</span>
+                    ${blockBadge}
+                  </div>
                 </td>
                 <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
                 <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
@@ -4065,15 +4067,24 @@ module.exports = function registerBackoffice(app, context) {
             const propertyUnits = propertyUnitMap.get(row.id) || [];
             const unitList = propertyUnits.length
               ? `<ul class="bo-property-units">${propertyUnits
-                  .map(unit => `<li>${esc(unit.name)} · € ${eur(unit.base_price_cents)}</li>`)
+                  .map(
+                    unit => `
+                      <li class="bo-property-units__item">
+                        <span class="bo-property-unit-name">${esc(unit.name)}</span>
+                        <span class="bo-property-unit-price">€ ${eur(unit.base_price_cents)}</span>
+                      </li>`
+                  )
                   .join('')}</ul>`
-              : '<div class="bo-empty">Sem unidades associadas.</div>';
+              : '<div class="bo-empty bo-property-revenue__empty">Sem unidades associadas.</div>';
+            const locationLabel = row.locality || row.district ? `<span class="table-cell-muted bo-property-revenue__location">${esc(propertyLocationLabel(row))}</span>` : '';
             return `
               <tr>
                 <td data-label="Propriedade">
-                  <span class="table-cell-value font-semibold">${esc(row.name)}</span>
-                  ${row.locality || row.district ? `<span class="table-cell-muted">${esc(propertyLocationLabel(row))}</span>` : ''}
-                  ${unitList}
+                  <div class="bo-property-revenue">
+                    <span class="table-cell-value bo-property-revenue__name">${esc(row.name)}</span>
+                    ${locationLabel}
+                    ${unitList}
+                  </div>
                 </td>
                 <td data-label="Receita total"><span class="table-cell-value">€ ${eur(row.confirmed_revenue_cents || 0)}</span></td>
               </tr>`;
