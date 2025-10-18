@@ -3710,9 +3710,14 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
     ? `<a class="btn btn-primary" data-export-download href="${esc(downloadUrl)}">Descarregar Excel</a>`
     : '<button class="btn btn-primary" type="button" disabled>Configuração indisponível</button>';
 
-  const { navButtonsHtml } = buildBackofficeNavigation(req, { activePaneId: 'exports-link' });
+  const { navButtonsHtml, navPanels, activeTarget, defaultPane } = buildBackofficeNavigation(req, {
+    activePaneId: 'exports-link'
+  });
   const body = renderBackofficeShell({
     navButtonsHtml,
+    navPanels,
+    activeTarget,
+    defaultTarget: defaultPane,
     mainContent: html`
       <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
       <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
