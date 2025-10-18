@@ -3931,7 +3931,7 @@ module.exports = function registerBackoffice(app, context) {
             }
 
             if (item.href) {
-              return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
+              return `<a class="${classes.join(' ')}" href="${item.href}" target="_self">${iconMarkup}<span>${esc(item.label)}</span></a>`;
             }
 
             return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
