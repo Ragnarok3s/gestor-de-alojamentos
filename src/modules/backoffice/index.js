@@ -4057,15 +4057,24 @@ module.exports = function registerBackoffice(app, context) {
             const propertyUnits = propertyUnitMap.get(row.id) || [];
             const unitList = propertyUnits.length
               ? `<ul class="bo-property-units">${propertyUnits
-                  .map(unit => `<li>${esc(unit.name)} · € ${eur(unit.base_price_cents)}</li>`)
+                  .map(
+                    unit => `
+                      <li class="bo-property-units__item">
+                        <span class="bo-property-unit-name">${esc(unit.name)}</span>
+                        <span class="bo-property-unit-price">€ ${eur(unit.base_price_cents)}</span>
+                      </li>`
+                  )
                   .join('')}</ul>`
-              : '<div class="bo-empty">Sem unidades associadas.</div>';
+              : '<div class="bo-empty bo-property-revenue__empty">Sem unidades associadas.</div>';
+            const locationLabel = row.locality || row.district ? `<span class="table-cell-muted bo-property-revenue__location">${esc(propertyLocationLabel(row))}</span>` : '';
             return `
               <tr>
                 <td data-label="Propriedade">
-                  <span class="table-cell-value font-semibold">${esc(row.name)}</span>
-                  ${row.locality || row.district ? `<span class="table-cell-muted">${esc(propertyLocationLabel(row))}</span>` : ''}
-                  ${unitList}
+                  <div class="bo-property-revenue">
+                    <span class="table-cell-value bo-property-revenue__name">${esc(row.name)}</span>
+                    ${locationLabel}
+                    ${unitList}
+                  </div>
                 </td>
                 <td data-label="Receita total"><span class="table-cell-value">€ ${eur(row.confirmed_revenue_cents || 0)}</span></td>
               </tr>`;
