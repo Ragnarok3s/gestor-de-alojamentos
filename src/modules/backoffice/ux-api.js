@@ -4,6 +4,7 @@ const { createRateManagementService } = require('../../services/rate-management'
 const { createUnitBlockService } = require('../../services/unit-blocks');
 const { createReviewService } = require('../../services/review-center');
 const { createReportingService } = require('../../services/reporting');
+const { createRevenueReportingService } = require('../../services/reporting-revenue');
 
 function handleError(res, err) {
   if (isKnownError(err)) {
@@ -33,6 +34,7 @@ module.exports = function registerUxApi(app, context) {
   const blockService = createUnitBlockService({ db, dayjs });
   const reviewService = createReviewService({ db, dayjs });
   const reportingService = createReportingService({ db, dayjs });
+  const revenueReportingService = createRevenueReportingService({ db, dayjs });
 
   router.use(requireLogin, requireBackofficeAccess);
 
@@ -198,6 +200,42 @@ module.exports = function registerUxApi(app, context) {
     try {
       const removed = ratePlanService.deleteRestriction(req.params.id);
       return res.json({ ok: true, removed });
+    } catch (err) {
+      return handleError(res, err);
+    }
+  });
+
+  router.get('/revenue/calendar', (req, res) => {
+    try {
+      const start = typeof req.query.start === 'string' ? req.query.start : undefined;
+      const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+      const pickupWindowsRaw = req.query.pickupWindows;
+      const pickupWindows = [];
+      if (Array.isArray(pickupWindowsRaw)) {
+        pickupWindowsRaw.forEach(value => {
+          if (typeof value === 'string') {
+            value
+              .split(',')
+              .map(item => item.trim())
+              .filter(Boolean)
+              .forEach(item => pickupWindows.push(item));
+          }
+        });
+      } else if (typeof pickupWindowsRaw === 'string') {
+        pickupWindowsRaw
+          .split(',')
+          .map(item => item.trim())
+          .filter(Boolean)
+          .forEach(item => pickupWindows.push(item));
+      }
+
+      const payload = revenueReportingService.getCalendar({
+        startDate: start,
+        endDate: end,
+        pickupWindows
+      });
+
+      return res.json({ ok: true, ...payload });
     } catch (err) {
       return handleError(res, err);
     }

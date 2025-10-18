@@ -14,6 +14,7 @@ const { createUnitBlockService } = require('../src/services/unit-blocks');
 const { createReviewService } = require('../src/services/review-center');
 const { createReviewRequestService } = require('../src/services/review-requests');
 const { createReportingService } = require('../src/services/reporting');
+const { createRevenueReportingService } = require('../src/services/reporting-revenue');
 const { ConflictError, ValidationError } = require('../src/services/errors');
 const { createOverbookingGuard } = require('../src/services/overbooking-guard');
 const { createChannelIntegrationService } = require('../src/services/channel-integrations');
@@ -1066,6 +1067,80 @@ function testChannelContentService() {
   assert.ok(history.some(entry => entry.version === 1));
 }
 
+function testRevenueCalendarService() {
+  const db = createDatabase(':memory:');
+  const propertyId = db.prepare('INSERT INTO properties(name) VALUES (?)').run('Vista Douro').lastInsertRowid;
+  const insertUnit = db.prepare(
+    'INSERT INTO units(property_id, name, capacity, base_price_cents) VALUES (?,?,?,?)'
+  );
+  const unitIds = [];
+  for (let i = 0; i < 4; i += 1) {
+    unitIds.push(insertUnit.run(propertyId, `Suite ${i + 1}`, 2, 10000).lastInsertRowid);
+  }
+
+  const insertBooking = db.prepare(
+    'INSERT INTO bookings(unit_id, guest_name, guest_email, checkin, checkout, total_cents, status, created_at) VALUES (?,?,?,?,?,?,?,?)'
+  );
+  unitIds.forEach((unitId, index) => {
+    insertBooking.run(
+      unitId,
+      `Hóspede ${index + 1}`,
+      `guest${index + 1}@example.com`,
+      '2024-01-02',
+      '2024-01-03',
+      6000,
+      'CONFIRMED',
+      '2024-01-01T10:00:00Z'
+    );
+  });
+  insertBooking.run(
+    unitIds[0],
+    'Hóspede Premium',
+    'premium@example.com',
+    '2024-01-04',
+    '2024-01-05',
+    18000,
+    'CONFIRMED',
+    '2024-01-02T09:00:00Z'
+  );
+
+  const service = createRevenueReportingService({ db, dayjs });
+  const result = service.getCalendar({ startDate: '2024-01-02', endDate: '2024-01-04', pickupWindows: [3] });
+  assert.equal(result.range.dayCount, 3, 'calendário deve devolver três dias no intervalo');
+
+  const byDate = new Map(result.days.map(day => [day.date, day]));
+  const firstDay = byDate.get('2024-01-02');
+  assert.ok(firstDay, 'deve existir registo para 2 de janeiro');
+  assert.ok(
+    firstDay.alerts.some(alert => alert.type === 'underpricing'),
+    '2 de janeiro deve sinalizar risco de subpricing'
+  );
+  assert.equal(firstDay.pickups['3'], 4, 'pickups de 3 dias devem contabilizar reservas recentes');
+
+  const secondDay = byDate.get('2024-01-03');
+  assert.ok(secondDay, 'deve existir registo para 3 de janeiro');
+  assert.ok(secondDay.alerts.some(alert => alert.type === 'gap'), '3 de janeiro deve sinalizar ausência de reservas');
+
+  const thirdDay = byDate.get('2024-01-04');
+  assert.ok(thirdDay, 'deve existir registo para 4 de janeiro');
+  assert.ok(
+    thirdDay.alerts.some(alert => alert.type === 'overpricing'),
+    '4 de janeiro deve sinalizar risco de overpricing'
+  );
+  assert.equal(thirdDay.pickups['3'], 1, 'pickups devem refletir reservas criadas nos últimos 3 dias');
+
+  assert.equal(result.summary.alertTotals.gap, 1, 'sumário deve contabilizar dias com gap');
+  assert.equal(result.summary.alertTotals.underpricing, 1, 'sumário deve contabilizar dias com subpricing');
+  assert.equal(result.summary.alertTotals.overpricing, 1, 'sumário deve contabilizar dias com overpricing');
+  assert.equal(result.summary.pickupTotals['3'], 5, 'sumário deve agregar pickups do intervalo');
+
+  const cached = service.getCalendar({ startDate: '2024-01-02', endDate: '2024-01-04', pickupWindows: [3, 5] });
+  const cachedDay = cached.days.find(day => day.date === '2024-01-02');
+  assert.ok(cachedDay, 'resultado em cache deve incluir dia inicial');
+  assert.equal(cachedDay.pickups['3'], 4, 'resultado em cache deve manter contagem de pickups');
+  assert.ok(cached.pickupWindows.includes(5), 'resultado em cache deve respeitar novos períodos solicitados');
+}
+
 async function main() {
   console.log('> testServerBootstrap');
   testServerBootstrap();
@@ -1121,6 +1196,9 @@ async function main() {
   console.log('> testReviewService');
   testReviewService();
   console.log('✓ testReviewService');
+  console.log('> testRevenueCalendarService');
+  testRevenueCalendarService();
+  console.log('✓ testRevenueCalendarService');
   console.log('> testReportingService');
   testReportingService();
   const handles = process._getActiveHandles();
