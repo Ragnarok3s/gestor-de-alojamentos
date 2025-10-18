@@ -5,6 +5,9 @@ const path = require('path');
 
 function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MASTER_ROLE }) {
   const tabsScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'backoffice-tabs.js'), 'utf8');
+  const routerScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'backoffice-router.js'), 'utf8');
+  const panelLoaderScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'panel-loader.js'), 'utf8');
+  const panelInterceptScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'panel-intercept.js'), 'utf8');
 
   function inlineScript(source) {
     return source.replace(/<\/(script)/gi, '<\\/$1');
@@ -286,6 +289,7 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
             class="bo-panel is-active"
             role="tabpanel"
             aria-labelledby="bo-tab-${safeActiveTarget || 'overview'}"
+            aria-hidden="false"
             data-bo-panel-src="${escAttr(activePanelSource)}"
             data-bo-panel-loaded="true"
           >
@@ -303,6 +307,7 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
             class="bo-panel"
             role="tabpanel"
             aria-labelledby="bo-tab-${escAttr(panel.target)}"
+            aria-hidden="true"
             data-bo-panel-src="${escAttr(panel.source)}"
             hidden
           ></section>
@@ -344,6 +349,9 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
           </div>
         </div>
       </div>
+      <script>${inlineScript(routerScriptSource)}</script>
+      <script>${inlineScript(panelInterceptScriptSource)}</script>
+      <script>${inlineScript(panelLoaderScriptSource)}</script>
       <script>${inlineScript(tabsScriptSource)}</script>
     `;
   }

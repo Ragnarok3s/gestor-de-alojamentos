@@ -2788,6 +2788,10 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
         .page-backoffice .bo-panel[hidden]{display:none!important;}
         .page-backoffice .bo-panel.is-loading{opacity:.6;}
         .page-backoffice .bo-panel__error{padding:16px;border-radius:16px;border:1px solid rgba(248,113,113,.45);background:#fee2e2;color:#b91c1c;font-weight:600;text-align:center;}
+        .page-backoffice .bo-panel__error code{display:block;margin-top:8px;padding:12px;border-radius:12px;background:rgba(255,255,255,.65);color:#7f1d1d;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;overflow-x:auto;}
+        .page-backoffice .bo-panel__error .bo-retry{margin-top:16px;display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:14px;border:1px solid rgba(249,115,22,.45);background:#fff;color:#b45309;font-weight:600;cursor:pointer;transition:all .2s ease;}
+        .page-backoffice .bo-panel__error .bo-retry:hover{background:#fed7aa;color:#9a3412;}
+        .page-backoffice .bo-panel__loading{padding:32px;border-radius:18px;border:1px dashed rgba(249,115,22,.45);background:#fff7ed;color:#b45309;font-weight:600;text-align:center;}
         .page-backoffice .bo-shell.is-collapsed .bo-sidebar{padding:16px 12px;}
         .page-backoffice .bo-shell.is-collapsed .bo-sidebar__title{display:none;}
         .page-backoffice .bo-shell.is-collapsed .bo-nav{gap:12px;}

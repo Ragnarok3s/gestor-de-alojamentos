@@ -3880,13 +3880,15 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
 
+    const requestedTabRaw = typeof req.query.tab === 'string' ? req.query.tab.trim() : '';
+    const requestedTab = requestedTabRaw.replace(/[^a-zA-Z0-9-]/g, '');
     const {
       navButtonsHtml,
       navLinkTargets,
       defaultPane,
       navPanels,
       activeTarget
-    } = buildBackofficeNavigation(req, { activePaneId: 'overview' });
+    } = buildBackofficeNavigation(req, { activePaneId: requestedTab || 'overview' });
     const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
     quickAccessHtml = filteredQuickLinks.length
       ? html`<section class="bo-card space-y-4">
