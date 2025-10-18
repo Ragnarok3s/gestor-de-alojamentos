@@ -1,201 +1,266 @@
-(function (global) {
-  if (typeof window === 'undefined') return;
+import { loadPanel } from "./panel-loader.js";
+import { BoRoutes } from "./backoffice-router.js";
 
-  var PANEL_PREFIX = 'bo-panel-';
+const PANEL_PREFIX = "bo-panel-";
 
-  function normalizeInput(input) {
-    if (!input) return null;
-    if (typeof input === 'string') {
-      try {
-        return new URL(input, window.location.origin);
-      } catch (err) {
-        return null;
+export function wirePanelNavigation(container) {
+  if (!container || container.__boInterceptWired) return;
+  container.__boInterceptWired = true;
+
+  container.addEventListener(
+    "click",
+    async (event) => {
+      const anchor = event.target.closest("a");
+      const linkLike = event.target.closest("[data-href], [role='link']");
+      let url = null;
+
+      if (anchor) {
+        if (anchor.target && anchor.target !== "_self") return;
+        if (anchor.hasAttribute("download")) return;
+        const href = anchor.getAttribute("href");
+        if (!href || href.startsWith("#")) return;
+        url = safeUrl(anchor.href);
+      } else if (linkLike) {
+        const hinted = linkLike.getAttribute("data-href") || linkLike.getAttribute("href");
+        if (!hinted || hinted.startsWith("#")) return;
+        url = safeUrl(hinted);
       }
-    }
-    if (input instanceof URL) {
-      return input;
-    }
-    return null;
-  }
 
-  function routeFromUrl(input) {
-    var urlObj = normalizeInput(input);
-    if (!urlObj) return null;
+      if (!url) return;
+      if (url.origin !== location.origin) return;
 
-    var routes = global.BoRoutes || {};
-    var keys = Object.keys(routes);
+      const panel = event.target.closest(`[id^="${PANEL_PREFIX}"]`);
+      if (!panel) return;
 
-    for (var i = 0; i < keys.length; i++) {
-      var descriptor = routes[keys[i]];
-      if (!descriptor || !descriptor.url) continue;
+      const target = routeFromUrl(url.pathname);
+      if (!target) return;
+
+      event.preventDefault();
       try {
-        var routeUrl = new URL(descriptor.url, window.location.origin);
-        if (routeUrl.pathname !== urlObj.pathname) continue;
-
-        var match = true;
-        routeUrl.searchParams.forEach(function (value, key) {
-          if (urlObj.searchParams.get(key) !== value) {
-            match = false;
-          }
-        });
-        if (!match) continue;
-
-        return keys[i];
+        await navigateTo(target);
       } catch (err) {
-        // ignore malformed routes
-      }
-    }
-
-    return null;
-  }
-
-  function currentTab() {
-    var active = document.querySelector('.bo-tab.is-active');
-    return active ? active.getAttribute('data-bo-target') : null;
-  }
-
-  function showSubmitting(form) {
-    var submit = form.querySelector('button[type="submit"], [type="submit"]');
-    if (submit && !submit.hasAttribute('data-bo-submitting')) {
-      submit.setAttribute('data-bo-submitting', 'true');
-      submit.disabled = true;
-      submit.dataset.boSubmitOriginalLabel = submit.innerHTML;
-      submit.innerHTML = 'A guardar…';
-    }
-  }
-
-  function handleLinkClick(event) {
-    var anchor = event.target.closest('a');
-    if (!anchor) return;
-    if (anchor.target && anchor.target !== '_self') return;
-    if (anchor.hasAttribute('download')) return;
-
-    var href = anchor.getAttribute('href');
-    if (!href || href.charAt(0) === '#') return;
-
-    var url = normalizeInput(anchor.href);
-    if (!url) return;
-    if (url.origin !== window.location.origin) return;
-
-    var panel = event.target.closest('[id^="' + PANEL_PREFIX + '"]');
-    if (!panel) return;
-
-    var target = routeFromUrl(url);
-    if (!target) return;
-
-    event.preventDefault();
-
-    var tabsApi = global.BackofficeTabs;
-    if (tabsApi && typeof tabsApi.activate === 'function') {
-      tabsApi.activate(target, { pushState: true }).catch(function (err) {
         console.error(err);
-      });
-    } else {
-      var loader = global.BackofficePanelLoader;
-      if (loader && typeof loader.loadPanel === 'function') {
-        loader.loadPanel(target, { pushState: true });
       }
-    }
-  }
+    },
+    true
+  );
 
-  function followRedirectResponse(response) {
-    if (!response || !response.redirected) return Promise.resolve(null);
-    return fetch(response.url, {
-      credentials: 'same-origin',
-      headers: {
-        'X-Requested-With': 'fetch',
-        Accept: 'text/html'
-      }
-    }).then(function (res) {
-      return res.text();
-    });
-  }
+  container.addEventListener(
+    "submit",
+    async (event) => {
+      const form = event.target.closest("form");
+      if (!form) return;
 
-  function submitForm(event) {
-    var form = event.target.closest('form');
-    if (!form) return;
+      const panel = event.target.closest(`[id^="${PANEL_PREFIX}"]`);
+      if (!panel) return;
 
-    var panel = event.target.closest('[id^="' + PANEL_PREFIX + '"]');
-    if (!panel) return;
+      event.preventDefault();
 
-    event.preventDefault();
+      const method = (form.method || "GET").toUpperCase();
+      const action = safeUrl(form.action || location.href);
+      if (!action) return;
 
-    var method = (form.getAttribute('method') || 'GET').toUpperCase();
-    var actionAttr = form.getAttribute('action');
-    var actionUrl = actionAttr ? new URL(actionAttr, window.location.origin) : new URL(window.location.href);
-    var target = routeFromUrl(actionUrl) || currentTab();
+      const target = routeFromUrl(action.pathname) || currentTab();
+      showSubmitting(form);
 
-    showSubmitting(form);
+      try {
+        const response = await submitForm(action, method, new FormData(form));
+        const html = await response.text();
+        const { selector } = BoRoutes[target] || {};
 
-    var fetchOptions = {
-      credentials: 'same-origin',
-      headers: {
-        'X-Requested-With': 'fetch',
-        Accept: 'text/html'
-      }
-    };
-
-    var requestPromise;
-
-    if (method === 'GET') {
-      var params = new URLSearchParams(new FormData(form));
-      actionUrl.search = params.toString();
-      requestPromise = fetch(actionUrl.toString(), fetchOptions);
-    } else {
-      fetchOptions.method = method;
-      fetchOptions.body = new FormData(form);
-      requestPromise = fetch(actionUrl.toString(), fetchOptions);
-    }
-
-    requestPromise
-      .then(function (res) {
-        if (!res.ok && !res.redirected) {
-          var error = new Error('HTTP ' + res.status);
-          error.response = res;
-          throw error;
-        }
-        if (res.redirected) {
-          return followRedirectResponse(res).then(function (html) {
-            return { html: html, response: res };
-          });
-        }
-        return res.text().then(function (html) {
-          return { html: html, response: res };
-        });
-      })
-      .then(function (payload) {
-        if (!payload) return;
-        var loader = global.BackofficePanelLoader;
-        if (!loader || typeof loader.mountFragment !== 'function') return;
-
-        var routes = global.BoRoutes || {};
-        var descriptor = (target && routes[target]) || null;
-        loader.mountFragment(panel, payload.html, descriptor ? descriptor.selector : null, target);
-        if (target) {
-          var tabsApi = global.BackofficeTabs;
-          if (tabsApi && typeof tabsApi.rememberPanelLoaded === 'function') {
-            tabsApi.rememberPanelLoaded(target);
+        const fragment = (() => {
+          const tpl = document.createElement("template");
+          tpl.innerHTML = html;
+          if (!selector) return tpl.content.cloneNode(true);
+          const selectors = String(selector)
+            .split(",")
+            .map((sel) => sel.trim())
+            .filter(Boolean);
+          for (const sel of selectors) {
+            const root = tpl.content.querySelector(sel);
+            if (root) {
+              const frag = document.createDocumentFragment();
+              Array.from(root.childNodes).forEach((node) => frag.appendChild(node));
+              return frag;
+            }
           }
-        }
-      })
-      .catch(function (err) {
-        panel.innerHTML =
-          '<div class="bo-panel__error"><p>Erro ao submeter.</p><code>' + (err && err.message ? err.message : String(err)) + '</code></div>';
-      });
+          return tpl.content.cloneNode(true);
+        })();
+
+        window.BO?.destroy?.(panel);
+        panel.innerHTML = "";
+        panel.appendChild(fragment);
+        panel.querySelectorAll('button:not([type])').forEach((btn) => btn.setAttribute("type", "button"));
+        panel.querySelectorAll('[onclick*="window.location"], [href^="javascript:"]').forEach((el) => {
+          el.removeAttribute("onclick");
+          if (el.matches('[href^="javascript:"]')) {
+            el.removeAttribute("href");
+          }
+        });
+        window.BO?.init?.(panel);
+        wirePanelNavigation(panel);
+        panel.dataset.boPanelLoaded = "true";
+      } catch (err) {
+        panel.innerHTML = `<div class="bo-panel__error"><p>Erro ao submeter.</p><code>${escapeHtml(
+          err && err.message ? err.message : String(err)
+        )}</code></div>`;
+      } finally {
+        resetSubmitting(form);
+      }
+    },
+    true
+  );
+}
+
+function routeFromUrl(pathname) {
+  const clean = pathname.replace(/\/+$/, "");
+  const keys = Object.keys(BoRoutes);
+  for (const key of keys) {
+    const candidate = BoRoutes[key];
+    if (!candidate) continue;
+    const candidateUrl = (candidate.url || "").replace(/\/+$/, "");
+    if (candidateUrl === clean) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function currentTab() {
+  const active = document.querySelector(".bo-tab.is-active");
+  return active ? active.dataset.boTarget || null : null;
+}
+
+async function navigateTo(target) {
+  document.querySelectorAll(".bo-tab.is-active").forEach((btn) => {
+    btn.classList.remove("is-active");
+    btn.setAttribute("aria-selected", "false");
+  });
+
+  const button = document.querySelector(`.bo-tab[data-bo-target="${cssEscape(target)}"]`);
+  if (button) {
+    button.classList.add("is-active");
+    button.setAttribute("aria-selected", "true");
   }
 
-  function wirePanelNavigation(container) {
-    if (!container || container.__boInterceptWired) return;
-    container.__boInterceptWired = true;
+  const panelId = `${PANEL_PREFIX}${target}`;
+  document.querySelectorAll(`[id^="${PANEL_PREFIX}"]`).forEach((panel) => {
+    const isActive = panel.id === panelId;
+    panel.hidden = !isActive;
+    panel.setAttribute("aria-hidden", isActive ? "false" : "true");
+    if (!isActive) {
+      panel.classList.remove("is-active");
+    } else {
+      panel.classList.add("is-active");
+      if (button?.id) {
+        panel.setAttribute("aria-labelledby", button.id);
+      }
+    }
+  });
 
-    container.addEventListener('click', handleLinkClick, true);
-    container.addEventListener('submit', submitForm, true);
+  await loadPanel(target, { pushState: true });
+}
+
+function showSubmitting(form) {
+  const submit = form.querySelector('[type="submit"]');
+  if (!submit) return;
+  submit.disabled = true;
+  if (!submit.dataset.boSubmitOriginalLabel) {
+    submit.dataset.boSubmitOriginalLabel = submit.innerHTML;
+  }
+  submit.innerHTML = "A guardar…";
+}
+
+function resetSubmitting(form) {
+  const submit = form.querySelector('[type="submit"]');
+  if (!submit) return;
+  submit.disabled = false;
+  if (submit.dataset.boSubmitOriginalLabel) {
+    submit.innerHTML = submit.dataset.boSubmitOriginalLabel;
+    delete submit.dataset.boSubmitOriginalLabel;
+  }
+}
+
+async function submitForm(action, method, body) {
+  const opts = {
+    credentials: "same-origin",
+    headers: {
+      "X-Requested-With": "fetch",
+      Accept: "text/html"
+    }
+  };
+
+  if (method === "GET") {
+    const params = new URLSearchParams(body);
+    action.search = params.toString();
+    return fetch(action, opts).then(handleResponse);
   }
 
-  if (!global.BackofficePanelIntercept) {
-    global.BackofficePanelIntercept = {};
-  }
+  return fetch(action, {
+    ...opts,
+    method,
+    body
+  }).then(handleResponse);
+}
 
-  global.BackofficePanelIntercept.routeFromUrl = routeFromUrl;
-  global.BackofficePanelIntercept.wirePanelNavigation = wirePanelNavigation;
-})(typeof window !== 'undefined' ? window : globalThis);
+async function handleResponse(response) {
+  if (response.redirected) {
+    return followRedirect(response);
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response;
+}
+
+async function followRedirect(response) {
+  const redirected = await fetch(response.url, {
+    credentials: "same-origin",
+    headers: {
+      "X-Requested-With": "fetch",
+      Accept: "text/html"
+    }
+  });
+  if (!redirected.ok) {
+    throw new Error(`HTTP ${redirected.status}`);
+  }
+  return redirected;
+}
+
+function safeUrl(input) {
+  try {
+    return new URL(input, location.origin);
+  } catch (err) {
+    return null;
+  }
+}
+
+function cssEscape(value) {
+  if (window.CSS?.escape) return window.CSS.escape(value);
+  return String(value).replace(/[^a-zA-Z0-9\-_.]/g, (ch) => `\\${ch.charCodeAt(0).toString(16)} `);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return ch;
+    }
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.BackofficePanelIntercept = Object.assign(window.BackofficePanelIntercept || {}, {
+    wirePanelNavigation
+  });
+}

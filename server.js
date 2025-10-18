@@ -1798,7 +1798,10 @@ function scheduleDailyTask(task, hour, minute) {
 
   function schedule() {
     const now = dayjs();
-    let next = now.hour(hour).minute(minute).second(0).millisecond(0);
+    const reference = now.toDate();
+    const nextDate = new Date(reference.getTime());
+    nextDate.setHours(hour, minute, 0, 0);
+    let next = dayjs(nextDate);
     if (!next.isAfter(now)) {
       next = next.add(1, 'day');
     }

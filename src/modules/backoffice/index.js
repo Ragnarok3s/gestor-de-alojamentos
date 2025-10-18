@@ -1,3 +1,4 @@
+const express = require('express');
 const registerUxApi = require('./ux-api');
 const registerContentCenter = require('./content-center');
 const { createBackofficeLayoutHelpers } = require('./backoffice-layout');
@@ -187,6 +188,9 @@ module.exports = function registerBackoffice(app, context) {
     featureFlags,
     isFeatureEnabled
   } = context;
+
+  const backofficeScriptsDir = path.join(__dirname, 'scripts');
+  app.use('/admin/assets/backoffice', express.static(backofficeScriptsDir, { fallthrough: false }));
 
   const selectUnitPropertyIdStmt = db.prepare('SELECT property_id FROM units WHERE id = ?');
   const selectRoleByKeyStmt = db.prepare('SELECT id, key, name FROM roles WHERE key = ?');
@@ -1072,7 +1076,6 @@ module.exports = function registerBackoffice(app, context) {
 
   const scriptsDir = path.join(__dirname, 'scripts');
   const featureBuilderSource = fs.readFileSync(path.join(scriptsDir, 'feature-builder-runtime.js'), 'utf8');
-  const backofficeTabsSource = fs.readFileSync(path.join(scriptsDir, 'backoffice-tabs.js'), 'utf8');
   const galleryManagerSource = fs.readFileSync(path.join(scriptsDir, 'unit-gallery-manager.js'), 'utf8');
   const revenueDashboardSource = fs.readFileSync(path.join(scriptsDir, 'revenue-dashboard.js'), 'utf8');
   const revenueCalendarSource = fs.readFileSync(path.join(scriptsDir, 'revenue-calendar.js'), 'utf8');
@@ -1088,7 +1091,6 @@ module.exports = function registerBackoffice(app, context) {
   const revenueCalendarScript = inlineScript(revenueCalendarSource);
   const uxEnhancementsScript = inlineScript(uxEnhancementsSource);
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
-  const backofficeTabsScript = inlineScript(backofficeTabsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
 
   function renderFeatureBuilderField({ name, value, helperText, label } = {}) {
@@ -5448,7 +5450,6 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
           <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
-          <script>${backofficeTabsScript}</script>
           <script>${sidebarControlsScript}</script>
           <script>${featureBuilderScript}</script>
           <script>${revenueDashboardScript}</script>

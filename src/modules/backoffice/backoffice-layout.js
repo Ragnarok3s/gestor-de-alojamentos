@@ -1,17 +1,7 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-
 function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MASTER_ROLE }) {
-  const tabsScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'backoffice-tabs.js'), 'utf8');
-  const routerScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'backoffice-router.js'), 'utf8');
-  const panelLoaderScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'panel-loader.js'), 'utf8');
-  const panelInterceptScriptSource = fs.readFileSync(path.join(__dirname, 'scripts', 'panel-intercept.js'), 'utf8');
-
-  function inlineScript(source) {
-    return source.replace(/<\/(script)/gi, '<\\/$1');
-  }
+  const scriptsBasePath = '/admin/assets/backoffice';
 
   function escAttr(value) {
     return String(value == null ? '' : value)
@@ -349,10 +339,12 @@ function createBackofficeLayoutHelpers({ html, esc, userCan, isFlagEnabled, MAST
           </div>
         </div>
       </div>
-      <script>${inlineScript(routerScriptSource)}</script>
-      <script>${inlineScript(panelInterceptScriptSource)}</script>
-      <script>${inlineScript(panelLoaderScriptSource)}</script>
-      <script>${inlineScript(tabsScriptSource)}</script>
+      <script>
+        window.BO = window.BO || {};
+        window.BO.init = window.BO.init || function () {};
+        window.BO.destroy = window.BO.destroy || function () {};
+      </script>
+      <script type="module" src="${scriptsBasePath}/backoffice-tabs.js"></script>
     `;
   }
 

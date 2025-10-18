@@ -1,227 +1,138 @@
-(function (global) {
-  if (typeof window === 'undefined') return;
+import { BoRoutes } from "./backoffice-router.js";
+import { wirePanelNavigation } from "./panel-intercept.js";
 
-  var PANEL_PREFIX = 'bo-panel-';
-  var FETCH_OPTS = {
-    credentials: 'same-origin',
-    headers: {
-      'X-Requested-With': 'fetch',
-      Accept: 'text/html'
-    }
-  };
+const PANEL_PREFIX = "bo-panel-";
+const FETCH_OPTS = {
+  credentials: "same-origin",
+  headers: {
+    "X-Requested-With": "fetch",
+    Accept: "text/html"
+  }
+};
 
-  var pendingLoads = new Map();
-  var hasBoundRetry = false;
-
-  function ensureHooks() {
-    if (!global.BO) {
-      global.BO = {};
-    }
-    if (typeof global.BO.init !== 'function') {
-      global.BO.init = function () {};
-    }
-    if (typeof global.BO.destroy !== 'function') {
-      global.BO.destroy = function () {};
-    }
+export async function loadPanel(target, { pushState = true } = {}) {
+  if (!target) {
+    throw new Error("Target obrigatório");
   }
 
-  function getRoute(target) {
-    var routes = global.BoRoutes || {};
-    return routes[target] || null;
+  const route = BoRoutes[target];
+  if (!route) {
+    throw new Error(`Sem rota para target: ${target}`);
   }
 
-  function panelIdFor(target) {
-    return PANEL_PREFIX + target;
+  const panel = document.getElementById(`${PANEL_PREFIX}${target}`);
+  if (!panel) {
+    throw new Error(`Painel inexistente: ${PANEL_PREFIX}${target}`);
   }
 
-  function parseHTML(html, selector, target) {
-    var template = document.createElement('template');
-    template.innerHTML = html || '';
-    var root;
-    if (selector) {
-      root = template.content.querySelector(selector);
-    }
-    if (!root && target) {
-      root = template.content.querySelector('#' + panelIdFor(target));
-    }
-    if (!root) {
-      root = template.content;
-    }
-    var fragment = document.createDocumentFragment();
-    var child = root.firstChild;
-    while (child) {
-      fragment.appendChild(child.cloneNode(true));
-      child = child.nextSibling;
-    }
-    return fragment;
-  }
+  showLoading(panel);
 
-  function runScripts(container) {
-    var scripts = Array.from(container.querySelectorAll('script'));
-    scripts.forEach(function (script) {
-      var newScript = document.createElement('script');
-      Array.from(script.attributes).forEach(function (attr) {
-        newScript.setAttribute(attr.name, attr.value);
-      });
-      if (script.src) {
-        newScript.src = script.src;
-      } else {
-        newScript.textContent = script.textContent;
-      }
-      script.parentNode.replaceChild(newScript, script);
-    });
-  }
-
-  function ensureButtonTypes(container) {
-    if (!container) return;
-    container.querySelectorAll('button:not([type])').forEach(function (btn) {
-      btn.setAttribute('type', 'button');
-    });
-  }
-
-  function wireRetry() {
-    if (hasBoundRetry) return;
-    hasBoundRetry = true;
-    document.addEventListener('click', function (event) {
-      var retry = event.target.closest('.bo-retry');
-      if (!retry) return;
-      var panel = retry.closest('[id^="' + PANEL_PREFIX + '"]');
-      if (!panel) return;
-      var target = panel.id.replace(PANEL_PREFIX, '');
-      loadPanel(target, { pushState: false, replaceState: false });
-    });
-  }
-
-  function showLoading(panel) {
-    panel.hidden = false;
-    panel.setAttribute('aria-busy', 'true');
-    panel.classList.add('is-loading');
-    panel.innerHTML = '<div class="bo-panel__loading" aria-live="polite">A carregar…</div>';
-  }
-
-  function showError(panel, error) {
-    panel.hidden = false;
-    panel.classList.remove('is-loading');
-    panel.removeAttribute('aria-busy');
-    var message = error && error.message ? error.message : String(error || 'Erro desconhecido');
-    panel.innerHTML =
-      '<div class="bo-panel__error"><p>Não foi possível carregar a secção.</p><code>' +
-      message.replace(/[<>]/g, function (char) {
-        return { '<': '&lt;', '>': '&gt;' }[char] || char;
-      }) +
-      '</code><button class="bo-retry" type="button">Tentar novamente</button></div>';
-  }
-
-  function mountFragment(panel, html, selector, target) {
-    ensureHooks();
-    var fragment = parseHTML(html, selector, target);
-    global.BO.destroy(panel);
-    panel.innerHTML = '';
-    panel.appendChild(fragment);
-    panel.hidden = false;
-    ensureButtonTypes(panel);
-    runScripts(panel);
-    global.BO.init(panel);
-    var intercept = global.BackofficePanelIntercept;
-    if (intercept && typeof intercept.wirePanelNavigation === 'function') {
-      intercept.wirePanelNavigation(panel);
-    }
-    panel.classList.remove('is-loading');
-    panel.removeAttribute('aria-busy');
-    panel.dataset.boPanelLoaded = 'true';
-    wireRetry();
-  }
-
-  function fetchHtml(url) {
-    return fetch(url, FETCH_OPTS).then(function (res) {
-      if (res.redirected) {
-        return fetch(res.url, FETCH_OPTS).then(function (follow) {
-          if (!follow.ok) throw new Error('HTTP ' + follow.status);
-          return follow.text();
-        });
-      }
-      if (!res.ok) {
-        throw new Error('HTTP ' + res.status);
-      }
-      return res.text();
-    });
-  }
-
-  function updateHistory(target, pushState, replaceState) {
-    try {
-      var url = new URL(window.location.href);
-      url.searchParams.set('tab', target);
-      var state = { tab: target };
-      if (replaceState) {
-        window.history.replaceState(state, '', url);
-      } else if (pushState) {
-        window.history.pushState(state, '', url);
-      }
-    } catch (err) {
-      // ignore history errors
-    }
-  }
-
-  function loadPanel(target, options) {
-    options = options || {};
-    var pushState = options.pushState !== false;
-    var replaceState = !!options.replaceState;
-    var forceReload = !!options.forceReload;
-
-    if (!target) {
-      return Promise.resolve();
+  try {
+    const res = await fetch(route.url, FETCH_OPTS);
+    const finalResponse = res.redirected ? await fetch(res.url, FETCH_OPTS) : res;
+    if (!finalResponse.ok) {
+      throw new Error(`HTTP ${finalResponse.status}`);
     }
 
-    var route = getRoute(target);
-    if (!route || !route.url) {
-      updateHistory(target, pushState, replaceState);
-      return Promise.resolve();
+    const html = await finalResponse.text();
+    mount(panel, html, route.selector);
+
+    if (pushState) {
+      const url = new URL(location.href);
+      url.searchParams.set("tab", target);
+      history.pushState({ tab: target }, "", url);
     }
+  } catch (err) {
+    showError(panel, err);
+    throw err;
+  }
+}
 
-    var panelId = panelIdFor(target);
-    var panel = document.getElementById(panelId);
-    if (!panel) {
-      throw new Error('Painel inexistente: ' + panelId);
+function mount(panel, html, selector) {
+  const fragment = parseHTML(html, selector);
+  window.BO?.destroy?.(panel);
+
+  panel.innerHTML = "";
+  panel.appendChild(fragment);
+
+  panel.querySelectorAll('button:not([type])').forEach(btn => btn.setAttribute("type", "button"));
+  panel.querySelectorAll('[onclick*="window.location"], [href^="javascript:"]').forEach(el => {
+    el.removeAttribute("onclick");
+    if (el.matches('[href^="javascript:"]')) {
+      el.removeAttribute("href");
     }
+  });
 
-    if (!forceReload && panel.dataset.boPanelLoaded === 'true') {
-      updateHistory(target, pushState, replaceState);
-      panel.hidden = false;
-      panel.classList.add('is-active');
-      return Promise.resolve();
-    }
+  window.BO?.init?.(panel);
+  wirePanelNavigation(panel);
+  panel.dataset.boPanelLoaded = "true";
+  panel.hidden = false;
+  panel.setAttribute("aria-hidden", "false");
+}
 
-    if (pendingLoads.has(target)) {
-      return pendingLoads.get(target);
-    }
+function parseHTML(html, selector) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
 
-    showLoading(panel);
-
-    var request = fetchHtml(route.url)
-      .then(function (html) {
-        mountFragment(panel, html, route.selector, target);
-        updateHistory(target, pushState, replaceState);
-        return panel;
-      })
-      .catch(function (err) {
-        showError(panel, err);
-        if (pushState || replaceState) {
-          updateHistory(target, false, false);
-        }
-        throw err;
-      })
-      .finally(function () {
-        pendingLoads.delete(target);
-      });
-
-    pendingLoads.set(target, request);
-    return request;
+  if (!selector) {
+    return tpl.content;
   }
 
-  if (!global.BackofficePanelLoader) {
-    global.BackofficePanelLoader = {};
+  const selectors = String(selector)
+    .split(",")
+    .map(sel => sel.trim())
+    .filter(Boolean);
+
+  let root = null;
+  for (const sel of selectors) {
+    root = tpl.content.querySelector(sel);
+    if (root) break;
   }
 
-  global.BackofficePanelLoader.loadPanel = loadPanel;
-  global.BackofficePanelLoader.mountFragment = mountFragment;
-})(typeof window !== 'undefined' ? window : globalThis);
+  const fragment = document.createDocumentFragment();
+  const source = root || tpl.content;
+  Array.from(source.childNodes).forEach(node => fragment.appendChild(node));
+  return fragment;
+}
+
+function showLoading(panel) {
+  panel.innerHTML = '<div class="bo-panel__loading" aria-busy="true">A carregar…</div>';
+  panel.hidden = false;
+  panel.setAttribute("aria-hidden", "false");
+}
+
+function showError(panel, err) {
+  const message = err && err.message ? err.message : String(err || "Erro desconhecido");
+  panel.innerHTML = `<div class="bo-panel__error">
+    <p>Não foi possível carregar a secção.</p>
+    <code>${escapeHtml(message)}</code>
+    <button class="bo-retry" type="button">Tentar novamente</button>
+  </div>`;
+  panel.hidden = false;
+  panel.setAttribute("aria-hidden", "false");
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return ch;
+    }
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.BackofficePanelLoader = Object.assign(window.BackofficePanelLoader || {}, {
+    loadPanel
+  });
+}
