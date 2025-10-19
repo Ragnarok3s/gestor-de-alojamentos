@@ -4,6 +4,7 @@ const { registerCalendar } = require('./calendar');
 const { registerBookings } = require('./bookings');
 const { registerHousekeeping } = require('./housekeeping');
 const { registerRatePlans } = require('./finance/ratePlans');
+const { registerRateRules } = require('./finance/rateRules');
 const { ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
@@ -148,7 +149,6 @@ module.exports = function registerBackoffice(app, context) {
     emailTemplates,
     messageTemplates,
     bookingEmailer,
-    rateRuleService,
     overbookingGuard,
     channelIntegrations,
     otaDispatcher,
@@ -498,6 +498,12 @@ module.exports = function registerBackoffice(app, context) {
   });
 
   registerRatePlans(app, {
+    ...context,
+    inlineScript,
+    renderBreadcrumbs,
+  });
+
+  registerRateRules(app, {
     ...context,
     inlineScript,
     renderBreadcrumbs,
