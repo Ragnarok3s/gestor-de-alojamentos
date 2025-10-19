@@ -1,0 +1,9 @@
+{
+  "name": "jest",
+  "version": "0.0.0",
+  "description": "Lightweight test runner shim for offline environments",
+  "main": "index.js",
+  "bin": {
+    "jest": "bin/jest.js"
+  }
+}

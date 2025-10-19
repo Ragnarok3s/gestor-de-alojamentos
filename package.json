@@ -7,7 +7,7 @@
     "lint": "node scripts/lint.js",
     "typecheck": "node scripts/typecheck.js",
     "build": "node scripts/build-check.js",
-    "test": "node scripts/run-tests.js",
+    "test": "node vendor/jest/bin/jest.js",
     "depcheck": "node scripts/depcheck.js",
     "start": "node server.js"
   },
@@ -25,5 +25,8 @@
     "express-rate-limit": "file:vendor/express-rate-limit",
     "multer": "^2.0.2",
     "sharp": "^0.33.4"
+  },
+  "devDependencies": {
+    "jest": "file:vendor/jest"
   }
 }
