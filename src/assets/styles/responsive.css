@@ -9,14 +9,23 @@
     --r-pad-lg: 20px;
     --r-gap: var(--r-gap-md);
     --r-pad: var(--r-pad-md);
+    --r-gap-section: 20px;
+    --r-gap-card: 16px;
     --r-radius: 12px;
     --r-font: 16px;
+    --r-card-surface: var(--surface-elevated, #fff);
+    --r-card-border: rgba(15, 23, 42, 0.08);
+    --r-card-shadow: 0 18px 32px -28px rgba(15, 23, 42, 0.26);
+    --r-warning-bg: #fef3c7;
+    --r-warning-fg: #92400e;
   }
 
   @media (max-width: 480px) {
     :root {
       --r-gap: var(--r-gap-sm);
       --r-pad: var(--r-pad-sm);
+      --r-gap-section: 18px;
+      --r-gap-card: 14px;
     }
   }
 
@@ -24,20 +33,35 @@
     :root {
       --r-gap: var(--r-gap-md);
       --r-pad: var(--r-pad-md);
+      --r-gap-section: 20px;
+      --r-gap-card: 16px;
     }
   }
 
-  @media (min-width: 1024px) {
+  @media (min-width: 1024px) and (max-width: 1279px) {
     :root {
       --r-gap: 16px;
       --r-pad: 16px;
+      --r-gap-section: 22px;
+      --r-gap-card: 16px;
+    }
+  }
+
+  @media (min-width: 1280px) and (max-width: 1439px) {
+    :root {
+      --r-gap: 18px;
+      --r-pad: 18px;
+      --r-gap-section: 24px;
+      --r-gap-card: 18px;
     }
   }
 
   @media (min-width: 1440px) {
     :root {
-      --r-gap: var(--r-gap-lg);
-      --r-pad: var(--r-pad-lg);
+      --r-gap: 20px;
+      --r-pad: 20px;
+      --r-gap-section: 28px;
+      --r-gap-card: 20px;
     }
   }
 
@@ -60,22 +84,32 @@
   }
 
   .r-scope .r-container {
-    width: 100%;
-    max-width: 1140px;
+    width: min(100%, 1160px);
     margin-inline: auto;
-    padding-inline: var(--r-pad);
+    padding-inline: clamp(16px, 4vw, 24px);
+    padding-block: var(--r-gap-section);
+    display: flex;
+    flex-direction: column;
+    row-gap: var(--r-gap-section);
+    align-items: stretch;
   }
 
   @media (min-width: 1440px) {
     .r-scope .r-container {
-      max-width: 1200px;
+      width: min(100%, 1240px);
+      padding-inline: clamp(20px, 4vw, 32px);
     }
+  }
+
+  .bo-main .r-scope .r-container {
+    padding-block-start: var(--r-gap-section);
   }
 
   .r-scope .r-grid {
     display: grid;
     gap: var(--r-gap);
     grid-template-columns: 1fr;
+    align-content: start;
   }
 
   @media (min-width: 768px) {
@@ -92,18 +126,32 @@
 
   .r-scope .r-card {
     padding: var(--r-pad);
-    border-radius: 12px;
+    border-radius: var(--r-radius);
+    background-color: var(--r-card-surface);
+    border: 1px solid var(--r-card-border);
+    box-shadow: var(--r-card-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: var(--r-gap-card);
+    line-height: 1.5;
+  }
+
+  @media (min-width: 1280px) {
+    .r-scope .r-card {
+      gap: var(--r-gap-card);
+      line-height: 1.45;
+    }
   }
 
   .r-scope .r-stack {
     display: flex;
     flex-direction: column;
-    row-gap: calc(var(--r-gap) * 0.75);
+    row-gap: var(--r-gap-card);
   }
 
   @media (min-width: 1280px) {
     .r-scope .r-stack {
-      row-gap: var(--r-gap);
+      row-gap: calc(var(--r-gap-card) * 1.1);
     }
   }
 
@@ -112,11 +160,12 @@
     flex-wrap: wrap;
     gap: var(--r-gap);
     align-items: flex-start;
+    align-content: flex-start;
   }
 
   .r-scope .r-col {
     flex: 1 1 340px;
-    min-width: 300px;
+    min-width: min(100%, 320px);
   }
 
   @media (max-width: 480px) {
@@ -127,7 +176,15 @@
 
   .r-scope .r-form {
     display: grid;
+    grid-template-columns: 1fr;
     gap: var(--r-gap);
+    align-items: start;
+  }
+
+  @media (min-width: 768px) {
+    .r-scope .r-form {
+      gap: calc(var(--r-gap) * 1.1);
+    }
   }
 
   .r-scope .r-form--2 {
@@ -137,52 +194,122 @@
   @media (min-width: 768px) {
     .r-scope .r-form--2 {
       grid-template-columns: repeat(2, minmax(300px, 1fr));
+      align-content: start;
     }
   }
 
   .r-scope .r-field {
-    min-width: 280px;
+    min-width: min(100%, 320px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  @media (max-width: 480px) {
+    .r-scope .r-field {
+      min-width: 240px;
+    }
   }
 
   .r-scope .r-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--r-gap);
+    align-items: center;
+    justify-content: flex-start;
   }
 
   .r-scope .r-btn {
     min-height: 44px;
-    padding: 10px 16px;
+    padding: 0.65rem 1.2rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    line-height: 1.3;
+    border-radius: var(--r-radius);
   }
 
   .r-scope :where(input, select, textarea, button) {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   .r-scope .r-table-wrap {
     width: 100%;
-    overflow: auto;
+    overflow-x: auto;
+    border-radius: var(--r-radius);
+    border: 1px solid var(--r-card-border);
+    background-color: var(--r-card-surface);
+    box-shadow: none;
+    scroll-snap-type: x proximity;
   }
 
   .r-scope .r-table-wrap table {
     width: 100%;
+    min-width: 100%;
     border-collapse: collapse;
+  }
+
+  .r-scope .r-table-wrap table caption {
+    padding: 12px 16px 0;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .r-scope .r-table-wrap table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--r-card-surface);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #1f2937;
+    box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.08);
+    white-space: nowrap;
+  }
+
+  .r-scope .r-table-wrap table tbody td {
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: #0f172a;
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    min-width: 140px;
+  }
+
+  .r-scope .r-table-wrap table tbody tr:nth-child(even) {
+    background-color: rgba(148, 163, 184, 0.12);
+  }
+
+  .r-scope .r-table-wrap table tbody tr:hover {
+    background-color: rgba(148, 163, 184, 0.2);
   }
 
   .r-scope .r-badge {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     padding: 4px 10px;
     border-radius: 999px;
-    line-height: 1;
+    line-height: 1.1;
+    font-weight: 600;
+    gap: 6px;
   }
 
   .r-scope .r-break {
     overflow-wrap: anywhere;
     word-break: break-word;
+  }
+
+  .r-scope [data-variant='warning'],
+  .r-scope .status.warning,
+  .r-scope .badge-warning,
+  .r-scope .tag-warning {
+    background-color: var(--r-warning-bg);
+    color: var(--r-warning-fg);
   }
 
   .bo-main .r-scope .quick-links .r-card {

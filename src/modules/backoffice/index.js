@@ -2028,7 +2028,7 @@ module.exports = function registerBackoffice(app, context) {
                 <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
               </div>
             </section>
-            <div class="bo-stack">
+            <div class="bo-stack r-stack">
               ${boardHtml}
             </div>
           </div>
