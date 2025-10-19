@@ -524,18 +524,22 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const body = html`
       ${pageStyles}
-      <div class=\"bo-main r-container owners-main">
-        <header class="bo-header">
+      <div class="bo-main owners-main">
+        <div class="r-scope">
+          <div class="r-container">
+            <header class="bo-header">
           <span class="pill-indicator">Área de Proprietários</span>
           <h1>Resumo de desempenho</h1>
           <p>Consulte receita recente, reservas futuras e a origem dos seus hóspedes sem precisar de aceder ao backoffice.</p>
         </header>
-        ${filterFormHtml}
-        ${summaryCardsHtml}
-        ${pendingBannerHtml}
-        ${propertySectionsHtml}
-        ${upcomingTableHtml}
-        ${channelSummaryHtml}
+            ${filterFormHtml}
+            ${summaryCardsHtml}
+            ${pendingBannerHtml}
+            ${propertySectionsHtml}
+            ${upcomingTableHtml}
+            ${channelSummaryHtml}
+          </div>
+        </div>
       </div>
     `;
 

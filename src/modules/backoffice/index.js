@@ -2013,21 +2013,25 @@ module.exports = function registerBackoffice(app, context) {
       variant: 'backoffice'
     });
     const body = html`
-      <div class=\"bo-main r-container">
-        <header class="bo-header">
-          <h1>Mapa de limpezas</h1>
-          <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
-        </header>
-        <section class=\"bo-card r-card">
-          <h2>Resumo rápido</h2>
-          <div class="bo-metrics">
-            <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
-            <div class="bo-metric"><strong>${inProgressCount}</strong><span>Em curso</span></div>
-            <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
+      <div class="bo-main">
+        <div class="r-scope">
+          <div class="r-container">
+            <header class="bo-header">
+              <h1>Mapa de limpezas</h1>
+              <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
+            </header>
+            <section class="bo-card r-card">
+              <h2>Resumo rápido</h2>
+              <div class="bo-metrics">
+                <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
+                <div class="bo-metric"><strong>${inProgressCount}</strong><span>Em curso</span></div>
+                <div class="bo-metric"><strong>${completedLast24h}</strong><span>Concluídas (24h)</span></div>
+              </div>
+            </section>
+            <div class="bo-stack">
+              ${boardHtml}
+            </div>
           </div>
-        </section>
-        <div class="bo-stack">
-          ${boardHtml}
         </div>
       </div>
     `;
@@ -4622,7 +4626,9 @@ module.exports = function registerBackoffice(app, context) {
             </section>
           </div>
         </div>
-      </div>
+                  </div>
+                </div>
+              </div>
       <script type="application/json" id="operational-dashboard-data">${operationalConfigJson}</script>
       <script>
         document.addEventListener('DOMContentLoaded', function () {
@@ -4912,22 +4918,24 @@ module.exports = function registerBackoffice(app, context) {
                 <nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>${navButtonsHtml}</nav>
               </aside>
               <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
-              <div class=\"bo-main r-container" data-bo-main>
-                <button type="button" class=\"bo-main r-container__menu" data-sidebar-open>
-                  <i data-lucide="menu" aria-hidden="true"></i>
-                  <span>Menu</span>
-                </button>
-                <header class="bo-header">
-                  <h1>Gestor Operacional</h1>
-                  <p>Todos os dados essenciais de gestão em formato compacto.</p>
-                </header>
+              <div class="bo-main" data-bo-main>
+                <div class="r-scope">
+                  <div class="r-container">
+                    <button type="button" class="bo-main__menu r-btn" data-sidebar-open>
+                      <i data-lucide="menu" aria-hidden="true"></i>
+                      <span>Menu</span>
+                    </button>
+                    <header class="bo-header">
+                      <h1>Gestor Operacional</h1>
+                      <p>Todos os dados essenciais de gestão em formato compacto.</p>
+                    </header>
 
-                ${quickAccessHtml}
+                    ${quickAccessHtml}
 
-                <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
+                    <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
-                <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
-                <div class=\"bo-card r-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
+                    <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
+                      <div class=\"bo-card r-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
                   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                     <div>
                       <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
@@ -5563,7 +5571,9 @@ module.exports = function registerBackoffice(app, context) {
     const defaultPickupWindows = pickupParam && pickupParam.trim() ? pickupParam : '7,30';
 
     const body = `
-      <div class="bo-wrapper">
+      <div class="r-scope">
+        <div class="r-container">
+          <div class="bo-wrapper">
         <header class="bo-header">
           <div>
             <h1>Calendário de receita</h1>
@@ -5621,6 +5631,8 @@ module.exports = function registerBackoffice(app, context) {
             </table>
           </div>
         </section>
+          </div>
+        </div>
       </div>
       <script>${revenueCalendarScript}</script>
     `;

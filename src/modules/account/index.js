@@ -188,17 +188,19 @@ module.exports = function registerAccountModule(app, context) {
 
     const body = html`
       ${pageStyles}
-      <div class=\"bo-main r-container max-w-4xl mx-auto">
-        <header class="bo-header">
+      <div class="bo-main max-w-4xl mx-auto">
+        <div class="r-scope">
+          <div class="r-container">
+            <header class="bo-header">
           <span class="pill-indicator">Conta</span>
           <h1>Segurança e Acessos</h1>
           <p class="text-slate-600">Proteja a sua conta com autenticação a dois fatores e consulte o histórico de acessos.</p>
         </header>
 
-        ${successMessage ? `<div class="bo-alert bo-alert--success">${esc(successMessage)}</div>` : ''}
-        ${errorMessage ? `<div class="bo-alert bo-alert--error">${esc(errorMessage)}</div>` : ''}
+            ${successMessage ? `<div class="bo-alert bo-alert--success">${esc(successMessage)}</div>` : ''}
+            ${errorMessage ? `<div class="bo-alert bo-alert--error">${esc(errorMessage)}</div>` : ''}
 
-        <section class=\"bo-card r-card grid gap-4">
+            <section class=\"bo-card r-card grid gap-4">
           <div class="flex flex-wrap justify-between items-center gap-3">
             <div>
               <h2 class="text-lg font-semibold">Autenticação de dois fatores</h2>
@@ -298,9 +300,9 @@ module.exports = function registerAccountModule(app, context) {
                   .join('\n')}</pre>
               </article>`
             : ''}
-        </section>
+            </section>
 
-        <section class=\"bo-card r-card mt-6">
+            <section class=\"bo-card r-card mt-6">
           <div class="flex items-center justify-between mb-3">
             <div>
               <h2 class="text-lg font-semibold">Últimos acessos</h2>
@@ -336,7 +338,9 @@ module.exports = function registerAccountModule(app, context) {
               </tbody>
             </table>
           </div>
-        </section>
+            </section>
+          </div>
+        </div>
       </div>
     `;
 

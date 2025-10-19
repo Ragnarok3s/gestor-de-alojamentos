@@ -1262,12 +1262,14 @@ module.exports = function registerFrontoffice(app, context) {
       branding: theme,
       pageClass: 'page-backoffice page-search',
       body: html`
-        <div class=\"bo-main r-container search-main">
-          <header class="bo-header">
+        <div class="r-scope">
+          <div class="r-container">
+            <div class="bo-main search-main">
+              <header class="bo-header">
             <h1>Pesquisar disponibilidade</h1>
           </header>
-          ${searchStyles}
-          <div class="search-layout">
+              ${searchStyles}
+              <div class="search-layout">
             <section class=\"bo-card r-card search-panel">
               <h2>Filtros de reserva</h2>
               <p class="bo-subtitle">Escolha datas, hóspedes e propriedade para consultar as unidades disponíveis.</p>
@@ -1331,6 +1333,8 @@ module.exports = function registerFrontoffice(app, context) {
               ${!propertyNotFound ? propertyCards : ''}
               ${!propertyNotFound ? noPropertiesCard : ''}
               ${emptyState}
+            </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1401,7 +1405,9 @@ app.get('/book/:unitId', (req, res) => {
     activeNav: 'search',
     branding: theme,
     body: html`
-      <div class="result-header">
+      <div class="r-scope">
+        <div class="r-container">
+          <div class="result-header">
         <span class="pill-indicator">Passo 3 de 3</span>
         <h1 class="text-2xl font-semibold">${u.property_name} – ${u.name}</h1>
         <p class="text-slate-600">Último passo antes de garantir a estadia.</p>
@@ -1411,7 +1417,7 @@ app.get('/book/:unitId', (req, res) => {
           <li class="progress-step is-active">3. Confirme e relaxe</li>
         </ul>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class=\"card r-card p-4">
           <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
           <ul class="text-sm text-slate-700 space-y-1">
@@ -1468,6 +1474,9 @@ app.get('/book/:unitId', (req, res) => {
             </datalist>
           ` : ''}
         </form>
+          </div>
+        </div>
+        </div>
       </div>
     `
   }));
@@ -1882,7 +1891,9 @@ app.post('/book', (req, res) => {
       branding: theme,
       user: null,
       body: html`
-        <div class="max-w-4xl mx-auto space-y-6" data-guest-portal-root data-booking-id="${bookingSummary.id}" data-token="${esc(requestedToken)}">
+        <div class="r-scope">
+          <div class="r-container">
+            <div class="max-w-4xl mx-auto space-y-6" data-guest-portal-root data-booking-id="${bookingSummary.id}" data-token="${esc(requestedToken)}">
           <header class=\"card r-card p-6 space-y-2 bg-white shadow-sm">
             <span class="pill-indicator">${esc(bookingSummary.statusLabel)}</span>
             <h1 class="text-2xl font-semibold text-slate-800">Olá ${esc(bookingSummary.guestName || 'hóspede')}!</h1>
@@ -1954,6 +1965,8 @@ app.post('/book', (req, res) => {
               </div>
             </div>
           </section>
+            </div>
+          </div>
         </div>
         <script>window.__GUEST_PORTAL_DATA__ = ${inlineState};</script>
         <script>
@@ -2527,7 +2540,9 @@ app.get('/booking/:id', (req, res) => {
     activeNav: 'search',
     branding: theme,
     body: html`
-      <div class="result-header">
+      <div class="r-scope">
+        <div class="r-container">
+          <div class="result-header">
         <span class="pill-indicator">${headerPill}</span>
         <h1 class="text-2xl font-semibold">${headerTitle}</h1>
         <p class="text-slate-600">${headerDescriptionHtml}</p>
@@ -2537,7 +2552,7 @@ app.get('/booking/:id', (req, res) => {
           <li class="progress-step is-active">${bookingStepLabel}</li>
         </ul>
       </div>
-      <div class=\"card r-card p-6 space-y-6">
+          <div class=\"card r-card p-6 space-y-6">
         ${inlineFeedbackHtml}
         <div class="grid md:grid-cols-2 gap-4">
           <div>
@@ -2949,17 +2964,21 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     branding: resolveBrandingForRequest(req),
     pageClass: 'page-backoffice page-calendar',
     body: html`
-      <div class=\"bo-main r-container">
-        <header class="bo-header">
+      <div class="bo-main">
+        <div class="r-scope">
+          <div class="r-container">
+            <header class="bo-header">
           <h1>Mapa de reservas</h1>
           <p>Acompanhe todas as reservas da propriedade num calendário único com filtros rápidos.</p>
         </header>
-        ${calendarSummaryCard}
-        ${calendarFiltersCard}
-        ${calendarBoard}
-        ${calendarDragScript}
-        ${unitCardModalShell}
-        ${unitCardScriptTag}
+            ${calendarSummaryCard}
+            ${calendarFiltersCard}
+            ${calendarBoard}
+            ${calendarDragScript}
+            ${unitCardModalShell}
+            ${unitCardScriptTag}
+          </div>
+        </div>
       </div>
     `
   }));
@@ -3708,8 +3727,10 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
       branding: resolveBrandingForRequest(req),
       pageClass: 'page-backoffice page-export',
       body: html`
-        <div class="bo-page">
-          <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
+        <div class="r-scope">
+          <div class="r-container">
+            <div class="bo-page">
+              <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
           <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
           <form method="get" action="/admin/export" class=\"card r-card p-4 grid gap-3 max-w-md">
             <div>
@@ -3728,6 +3749,8 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
             ${generatedAt}
           </div>
           <p class="text-sm text-slate-500 mt-3">Uma folha por mês. Cada linha = unidade; colunas = dias. Reservas em blocos unidos.</p>
+            </div>
+          </div>
         </div>
       `
     })
