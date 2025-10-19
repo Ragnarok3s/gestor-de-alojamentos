@@ -1,45 +1,43 @@
 @layer responsive {
   :root {
-    --r-gap: 16px;
-    --r-pad: 16px;
+    --r-gap-xs: 8px;
+    --r-gap-sm: 12px;
+    --r-gap-md: 16px;
+    --r-gap-lg: 20px;
+    --r-pad-sm: 12px;
+    --r-pad-md: 16px;
+    --r-pad-lg: 20px;
+    --r-gap: var(--r-gap-md);
+    --r-pad: var(--r-pad-md);
     --r-radius: 12px;
     --r-font: 16px;
   }
 
   @media (max-width: 480px) {
     :root {
-      --r-gap: 10px;
-      --r-pad: 12px;
-      --r-font: 15px;
+      --r-gap: var(--r-gap-sm);
+      --r-pad: var(--r-pad-sm);
     }
   }
 
-  @media (min-width: 481px) and (max-width: 767px) {
+  @media (min-width: 481px) and (max-width: 1023px) {
     :root {
-      --r-gap: 12px;
-      --r-pad: 14px;
+      --r-gap: var(--r-gap-md);
+      --r-pad: var(--r-pad-md);
     }
   }
 
-  @media (min-width: 768px) and (max-width: 1023px) {
+  @media (min-width: 1024px) {
     :root {
       --r-gap: 16px;
-      --r-pad: 18px;
+      --r-pad: 16px;
     }
   }
 
-  @media (min-width: 1024px) and (max-width: 1279px) {
+  @media (min-width: 1440px) {
     :root {
-      --r-gap: 18px;
-      --r-pad: 20px;
-    }
-  }
-
-  @media (min-width: 1280px) {
-    :root {
-      --r-gap: 20px;
-      --r-pad: 20px;
-      --r-font: 16px;
+      --r-gap: var(--r-gap-lg);
+      --r-pad: var(--r-pad-lg);
     }
   }
 
@@ -63,14 +61,14 @@
 
   .r-scope .r-container {
     width: 100%;
-    max-width: 1160px;
+    max-width: 1140px;
     margin-inline: auto;
     padding-inline: var(--r-pad);
   }
 
   @media (min-width: 1440px) {
     .r-scope .r-container {
-      max-width: 1240px;
+      max-width: 1200px;
     }
   }
 
@@ -82,36 +80,30 @@
 
   @media (min-width: 768px) {
     .r-scope .r-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (min-width: 1024px) {
-    .r-scope .r-grid {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(320px, 1fr));
     }
   }
 
   @media (min-width: 1280px) {
     .r-scope .r-grid {
-      grid-template-columns: repeat(3, minmax(320px, 1fr));
+      grid-template-columns: repeat(3, minmax(340px, 1fr));
     }
   }
 
   .r-scope .r-card {
     padding: var(--r-pad);
-    border-radius: var(--r-radius);
+    border-radius: 12px;
   }
 
   .r-scope .r-stack {
     display: flex;
     flex-direction: column;
-    gap: calc(var(--r-gap) * 0.8);
+    row-gap: calc(var(--r-gap) * 0.75);
   }
 
   @media (min-width: 1280px) {
     .r-scope .r-stack {
-      gap: var(--r-gap);
+      row-gap: var(--r-gap);
     }
   }
 
@@ -123,8 +115,8 @@
   }
 
   .r-scope .r-col {
-    flex: 1 1 320px;
-    min-width: 280px;
+    flex: 1 1 340px;
+    min-width: 300px;
   }
 
   @media (max-width: 480px) {
@@ -144,12 +136,12 @@
 
   @media (min-width: 768px) {
     .r-scope .r-form--2 {
-      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      grid-template-columns: repeat(2, minmax(300px, 1fr));
     }
   }
 
   .r-scope .r-field {
-    min-width: 260px;
+    min-width: 280px;
   }
 
   .r-scope .r-actions {
@@ -175,7 +167,7 @@
     overflow: auto;
   }
 
-  .r-scope .r-table-wrap :where(table, .table, .bo-table) {
+  .r-scope .r-table-wrap table {
     width: 100%;
     border-collapse: collapse;
   }
@@ -183,13 +175,34 @@
   .r-scope .r-badge {
     display: inline-flex;
     align-items: center;
-    padding: 4px 8px;
+    padding: 4px 10px;
     border-radius: 999px;
+    line-height: 1;
   }
 
   .r-scope .r-break {
-    word-break: break-word;
     overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .bo-main .r-scope .quick-links .r-card {
+    padding-block: 12px;
+  }
+
+  .bo-main .r-scope .price-manager .r-row {
+    gap: var(--r-gap);
+  }
+
+  .bo-main .r-scope .units-list .r-grid {
+    row-gap: calc(var(--r-gap) * 0.75);
+  }
+
+  .bo-main .r-scope .units-list .r-card header {
+    margin-bottom: 8px;
+  }
+
+  .bo-main .r-scope .sticky-actions {
+    margin-top: var(--r-gap);
   }
 
   @media (prefers-reduced-motion: reduce) {
