@@ -48,10 +48,14 @@ describe('rate plans service - createPlan', () => {
     const service = createRatePlanService({ db, dayjs });
 
     try {
+      const insertProperty = db.prepare('INSERT INTO properties(name) VALUES (?)');
+      const propertyInfo = insertProperty.run('Propriedade de teste');
+      const propertyId = propertyInfo.lastInsertRowid;
+
       const plan = service.createPlan({
         name: 'Plano Flexível',
         description: 'Plano com tarifas variáveis',
-        propertyId: 7,
+        propertyId,
         minPrice: 50,
         maxPrice: 120,
         isDefault: true
@@ -61,7 +65,7 @@ describe('rate plans service - createPlan', () => {
       expect(plan).toMatchObject({
         name: 'Plano Flexível',
         description: 'Plano com tarifas variáveis',
-        property_id: 7,
+        property_id: propertyId,
         min_price: 50,
         max_price: 120,
         is_default: 1,
