@@ -509,7 +509,7 @@ module.exports = function registerBackoffice(app, context) {
                 { label: 'Extras & serviços' }
               ])}
               <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
-              <div class="card p-6 space-y-4 mt-6">
+              <div class=\"card r-card p-6 space-y-4 mt-6">
                 <h1 class="text-2xl font-semibold text-slate-900">Extras & serviços</h1>
                 <p class="text-sm text-slate-600">
                   Para configurar extras é necessário ter pelo menos uma propriedade ativa no sistema.
@@ -595,7 +595,7 @@ module.exports = function registerBackoffice(app, context) {
                 Define os extras disponíveis para a reserva do hóspede, incluindo preços, descontos de estadias longas e janelas de disponibilidade.
               </p>
             </header>
-            <form method="get" class="card p-4 mt-6 mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <form method="get" class=\"card r-card p-4 mt-6 mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div class="grid gap-2 md:grid-cols-2 md:gap-4 w-full">
                 <label class="grid gap-1 text-sm md:col-span-2 md:max-w-sm">
                   <span>Propriedade</span>
@@ -694,7 +694,7 @@ module.exports = function registerBackoffice(app, context) {
         <h1 class="text-2xl font-semibold mb-4">Editar reserva #${b.id}</h1>
         ${feedbackHtml}
 
-        <div class="card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class=\"card r-card p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <div class="text-sm text-slate-500">${esc(b.property_name)}</div>
           <div class="font-semibold mb-3">${esc(b.unit_name)}</div>
@@ -2013,12 +2013,12 @@ module.exports = function registerBackoffice(app, context) {
       variant: 'backoffice'
     });
     const body = html`
-      <div class="bo-main">
+      <div class=\"bo-main r-container">
         <header class="bo-header">
           <h1>Mapa de limpezas</h1>
           <p>Acompanhe entradas, saídas e tarefas atribuídas em tempo real.</p>
         </header>
-        <section class="bo-card">
+        <section class=\"bo-card r-card">
           <h2>Resumo rápido</h2>
           <div class="bo-metrics">
             <div class="bo-metric"><strong>${pendingCount}</strong><span>Tarefas pendentes</span></div>
@@ -2469,7 +2469,7 @@ module.exports = function registerBackoffice(app, context) {
         <section class="grid gap-5 lg:grid-cols-2">
           <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
             <h2 class="text-lg font-semibold text-amber-900">Inventário de material</h2>
-            <div class="bo-table responsive-table">
+            <div class="bo-table responsive-table r-table-wrap">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="text-left text-amber-600">
@@ -2483,7 +2483,7 @@ module.exports = function registerBackoffice(app, context) {
           </div>
           <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
             <h2 class="text-lg font-semibold text-amber-900">Listagem de propriedades</h2>
-            <div class="bo-table responsive-table">
+            <div class="bo-table responsive-table r-table-wrap">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="text-left text-amber-600">
@@ -2589,7 +2589,7 @@ module.exports = function registerBackoffice(app, context) {
                 <h2 class="text-lg font-semibold text-amber-900">Concluídas nos últimos 7 dias</h2>
                 <span class="text-sm text-amber-600">${completedLast7.length} no total</span>
               </div>
-              <div class="responsive-table">
+              <div class="responsive-table r-table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -3204,7 +3204,7 @@ module.exports = function registerBackoffice(app, context) {
     let historyTaskHtml = '';
     if (canViewHistory) {
       const renderHistoryEntry = (log, label) => html`
-        <article class="bo-card p-4 space-y-3">
+        <article class=\"bo-card r-card p-4 space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</span>
             <span class="text-xs uppercase tracking-wide text-amber-700">${esc(log.action)}</span>
@@ -3966,7 +3966,7 @@ module.exports = function registerBackoffice(app, context) {
     const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
     const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
     quickAccessHtml = filteredQuickLinks.length
-      ? html`<section class="bo-card space-y-4">
+      ? html`<section class=\"bo-card r-card space-y-4">
           <div>
             <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
             <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
@@ -4338,7 +4338,7 @@ module.exports = function registerBackoffice(app, context) {
       : '<tr><td colspan="9" class="text-sm text-center text-slate-500">Sem dados de revenue para o período analisado.</td></tr>';
 
     const statisticsCard = html`
-      <div class="bo-card bo-span-all space-y-6">
+      <div class=\"bo-card r-card bo-span-all space-y-6">
         <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <h2 class="text-lg font-semibold text-slate-800">Painel estatístico</h2>
@@ -4497,7 +4497,7 @@ module.exports = function registerBackoffice(app, context) {
                 <h3 class="font-semibold text-slate-800">Resumo diário (próximos 7 dias)</h3>
                 <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
               </div>
-              <div class="responsive-table">
+              <div class="responsive-table r-table-wrap">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="text-left text-slate-500">
@@ -4537,7 +4537,7 @@ module.exports = function registerBackoffice(app, context) {
                 <h3 class="font-semibold text-slate-800">Resumo semanal</h3>
                 <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
               </div>
-              <div class="responsive-table">
+              <div class="responsive-table r-table-wrap">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="text-left text-slate-500">
@@ -4912,8 +4912,8 @@ module.exports = function registerBackoffice(app, context) {
                 <nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>${navButtonsHtml}</nav>
               </aside>
               <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
-              <div class="bo-main" data-bo-main>
-                <button type="button" class="bo-main__menu" data-sidebar-open>
+              <div class=\"bo-main r-container" data-bo-main>
+                <button type="button" class=\"bo-main r-container__menu" data-sidebar-open>
                   <i data-lucide="menu" aria-hidden="true"></i>
                   <span>Menu</span>
                 </button>
@@ -4927,7 +4927,7 @@ module.exports = function registerBackoffice(app, context) {
                 <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
 
                 <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
-                <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
+                <div class=\"bo-card r-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
                   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                     <div>
                       <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
@@ -4987,7 +4987,7 @@ module.exports = function registerBackoffice(app, context) {
                       <h3 class="font-semibold text-slate-700">Pré-visualização</h3>
                       <span class="text-xs text-slate-500" data-rate-summary></span>
                     </div>
-                    <div class="bo-table responsive-table">
+                    <div class="bo-table responsive-table r-table-wrap">
                       <table class="w-full text-sm">
                         <thead>
                           <tr class="text-left text-slate-500">
@@ -5004,8 +5004,8 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                   <p class="text-xs text-slate-500">Após confirmar, tens 5 segundos para anular a alteração.</p>
                 </div>
-                <div class="bo-pane__columns bo-span-all">
-                  <div class="bo-card">
+                <div class=\"bo-pane__columns r-grid bo-span-all">
+                  <div class=\"bo-card r-card">
                     <h2>Propriedades</h2>
                     <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
                     ${propertiesListHtml}
@@ -5026,9 +5026,9 @@ module.exports = function registerBackoffice(app, context) {
                     </form>
                   </div>
 
-                  <div class="bo-card">
+                  <div class=\"bo-card r-card">
                     <h2>Unidades</h2>
-                    <div class="bo-table responsive-table">
+                    <div class="bo-table responsive-table r-table-wrap">
                       <table class="w-full text-sm">
                         <thead>
                           <tr class="text-left text-slate-500">
@@ -5076,9 +5076,9 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
                 </div>
 
-                <div class="bo-card bo-span-all">
+                <div class=\"bo-card r-card bo-span-all">
                   <h2>Listagem de propriedades</h2>
-                  <div class="bo-table responsive-table">
+                  <div class="bo-table responsive-table r-table-wrap">
                     <table class="w-full text-sm">
                       <thead>
                         <tr class="text-left text-slate-500">
@@ -5092,8 +5092,8 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="finance">
-                <div class="bo-pane__columns">
-                  <div class="bo-card">
+                <div class=\"bo-pane__columns r-grid">
+                  <div class=\"bo-card r-card">
                     <h2>Resumo financeiro</h2>
                     <div class="bo-metrics">
                       <div class="bo-metric"><strong>€ ${eur(confirmedRevenueCents)}</strong><span>Receita confirmada (histórico)</span></div>
@@ -5103,9 +5103,9 @@ module.exports = function registerBackoffice(app, context) {
                       <div class="bo-metric"><strong>€ ${eur(averageTicketCents)}</strong><span>Ticket médio confirmado</span></div>
                     </div>
                   </div>
-                  <div class="bo-card">
+                  <div class=\"bo-card r-card">
                     <h2>Reservas recentes</h2>
-                    <div class="bo-table responsive-table">
+                    <div class="bo-table responsive-table r-table-wrap">
                       <table class="w-full text-sm">
                         <thead>
                           <tr class="text-left text-slate-500">
@@ -5131,8 +5131,8 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="revenue">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
+                <div class=\"bo-pane__columns r-grid">
+                  <div class=\"bo-card r-card bo-span-all">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <h2>Painel de revenue</h2>
@@ -5153,7 +5153,7 @@ module.exports = function registerBackoffice(app, context) {
                   </div>
 
                   <div class="grid gap-6 lg:grid-cols-3 bo-span-all">
-                    <div class="bo-card lg:col-span-2">
+                    <div class=\"bo-card r-card lg:col-span-2">
                       <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
                           <h3 class="bo-section-title">Receita vs noites</h3>
@@ -5164,7 +5164,7 @@ module.exports = function registerBackoffice(app, context) {
                         <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
                       </div>
                     </div>
-                    <div class="bo-card">
+                    <div class=\"bo-card r-card">
                       <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
                           <h3 class="bo-section-title">Canais de venda</h3>
@@ -5178,7 +5178,7 @@ module.exports = function registerBackoffice(app, context) {
                         <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
                       </div>
                     </div>
-                    <div class="bo-card lg:col-span-3">
+                    <div class=\"bo-card r-card lg:col-span-3">
                       <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
                           <h3 class="bo-section-title">Ocupação diária</h3>
@@ -5193,7 +5193,7 @@ module.exports = function registerBackoffice(app, context) {
 
                   <p class="bo-empty bo-span-all" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
 
-                  <div class="bo-card bo-span-all">
+                  <div class=\"bo-card r-card bo-span-all">
                     <h3 class="bo-section-title">Resumo diário detalhado</h3>
                     <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
                     <div class="bo-table responsive-table mt-3">
@@ -5211,8 +5211,8 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="channel-manager">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
+                <div class=\"bo-pane__columns r-grid">
+                  <div class=\"bo-card r-card bo-span-all">
                     <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                       <div>
                         <h2>Channel Manager</h2>
@@ -5232,13 +5232,13 @@ module.exports = function registerBackoffice(app, context) {
 
                   <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr] bo-span-all">
                     <div class="bo-channel-stack space-y-6">
-                      <div class="bo-card">
+                      <div class=\"bo-card r-card">
                         <h3 class="bo-section-title">Conexões de canais</h3>
                         <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
                         <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
                       </div>
 
-                      <div class="bo-card">
+                      <div class=\"bo-card r-card">
                         <h3 class="bo-section-title">Upload manual de reservas</h3>
                         <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
                         ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
@@ -5247,13 +5247,13 @@ module.exports = function registerBackoffice(app, context) {
                     </div>
 
                     <div class="bo-channel-stack space-y-6">
-                      <div class="bo-card">
+                      <div class=\"bo-card r-card">
                         <h3 class="bo-section-title">Alertas do Channel Manager</h3>
                         <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
                         <div class="bo-channel-alerts mt-3 space-y-3">${channelAlertsHtml}</div>
                       </div>
 
-                      <div class="bo-card">
+                      <div class=\"bo-card r-card">
                         <h3 class="bo-section-title">Histórico de importações</h3>
                         <div class="bo-table responsive-table mt-3">
                           <table class="w-full text-sm">
@@ -5272,14 +5272,14 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
-                <div class="bo-pane__columns">
-                  ${canViewAutomation ? statisticsCard : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
+                <div class=\"bo-pane__columns r-grid">
+                  ${canViewAutomation ? statisticsCard : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="reviews" data-reviews-pane>
-                <div class="bo-pane__columns">
-                  <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
+                <div class=\"bo-pane__columns r-grid">
+                  <div class=\"bo-card r-card space-y-4" data-reviews-root aria-live="polite">
                     <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <h2 class="text-lg font-semibold text-slate-800">Avaliações dos hóspedes</h2>
@@ -5306,7 +5306,7 @@ module.exports = function registerBackoffice(app, context) {
                       Sem novas avaliações esta semana.
                     </p>
                   </div>
-                  <div class="bo-card space-y-3" data-review-composer hidden>
+                  <div class=\"bo-card r-card space-y-3" data-review-composer hidden>
                     <header>
                       <h3 class="text-base font-semibold text-slate-800">Responder à avaliação</h3>
                       <p class="text-xs text-slate-500">A resposta ficará visível no portal após sincronização com o canal.</p>
@@ -5331,10 +5331,10 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="housekeeping">
-                <div class="bo-pane__columns">
+                <div class=\"bo-pane__columns r-grid">
                   ${canSeeHousekeeping
                     ? html`
-                        <div class="bo-card">
+                        <div class=\"bo-card r-card">
                           <h2>Resumo de limpeza</h2>
                           <div class="bo-metrics">
                             <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.pending : 0}</strong><span>Tarefas pendentes</span></div>
@@ -5343,59 +5343,59 @@ module.exports = function registerBackoffice(app, context) {
                             <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.completedRecent : 0}</strong><span>Concluídas 7 dias</span></div>
                           </div>
                         </div>
-                        <div class="bo-card">
+                        <div class=\"bo-card r-card">
                           <h2>Tarefas pendentes</h2>
                           ${housekeepingPendingHtml}
                         </div>
-                        <div class="bo-card">
+                        <div class=\"bo-card r-card">
                           <h2>Em curso</h2>
                           ${housekeepingInProgressHtml}
                         </div>
-                        <div class="bo-card">
+                        <div class=\"bo-card r-card">
                           <h2>Concluídas recentemente</h2>
                           ${housekeepingCompletedHtml}
                         </div>
-                        <div class="bo-card">
+                        <div class=\"bo-card r-card">
                           <a class="btn btn-primary" href="/admin/limpeza">Abrir gestão de limpezas</a>
                         </div>
                       `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
+                    : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="emails">
-                <div class="bo-pane__columns">
+                <div class=\"bo-pane__columns r-grid">
                   ${canManageEmailTemplates
                     ? html`
-                        <div class="bo-card bo-span-all">
+                        <div class=\"bo-card r-card bo-span-all">
                           <h2>Emails de reserva</h2>
                           <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
                           <div class="space-y-6">${emailTemplateCards}</div>
                         </div>
                       `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
+                    : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="messages">
-                <div class="bo-pane__columns">
+                <div class=\"bo-pane__columns r-grid">
                   ${canManageEmailTemplates
                     ? html`
-                        <div class="bo-card bo-span-all" data-message-templates-root>
+                        <div class=\"bo-card r-card bo-span-all" data-message-templates-root>
                           <h2>Mensagens automáticas</h2>
                           <p class="bo-subtitle">Personalize respostas rápidas para WhatsApp, SMS ou chat com os hóspedes.</p>
                           <div class="space-y-6">${messageTemplateCards}</div>
                         </div>
                       `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
+                    : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
                 </div>
               </section>
 
               ${canViewHistory
                 ? html`
                     <section class="bo-pane" data-bo-pane="history">
-                      <div class="bo-pane__columns">
-                        <div class="bo-card bo-span-all space-y-6">
+                      <div class=\"bo-pane__columns r-grid">
+                        <div class=\"bo-card r-card bo-span-all space-y-6">
                           <div>
                             <h2>Histórico de alterações</h2>
                             <p class="bo-subtitle">
@@ -5419,8 +5419,8 @@ module.exports = function registerBackoffice(app, context) {
                 : ''}
 
               <section class="bo-pane" data-bo-pane="branding">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
+                <div class=\"bo-pane__columns r-grid">
+                  <div class=\"bo-card r-card bo-span-all">
                     <h2>Identidade visual</h2>
                     <p class="bo-subtitle">Cores e imagem aplicadas ao portal</p>
                     <div class="grid gap-3 sm:grid-cols-2">
@@ -5443,12 +5443,12 @@ module.exports = function registerBackoffice(app, context) {
               </section>
 
               <section class="bo-pane" data-bo-pane="users">
-                <div class="bo-pane__columns">
+                <div class=\"bo-pane__columns r-grid">
                   ${canManageUsers
                     ? html`
-                        <div class="bo-card bo-span-all">
+                        <div class=\"bo-card r-card bo-span-all">
                           <h2>Utilizadores</h2>
-                          <div class="bo-table responsive-table">
+                          <div class="bo-table responsive-table r-table-wrap">
                             <table class="w-full text-sm">
                               <thead>
                                 <tr class="text-left text-slate-500">
@@ -5463,18 +5463,18 @@ module.exports = function registerBackoffice(app, context) {
                           </div>
                         </div>
                       `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
+                    : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
                 </div>
               </section>
 
               <section class="bo-pane" data-bo-pane="calendar">
-                <div class="bo-pane__columns">
+                <div class=\"bo-pane__columns r-grid">
                   ${canViewCalendar
                     ? html`
-                        <div class="bo-card bo-span-all">
+                        <div class=\"bo-card r-card bo-span-all">
                           <h2>Agenda de reservas</h2>
                           <p class="bo-subtitle">Próximas reservas confirmadas ou pendentes</p>
-                          <div class="bo-table responsive-table">
+                          <div class="bo-table responsive-table r-table-wrap">
                             <table class="w-full text-sm">
                               <thead>
                                 <tr class="text-left text-slate-500">
@@ -5487,7 +5487,7 @@ module.exports = function registerBackoffice(app, context) {
                           <div class="mt-4"><a class="btn btn-primary" href="/calendar">Abrir calendário completo</a></div>
                         </div>
                       `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
+                    : '<div class=\"bo-card r-card bo-span-all"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
                 </div>
               </section>
               </div>
@@ -5574,7 +5574,7 @@ module.exports = function registerBackoffice(app, context) {
           )}</span></div>
         </header>
 
-        <section class="bo-card space-y-4">
+        <section class=\"bo-card r-card space-y-4">
           <form class="grid gap-4 md:grid-cols-[repeat(4,minmax(0,1fr))]" data-revenue-calendar-form>
             <label class="form-field">
               <span class="form-label">Data inicial</span>
@@ -5598,10 +5598,10 @@ module.exports = function registerBackoffice(app, context) {
             <span data-revenue-calendar-loading hidden>Carregando dados mais recentes…</span>
             <span data-revenue-calendar-error hidden class="text-sm text-rose-600"></span>
           </div>
-          <div class="bo-card bg-white/70" data-revenue-calendar-summary></div>
+          <div class=\"bo-card r-card bg-white/70" data-revenue-calendar-summary></div>
         </section>
 
-        <section class="bo-card p-0 overflow-hidden">
+        <section class=\"bo-card r-card p-0 overflow-hidden">
           <div class="overflow-x-auto">
             <table class="bo-table bo-table--dense min-w-[720px]">
               <thead>
@@ -6045,7 +6045,7 @@ app.get(
           </form>
         </div>
 
-        <section class="card p-4 grid gap-3">
+        <section class=\"card r-card p-4 grid gap-3">
           <h2 class="text-lg font-semibold text-slate-800">Editar alojamento</h2>
           <form method="post" action="/admin/properties/${p.id}/update" class="grid gap-3 md:grid-cols-2">
             <label class="grid gap-1 text-sm text-slate-600 md:col-span-2">
@@ -6079,12 +6079,12 @@ app.get(
           </form>
         </section>
 
-        <section id="property-units" class="card p-4">
+        <section id="property-units" class=\"card r-card p-4">
           <h2 class="font-semibold mb-2">Unidades</h2>
           <ul class="space-y-2">${unitsListHtml}</ul>
         </section>
 
-        <section class="card p-4">
+        <section class=\"card r-card p-4">
           <h2 class="font-semibold mb-2">Reservas</h2>
           <ul class="space-y-1">
             ${bookings.length
@@ -6318,7 +6318,7 @@ app.get(
       ${unitFeaturesPreview}
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <section class="card p-4 md:col-span-2">
+        <section class=\"card r-card p-4 md:col-span-2">
           <h2 class="font-semibold mb-3">Reservas</h2>
           <ul class="space-y-1 mb-4">
             ${bookings.length ? bookings.map(b => `
@@ -6406,7 +6406,7 @@ app.get(
           ` : ''}
         </section>
 
-        <section class="card p-4">
+        <section class=\"card r-card p-4">
           <h2 class="font-semibold mb-3">Editar Unidade</h2>
           <form method="post" action="/admin/units/${u.id}/update" class="grid gap-2">
             <label class="text-sm">Nome</label>
@@ -6430,7 +6430,7 @@ app.get(
           </form>
 
           <h2 class="font-semibold mt-6 mb-2">Rates</h2>
-          <div class="responsive-table">
+          <div class="responsive-table r-table-wrap">
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-slate-500">
@@ -6781,7 +6781,7 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
             ? `<div class="inline-feedback" data-variant="danger" role="alert">${esc(errorMessage)}</div>`
             : ''}
           <div class="grid gap-6 lg:grid-cols-2">
-          <section class="card p-6 space-y-4">
+          <section class=\"card r-card p-6 space-y-4">
             <div>
               <h2 class="text-lg font-semibold text-slate-800">${editingRule ? 'Editar regra' : 'Nova regra'}</h2>
               <p class="text-sm text-slate-500">Defina o nome, tipo de condição e o ajuste aplicado ao preço base.</p>
@@ -6886,7 +6886,7 @@ app.get('/admin/rates/rules', requireLogin, requirePermission('rates.manage'), (
               </div>
             </form>
           </section>
-          <section class="card p-6 space-y-4">
+          <section class=\"card r-card p-6 space-y-4">
             <div>
               <h2 class="text-lg font-semibold text-slate-800">Regras configuradas</h2>
               <p class="text-sm text-slate-500">Regras são avaliadas por prioridade e podem combinar entre si. Ajustes percentuais são multiplicativos.</p>
@@ -7257,7 +7257,7 @@ app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (
     body: html`
       <h1 class="text-2xl font-semibold mb-4">${pageTitle}</h1>
 
-      <div class="card p-4 mb-4">
+      <div class=\"card r-card p-4 mb-4">
         <div class="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
           <div>
             <div class="text-xs uppercase tracking-wide text-slate-500">Cobrado</div>
@@ -7282,7 +7282,7 @@ app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (
         </div>
       </div>
 
-      <form method="get" class="card p-4 grid gap-3 md:grid-cols-5 mb-4">
+      <form method="get" class=\"card r-card p-4 grid gap-3 md:grid-cols-5 mb-4">
         <input class="input md:col-span-2" name="q" placeholder="Pesquisar por ID, reserva ou hóspede" value="${esc(q)}" />
         <select class="input" name="status">
           <option value="">Todos os estados</option>
@@ -7316,8 +7316,8 @@ app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (
         <button class="btn btn-primary">Filtrar</button>
       </form>
 
-      <div class="card p-0">
-        <div class="responsive-table">
+      <div class=\"card r-card p-0">
+        <div class="responsive-table r-table-wrap">
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-slate-500">
@@ -7487,7 +7487,7 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
       <div class="bo-page">
         <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
-        <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+        <form method="get" class=\"card r-card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
         <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
         <select class="input" name="status">
           <option value="">Todos os estados</option>
@@ -7498,8 +7498,8 @@ app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (re
         <button class="btn btn-primary">Filtrar</button>
       </form>
 
-      <div class="card p-0">
-        <div class="responsive-table">
+      <div class=\"card r-card p-0">
+        <div class="responsive-table r-table-wrap">
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-slate-500">
@@ -7907,7 +7907,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
       <h1 class="text-2xl font-semibold mt-2">Identidade visual</h1>
       <p class="text-slate-600 mb-4">Personalize logotipo, cores e mensagens da barra de navegação principal. As alterações aplicam-se apenas à navbar superior visível em toda a aplicação.</p>
 
-      <form method="get" class="card p-4 mb-4 flex flex-wrap gap-3 items-end max-w-xl">
+      <form method="get" class=\"card r-card p-4 mb-4 flex flex-wrap gap-3 items-end max-w-xl">
         <label class="grid gap-1 text-sm text-slate-600">
           <span>Propriedade ativa</span>
           <select class="input" name="property_id" onchange="this.form.submit()">
@@ -7932,7 +7932,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
       ` : ''}
 
       <div class="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <form method="post" action="/admin/identidade-visual" enctype="multipart/form-data" class="card p-4 grid gap-4">
+        <form method="post" action="/admin/identidade-visual" enctype="multipart/form-data" class=\"card r-card p-4 grid gap-4">
           <input type="hidden" name="property_id" value="${propertyId || ''}" />
           <div class="flex flex-col gap-1">
             <h2 class="text-lg font-semibold text-slate-800">Configurar ${esc(propertyLabel)}</h2>
@@ -8028,7 +8028,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
         </form>
 
         <aside class="grid gap-4">
-          <section class="card p-4 grid gap-4" data-theme-preview>
+          <section class=\"card r-card p-4 grid gap-4" data-theme-preview>
             <h2 class="text-sm font-semibold text-slate-700">Pré-visualização da barra de navegação</h2>
             <div class="nav-preview" data-preview-root style="${esc(previewStyle)}">
               <div class="nav-preview-bar">
@@ -8060,7 +8060,7 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
             </ul>
           </section>
 
-          <section class="card p-4 grid gap-3">
+          <section class=\"card r-card p-4 grid gap-3">
             <h2 class="text-sm font-semibold text-slate-700">Temas personalizados</h2>
             ${savedThemes.length ? `
               <ul class="grid gap-3">
@@ -8455,7 +8455,7 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
       <div class="bo-page bo-page--wide">
         <h1 class="text-2xl font-semibold mb-4">Auditoria e registos internos</h1>
         ${canViewAudit ? `
-          <form class="card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
+          <form class=\"card r-card p-4 mb-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]" method="get" action="/admin/auditoria">
             <div class="grid gap-1">
               <label class="text-sm text-slate-600">Entidade</label>
               <select class="input" name="entity">
@@ -8475,7 +8475,7 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
 
         <div class="space-y-4">
           ${changeLogs.length ? changeLogs.map(log => html`
-            <article class="card p-4 grid gap-2">
+            <article class=\"card r-card p-4 grid gap-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</div>
                 <div class="text-xs uppercase tracking-wide text-slate-500">${esc(log.action)}</div>
@@ -8488,7 +8488,7 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             </article>
           `).join('') : `<div class="text-sm text-slate-500">Sem registos para os filtros selecionados.</div>`}
         </div>
-      ` : `<div class="card p-4 text-sm text-slate-500">Sem permissões para consultar o histórico de alterações.</div>`}
+      ` : `<div class=\"card r-card p-4 text-sm text-slate-500">Sem permissões para consultar o histórico de alterações.</div>`}
 
       ${canViewLogs ? `
         <section class="mt-8 space-y-4">
@@ -8496,8 +8496,8 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             <h2 class="text-xl font-semibold">Logs de sessão</h2>
             <span class="text-xs text-slate-500">Últimos ${sessionLogs.length} registos</span>
           </div>
-          <div class="card p-0">
-            <div class="responsive-table">
+          <div class=\"card r-card p-0">
+            <div class="responsive-table r-table-wrap">
               <table class="w-full text-sm">
                 <thead class="bg-slate-50 text-slate-500">
                   <tr>
@@ -8529,8 +8529,8 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
             <h2 class="text-xl font-semibold">Atividade da aplicação</h2>
             <span class="text-xs text-slate-500">Últimos ${activityLogs.length} eventos</span>
           </div>
-          <div class="card p-0">
-            <div class="responsive-table">
+          <div class=\"card r-card p-0">
+            <div class="responsive-table r-table-wrap">
               <table class="w-full text-sm">
                 <thead class="bg-slate-50 text-slate-500">
                   <tr>
@@ -8745,7 +8745,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           : ''}
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <section class="card p-4">
+      <section class=\"card r-card p-4">
         <h2 class="font-semibold mb-3">Criar novo utilizador</h2>
         <form method="post" action="/admin/users/create" class="grid gap-2">
           <input required name="username" class="input" placeholder="Utilizador" />
@@ -8780,7 +8780,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         </form>
       </section>
 
-      <section class="card p-4">
+      <section class=\"card r-card p-4">
         <h2 class="font-semibold mb-3">Alterar password</h2>
         <form method="post" action="/admin/users/password" class="grid gap-2">
           <label class="text-sm">Selecionar utilizador</label>
@@ -8801,7 +8801,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <p class="text-sm text-slate-500 mt-2">Ao alterar, as sessões desse utilizador são terminadas.</p>
       </section>
 
-      <section class="card p-4">
+      <section class=\"card r-card p-4">
         <h2 class="font-semibold mb-3">Atualizar email</h2>
         <form method="post" action="/admin/users/email" class="grid gap-2">
           <label class="text-sm">Selecionar utilizador</label>
@@ -8821,7 +8821,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         <p class="text-sm text-slate-500 mt-2">O email é usado para 2FA e recuperação de password.</p>
       </section>
 
-      <section class="card p-4">
+      <section class=\"card r-card p-4">
         <h2 class="font-semibold mb-3">Atualizar privilégios</h2>
         <form method="post" action="/admin/users/role" class="grid gap-2">
           <label class="text-sm" for="user-role-user">Selecionar utilizador</label>
@@ -8846,7 +8846,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
 
       ${isDevOperator
         ? html`
-            <section class="card p-4 md:col-span-2">
+            <section class=\"card r-card p-4 md:col-span-2">
               <h2 class="font-semibold mb-3">Permissões personalizadas</h2>
               <form id="user-permissions-form" method="post" action="/admin/users/permissions" class="grid gap-3">
                 <label class="grid gap-1 text-sm">
@@ -8901,7 +8901,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           `
         : ''}
 
-      <section class="card p-4 md:col-span-2">
+      <section class=\"card r-card p-4 md:col-span-2">
         <h2 class="font-semibold mb-3">Escopos por propriedade</h2>
         <form method="post" action="/admin/user-roles" class="grid gap-3 md:grid-cols-4">
           <label class="grid gap-1 text-sm">
@@ -8978,7 +8978,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
       </section>
     </div>
 
-    <section class="card p-4 mt-6">
+    <section class=\"card r-card p-4 mt-6">
       <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
         <h2 class="font-semibold">Utilizadores registados</h2>
         ${isDevOperator ? '<span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Acesso total do desenvolvedor</span>' : ''}
@@ -8988,7 +8988,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
           ? 'As passwords são guardadas encriptadas. Para ver o hash de uma conta precisa de confirmar a sua password.'
           : 'Contacte a direção ou desenvolvimento para obter suporte adicional.'}
       </p>
-      <div class="responsive-table">
+      <div class="responsive-table r-table-wrap">
         <table class="w-full text-sm">
           <thead>
             <tr>

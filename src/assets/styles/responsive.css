@@ -1,0 +1,234 @@
+:root {
+  --r-maxw: 1200px;
+  --r-gap: clamp(8px, 2vw, 24px);
+  --r-pad: clamp(12px, 3vw, 28px);
+  --r-radius: 12px;
+  --r-font: clamp(14px, 1.6vw, 16px);
+  --r-h1: clamp(20px, 4vw, 28px);
+  --r-h2: clamp(18px, 3vw, 24px);
+}
+
+html {
+  font-size: var(--r-font);
+}
+
+.r-container {
+  width: 100%;
+  max-width: var(--r-maxw);
+  margin-inline: auto;
+  padding-inline: var(--r-pad);
+}
+
+.r-grid {
+  display: grid;
+  gap: var(--r-gap);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .r-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .r-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .r-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.r-card {
+  padding: var(--r-pad);
+  border-radius: var(--r-radius);
+  background: inherit;
+}
+
+.r-card h1 {
+  font-size: var(--r-h1);
+}
+
+.r-card h2 {
+  font-size: var(--r-h2);
+}
+
+.r-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-gap);
+}
+
+.r-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--r-gap);
+}
+
+.r-col {
+  flex: 1 1 280px;
+  min-width: min(100%, 320px);
+}
+
+.r-form {
+  display: grid;
+  gap: var(--r-gap);
+}
+
+.r-form--2 {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .r-form--2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.r-field {
+  min-width: 240px;
+}
+
+.r-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--r-gap);
+  align-items: center;
+}
+
+.r-btn {
+  min-height: 44px;
+  padding: 10px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+input,
+select,
+textarea,
+button {
+  min-height: 40px;
+}
+
+.r-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.r-table-wrap > table,
+.r-table-wrap > .table,
+.r-table-wrap > .bo-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.r-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.r-break {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .r-container {
+    padding-inline: clamp(12px, 6vw, 24px);
+  }
+
+  .r-row {
+    flex-direction: column;
+  }
+
+  .r-actions {
+    justify-content: stretch;
+  }
+
+  .r-btn {
+    width: 100%;
+  }
+}
+
+@media (min-width: 481px) and (max-width: 767px) {
+  .r-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .r-container {
+    padding-inline: clamp(18px, 3vw, 32px);
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .r-container {
+    padding-inline: clamp(24px, 3vw, 40px);
+  }
+}
+
+@media (min-width: 1280px) {
+  .r-container {
+    max-width: min(100%, 1400px);
+  }
+}
+
+/* Progressive enhancement for existing layouts */
+.bo-card.r-card,
+.card.r-card,
+.box.r-card,
+.panel.r-card,
+.bo-pane.r-card,
+.bo-list.r-card {
+  background-color: var(--card-background, inherit);
+}
+
+.bo-pane__columns.r-grid {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .bo-pane__columns.r-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .bo-pane__columns.r-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.bo-pane__columns.r-grid > * {
+  min-width: 0;
+}
+
+.bo-card.r-card .r-actions,
+.card.r-card .r-actions {
+  margin-top: auto;
+}
+
+.booking-list.r-grid > * {
+  min-width: 0;
+}
+
+.bo-main.r-container {
+  width: 100%;
+}

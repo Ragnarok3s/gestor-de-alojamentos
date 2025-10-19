@@ -256,24 +256,24 @@ module.exports = function registerOwnersPortal(app, context) {
     const filterFormHtml =
       allProperties.length > 1
         ? html`
-            <form method="get" class="bo-card owners-filter">
-              <div class="form-field owners-filter__field">
+            <form method="get" class=\"bo-card r-card owners-filter r-form r-form--2">
+              <div class="form-field owners-filter__field r-field">
                 <span class="form-label">Propriedade</span>
                 <select name="property" class="input">
                   <option value="">Todas as propriedades</option>
                   ${propertyFilterOptions}
                 </select>
               </div>
-              <div class="owners-filter__actions">
-                <button class="btn btn-primary" type="submit">Atualizar</button>
-                ${hasRequestedProperty ? html`<a class="btn btn-light" href="/owners">Limpar filtro</a>` : ''}
+              <div class="owners-filter__actions r-actions">
+                <button class="btn btn-primary r-btn" type="submit">Atualizar</button>
+                ${hasRequestedProperty ? html`<a class="btn btn-light r-btn" href="/owners">Limpar filtro</a>` : ''}
               </div>
             </form>
           `
         : '';
 
     const summaryCardsHtml = html`
-      <section class="bo-card owners-summary">
+      <section class=\"bo-card r-card owners-summary r-stack">
         <div class="bo-metrics">
           <article class="bo-metric">
             <span class="owners-metric-label">Receita últimos 30 dias</span>
@@ -302,7 +302,7 @@ module.exports = function registerOwnersPortal(app, context) {
     const pendingBannerHtml =
       totalPendingBookings > 0
         ? html`
-            <section class="bo-card owners-alert">
+            <section class=\"bo-card r-card owners-alert r-stack">
               <h2>Reservas pendentes</h2>
               <p><strong>${integerFormatter.format(totalPendingBookings)}</strong> reserva(s) a aguardar confirmação.</p>
               <p>Assim que a equipa confirmar, o hóspede recebe automaticamente um email com a validação final.</p>
@@ -343,7 +343,7 @@ module.exports = function registerOwnersPortal(app, context) {
               : '<li class="owners-list-empty">Sem reservas confirmadas nos últimos 30 dias.</li>';
 
             return html`
-              <section class="bo-card owners-property">
+              <section class=\"bo-card r-card owners-property r-stack">
                 <div class="owners-property__header">
                   <div>
                     <h2>${esc(summary.name)}</h2>
@@ -388,7 +388,7 @@ module.exports = function registerOwnersPortal(app, context) {
           })
           .join('')
       : html`
-          <section class="bo-card owners-empty">
+          <section class=\"bo-card r-card owners-empty r-stack">
             <h2>Sem propriedades atribuídas</h2>
             <p class="bo-subtitle">Para consultar dados operacionais precisa que a direção associe a sua conta às propriedades relevantes.</p>
             <p>Assim que existir pelo menos uma propriedade atribuída, esta área mostra reservas, receita e canais actualizados em tempo real.</p>
@@ -397,10 +397,10 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const upcomingTableHtml = upcomingPreview.length
       ? html`
-          <section class="bo-card owners-upcoming">
+          <section class=\"bo-card r-card owners-upcoming r-stack">
             <h2>Próximas chegadas</h2>
             <p class="bo-subtitle">As 10 reservas com entrada mais próxima entre as suas propriedades.</p>
-            <div class="owners-table">
+            <div class="owners-table r-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -438,7 +438,7 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const channelSummaryHtml = channelSummary.length
       ? html`
-          <section class="bo-card owners-channel-card">
+          <section class=\"bo-card r-card owners-channel-card r-stack">
             <h2>Distribuição por canal (30 dias)</h2>
             <p class="bo-subtitle">Contagem de reservas confirmadas com estadia nas últimas quatro semanas.</p>
             <ul>
@@ -524,7 +524,7 @@ module.exports = function registerOwnersPortal(app, context) {
 
     const body = html`
       ${pageStyles}
-      <div class="bo-main owners-main">
+      <div class=\"bo-main r-container owners-main">
         <header class="bo-header">
           <span class="pill-indicator">Área de Proprietários</span>
           <h1>Resumo de desempenho</h1>

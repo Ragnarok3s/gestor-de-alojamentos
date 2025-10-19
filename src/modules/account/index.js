@@ -188,7 +188,7 @@ module.exports = function registerAccountModule(app, context) {
 
     const body = html`
       ${pageStyles}
-      <div class="bo-main max-w-4xl mx-auto">
+      <div class=\"bo-main r-container max-w-4xl mx-auto">
         <header class="bo-header">
           <span class="pill-indicator">Conta</span>
           <h1>Segurança e Acessos</h1>
@@ -198,7 +198,7 @@ module.exports = function registerAccountModule(app, context) {
         ${successMessage ? `<div class="bo-alert bo-alert--success">${esc(successMessage)}</div>` : ''}
         ${errorMessage ? `<div class="bo-alert bo-alert--error">${esc(errorMessage)}</div>` : ''}
 
-        <section class="bo-card grid gap-4">
+        <section class=\"bo-card r-card grid gap-4">
           <div class="flex flex-wrap justify-between items-center gap-3">
             <div>
               <h2 class="text-lg font-semibold">Autenticação de dois fatores</h2>
@@ -300,7 +300,7 @@ module.exports = function registerAccountModule(app, context) {
             : ''}
         </section>
 
-        <section class="bo-card mt-6">
+        <section class=\"bo-card r-card mt-6">
           <div class="flex items-center justify-between mb-3">
             <div>
               <h2 class="text-lg font-semibold">Últimos acessos</h2>
@@ -308,7 +308,7 @@ module.exports = function registerAccountModule(app, context) {
             </div>
             <a class="btn btn-light" href="/account/seguranca/logs.csv">Exportar CSV</a>
           </div>
-          <div class="responsive-table">
+          <div class="responsive-table r-table-wrap">
             <table class="w-full text-sm">
               <thead>
                 <tr>

@@ -83,6 +83,10 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 if (fs.existsSync(PUBLIC_DIR)) {
   app.use('/public', express.static(PUBLIC_DIR, { fallthrough: false }));
 }
+const ASSETS_DIR = path.join(__dirname, 'src', 'assets');
+if (fs.existsSync(ASSETS_DIR)) {
+  app.use('/assets', express.static(ASSETS_DIR, { fallthrough: false }));
+}
 const secureCookies =
   !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
 const csrfProtection = createCsrfProtection({ secureCookies });
@@ -2526,6 +2530,7 @@ function layout({ title, body, user, activeNav = '', branding, notifications = n
       <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+      <link rel="stylesheet" href="/assets/styles/responsive.css" />
       ${telemetryBootstrapScript}
       ${telemetryClientScript}
       <style>

@@ -1226,7 +1226,7 @@ module.exports = function registerFrontoffice(app, context) {
               ? `<span class="search-property__badge">${group.availableUnits ? 'Disponível' : 'Sem disponibilidade'}</span>`
               : '';
             return html`
-              <section class="bo-card search-property-card">
+              <section class=\"bo-card r-card search-property-card">
                 <header class="search-property__header">
                   <div>
                     <h2>${group.safeName}</h2>
@@ -1242,15 +1242,15 @@ module.exports = function registerFrontoffice(app, context) {
       : '';
 
     const emptyState = searchActive && totalVisibleUnits === 0 && !propertyNotFound
-      ? '<div class="bo-card"><p class="bo-empty">Não encontrámos unidades disponíveis para os critérios selecionados.</p></div>'
+      ? '<div class=\"bo-card r-card"><p class="bo-empty">Não encontrámos unidades disponíveis para os critérios selecionados.</p></div>'
       : '';
 
     const propertyNotFoundCard = propertyNotFound
-      ? '<div class="bo-card"><p class="bo-empty">Propriedade não encontrada. Ajuste o filtro e tente novamente.</p></div>'
+      ? '<div class=\"bo-card r-card"><p class="bo-empty">Propriedade não encontrada. Ajuste o filtro e tente novamente.</p></div>'
       : '';
 
     const noPropertiesCard = !hasPropertiesConfigured
-      ? '<div class="bo-card"><p class="bo-empty">Ainda não existem propriedades configuradas.</p></div>'
+      ? '<div class=\"bo-card r-card"><p class="bo-empty">Ainda não existem propriedades configuradas.</p></div>'
       : '';
 
     const formAction = req.path === '/search' ? '/search' : '/';
@@ -1262,13 +1262,13 @@ module.exports = function registerFrontoffice(app, context) {
       branding: theme,
       pageClass: 'page-backoffice page-search',
       body: html`
-        <div class="bo-main search-main">
+        <div class=\"bo-main r-container search-main">
           <header class="bo-header">
             <h1>Pesquisar disponibilidade</h1>
           </header>
           ${searchStyles}
           <div class="search-layout">
-            <section class="bo-card search-panel">
+            <section class=\"bo-card r-card search-panel">
               <h2>Filtros de reserva</h2>
               <p class="bo-subtitle">Escolha datas, hóspedes e propriedade para consultar as unidades disponíveis.</p>
               <form action="${esc(formAction)}" method="get" class="search-panel__form" data-search-form>
@@ -1412,7 +1412,7 @@ app.get('/book/:unitId', (req, res) => {
         </ul>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="card p-4">
+        <div class=\"card r-card p-4">
           <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
           <ul class="text-sm text-slate-700 space-y-1">
             <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
@@ -1424,7 +1424,7 @@ app.get('/book/:unitId', (req, res) => {
           </ul>
           ${unitFeaturesBooking}
         </div>
-        <form class="card p-4" method="post" action="/book" data-booking-form>
+        <form class=\"card r-card p-4" method="post" action="/book" data-booking-form>
           <input type="hidden" name="_csrf" value="${csrfToken}" />
           <h2 class="font-semibold mb-3">Dados do hóspede</h2>
           <p class="text-sm text-slate-500 mb-3">Confirmamos a reserva assim que estes dados forem submetidos. Usamos esta informação apenas para contacto com o hóspede.</p>
@@ -1883,13 +1883,13 @@ app.post('/book', (req, res) => {
       user: null,
       body: html`
         <div class="max-w-4xl mx-auto space-y-6" data-guest-portal-root data-booking-id="${bookingSummary.id}" data-token="${esc(requestedToken)}">
-          <header class="card p-6 space-y-2 bg-white shadow-sm">
+          <header class=\"card r-card p-6 space-y-2 bg-white shadow-sm">
             <span class="pill-indicator">${esc(bookingSummary.statusLabel)}</span>
             <h1 class="text-2xl font-semibold text-slate-800">Olá ${esc(bookingSummary.guestName || 'hóspede')}!</h1>
             <p class="text-slate-600 text-sm">Aqui encontra tudo o que precisa para preparar a sua estadia.</p>
           </header>
           <section class="grid gap-6 md:grid-cols-2">
-            <article class="card p-6 space-y-4">
+            <article class=\"card r-card p-6 space-y-4">
               <h2 class="text-xl font-semibold text-slate-800">Reserva</h2>
               <dl class="grid gap-3 text-sm">
                 <div>
@@ -1913,7 +1913,7 @@ app.post('/book', (req, res) => {
                 ${bookingSummary.propertyAddress ? `<div><dt class="text-slate-500">Localização</dt><dd class="font-medium text-slate-800">${esc(bookingSummary.propertyAddress)}</dd></div>` : ''}
               </dl>
             </article>
-            <article class="card p-6 space-y-4">
+            <article class=\"card r-card p-6 space-y-4">
               <h2 class="text-xl font-semibold text-slate-800">Pagamentos</h2>
               <div>
                 <div class="text-xs text-slate-500 uppercase tracking-wide">Total da reserva</div>
@@ -1930,12 +1930,12 @@ app.post('/book', (req, res) => {
               </div>
             </article>
           </section>
-          <section class="card p-6 space-y-4">
+          <section class=\"card r-card p-6 space-y-4">
             <h2 class="text-xl font-semibold text-slate-800">Instruções de estadia</h2>
             <ul class="space-y-2 text-sm text-slate-700">${instructionsItems.join('')}</ul>
             ${instructionsNotes.length ? `<div class="space-y-3 text-sm text-slate-600">${instructionsNotes.join('')}</div>` : ''}
           </section>
-          <section class="card p-6 space-y-4">
+          <section class=\"card r-card p-6 space-y-4">
             <h2 class="text-xl font-semibold text-slate-800">Extras &amp; serviços</h2>
             <div class="grid gap-6 md:grid-cols-2">
               <div class="space-y-3">
@@ -2514,7 +2514,7 @@ app.get('/booking/:id', (req, res) => {
     ? `/booking/${b.id}?token=${encodeURIComponent(requestedToken)}`
     : `/booking/${b.id}`;
   const myReservationsShortcut = viewerCanSeeBooking || requestedToken
-    ? `<aside class="card p-4 mt-6 bg-slate-50/70 border border-slate-200">
+    ? `<aside class=\"card r-card p-4 mt-6 bg-slate-50/70 border border-slate-200">
         <h2 class="text-base font-semibold text-slate-800">As minhas reservas</h2>
         <p class="text-sm text-slate-600 mb-2">Guarde este atalho para rever a confirmação sempre que precisar.</p>
         <a class="text-sm text-indigo-600 hover:text-indigo-800 underline" href="${esc(confirmationLink)}">Ver confirmação</a>
@@ -2537,7 +2537,7 @@ app.get('/booking/:id', (req, res) => {
           <li class="progress-step is-active">${bookingStepLabel}</li>
         </ul>
       </div>
-      <div class="card p-6 space-y-6">
+      <div class=\"card r-card p-6 space-y-6">
         ${inlineFeedbackHtml}
         <div class="grid md:grid-cols-2 gap-4">
           <div>
@@ -2723,7 +2723,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
   const filtersOpenAttr = filtersInitiallyOpen ? ' open' : '';
 
   const calendarSummaryCard = html`
-    <section class="bo-card">
+    <section class=\"bo-card r-card">
       <h2>Resumo das reservas</h2>
       <p class="bo-subtitle">${propertyLabel
         ? `Dados atuais para ${esc(propertyLabel)}.`
@@ -2737,7 +2737,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     </section>`;
 
   const calendarFiltersCard = html`
-    <section class="bo-card bo-calendar-filters">
+    <section class=\"bo-card r-card bo-calendar-filters">
       <details class="bo-calendar-filters__details"${filtersOpenAttr}>
         <summary class="bo-calendar-filters__summary">
           <span class="bo-calendar-filters__summary-label">
@@ -2807,7 +2807,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     : '<div class="bo-calendar-empty-state">Configure uma propriedade para começar a acompanhar as reservas.</div>';
 
   const calendarBoard = html`
-    <section class="bo-card bo-calendar-board" data-calendar-board data-can-reschedule="${canRescheduleCalendar ? '1' : '0'}">
+    <section class=\"bo-card r-card bo-calendar-board" data-calendar-board data-can-reschedule="${canRescheduleCalendar ? '1' : '0'}">
       <div class="bo-calendar-toolbar">
         <div class="bo-calendar-monthnav">
           <a class="btn btn-light" href="${esc(prevLink)}">&larr; ${formatMonthYear(prev + '-01')}</a>
@@ -2949,7 +2949,7 @@ app.get('/calendar', requireLogin, requirePermission('calendar.view'), (req, res
     branding: resolveBrandingForRequest(req),
     pageClass: 'page-backoffice page-calendar',
     body: html`
-      <div class="bo-main">
+      <div class=\"bo-main r-container">
         <header class="bo-header">
           <h1>Mapa de reservas</h1>
           <p>Acompanhe todas as reservas da propriedade num calendário único com filtros rápidos.</p>
@@ -3663,7 +3663,7 @@ function unitCalendarCard(u, month) {
     : ` <span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
 
   return `
-    <div class="card p-4 calendar-card" data-unit-card="${u.id}" data-unit-name="${esc(u.name)}">
+    <div class=\"card r-card p-4 calendar-card" data-unit-card="${u.id}" data-unit-name="${esc(u.name)}">
       <div class="flex items-center justify-between mb-2">
         <div>
           <div class="text-sm text-slate-500">${u.property_name}</div>
@@ -3711,7 +3711,7 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
         <div class="bo-page">
           <a class="text-slate-600" href="/calendar">&larr; Voltar ao Mapa</a>
           <h1 class="text-2xl font-semibold mb-4">Exportar Mapa de Reservas (Excel)</h1>
-          <form method="get" action="/admin/export" class="card p-4 grid gap-3 max-w-md">
+          <form method="get" action="/admin/export" class=\"card r-card p-4 grid gap-3 max-w-md">
             <div>
               <label class="text-sm">Mês inicial</label>
               <input type="month" name="ym" value="${esc(ymSelected)}" class="input" required />
