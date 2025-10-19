@@ -1,5 +1,6 @@
 const registerUxApi = require('./ux-api');
 const registerContentCenter = require('./content-center');
+const { registerCalendar } = require('./calendar');
 const { ConflictError, ValidationError } = require('../../services/errors');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
@@ -118,6 +119,7 @@ module.exports = function registerBackoffice(app, context) {
     buildUserNotifications,
     automationSeverityStyle,
     formatDateRangeShort,
+    formatMonthYear,
     capitalizeMonth,
     safeJsonParse,
     wantsJson,
@@ -485,6 +487,15 @@ module.exports = function registerBackoffice(app, context) {
   registerContentCenter(app, context);
 
   const deleteLockByBookingStmt = db.prepare('DELETE FROM unit_blocks WHERE lock_owner_booking_id = ?');
+
+  registerCalendar(app, {
+    ...context,
+    inlineScript,
+    renderModalShell,
+    isFlagEnabled,
+    ensureNoIndex,
+    deleteLockByBookingStmt
+  });
 
   function renderExtrasManagementPage(
     req,
