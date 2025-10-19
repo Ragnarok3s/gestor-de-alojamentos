@@ -7,7 +7,7 @@
     "lint": "node scripts/lint.js",
     "typecheck": "node scripts/typecheck.js",
     "build": "node scripts/build-check.js",
-    "test": "jest",
+    "test": "node vendor/jest/bin/jest.js",
     "depcheck": "node scripts/depcheck.js",
     "start": "node server.js"
   },
