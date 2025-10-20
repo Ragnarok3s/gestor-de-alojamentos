@@ -331,6 +331,7 @@ module.exports = function registerBackoffice(app, context) {
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
 
+  // registerFinance consolida todas as rotas financeiras num único módulo.
   registerFinance(app, {
     ...context,
     inlineScript,
