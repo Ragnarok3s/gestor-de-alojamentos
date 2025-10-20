@@ -88,6 +88,7 @@ const secureCookies =
   !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
 const csrfProtection = createCsrfProtection({ secureCookies });
 
+// Configurar middlewares globais, parsing de requests e protecções base.
 configureMiddleware({
   app,
   express,
@@ -97,6 +98,7 @@ configureMiddleware({
   fs
 });
 
+// Inicializar serviços de domínio, integrações e utilitários de suporte.
 const services = initServices({
   app,
   express,
@@ -153,6 +155,7 @@ const services = initServices({
 
 const { context, db, tenantService, guestPortalService, requireScope, buildUserContext } = services;
 
+// Resolver tenant e aplicar middleware multi-tenant por pedido.
 const { resolveTenantDomain, resolveTenantForRequest, tenantMiddleware } = createTenantResolver({
   tenantService
 });
@@ -164,6 +167,7 @@ context.csrfProtection = csrfProtection;
 
 app.use(tenantMiddleware);
 
+// Registar rotas de autenticação, frontoffice, backoffice e restantes módulos.
 registerRoutes({
   app,
   context,
@@ -179,6 +183,7 @@ registerRoutes({
   }
 });
 
+// Arrancar servidor HTTP/HTTPS conforme configuração detectada.
 startServer({ app, fs, https });
 
 if (process.env.SKIP_SERVER_START === '1') {
