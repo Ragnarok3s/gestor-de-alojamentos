@@ -3,11 +3,9 @@ const registerContentCenter = require('./content-center');
 const { registerCalendar } = require('./calendar');
 const { registerBookings } = require('./bookings');
 const { registerHousekeeping } = require('./housekeeping');
-const { registerRatePlans } = require('./finance/ratePlans');
-const { registerRateRules } = require('./finance/rateRules');
+const { registerFinance } = require('./finance');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
-const { registerExtras } = require('./finance/extras');
 const {
   describePaymentStatus,
   statusToneToBadgeClass,
@@ -333,8 +331,9 @@ module.exports = function registerBackoffice(app, context) {
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
 
-  registerExtras(app, {
+  registerFinance(app, {
     ...context,
+    inlineScript,
     renderBreadcrumbs,
     serverRender,
     extrasManagerScript,
