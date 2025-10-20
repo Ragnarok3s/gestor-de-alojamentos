@@ -340,6 +340,11 @@ module.exports = function registerBackoffice(app, context) {
     extrasManagerScript,
   });
 
+  const { getHousekeepingTasks, computeHousekeepingBoard } = registerHousekeeping(app, {
+    ...context,
+    renderBreadcrumbs,
+  });
+
   function jsonScriptPayload(value) {
     return JSON.stringify(value)
       .replace(/</g, '\\u003c')
