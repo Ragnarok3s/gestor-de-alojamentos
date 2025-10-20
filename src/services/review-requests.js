@@ -336,6 +336,9 @@ function createReviewRequestService({ db, dayjs, messageTemplates, mailer, getBr
   }
 
   function markRequestReceived({ bookingId, reviewId = null, receivedAt = null } = {}) {
+    // A coluna review_id referencia reviews(id); fornecer um ID inexistente originará uma
+    // violação de chave estrangeira, por isso os chamadores devem garantir que a avaliação
+    // já existe antes de marcar o pedido como recebido.
     if (!bookingId) return false;
     const timestamp = receivedAt && dayjs(receivedAt).isValid()
       ? dayjs(receivedAt).toISOString()
