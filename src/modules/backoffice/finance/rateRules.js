@@ -334,6 +334,7 @@ function registerRateRules(app, context) {
     })();
   `);
 
+    res.locals.activeNav = '/admin/rates/rules';
     res.send(
       layout({
         title: 'Regras automáticas de tarifas',

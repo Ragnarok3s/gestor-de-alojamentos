@@ -1,0 +1,7 @@
+{
+  "name": "chart.js",
+  "version": "4.4.6",
+  "main": "dist/chart.umd.js",
+  "module": "dist/chart.umd.js",
+  "type": "module"
+}

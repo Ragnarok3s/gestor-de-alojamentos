@@ -221,6 +221,7 @@ function registerExtras(app, context) {
     res,
     { propertyId, formState, successMessage, errorMessage } = {}
   ) {
+    res.locals.activeNav = '/admin/extras';
     const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
 
     if (!properties.length) {

@@ -63,6 +63,7 @@ module.exports = function registerContentCenter(app, context) {
     requireLogin,
     requireBackofficeAccess,
     (req, res) => {
+      res.locals.activeNav = '/admin/content-center';
       const tenantId = req.tenant && req.tenant.id ? req.tenant.id : 1;
       const units = listUnitsStmt.all(tenantId).map(row => ({
         id: row.id,
@@ -83,6 +84,7 @@ module.exports = function registerContentCenter(app, context) {
             </section>
           </div>
         `;
+        res.locals.activeNav = '/admin/content-center';
         return res.send(
           layout({
             title: 'Centro de Conteúdos',

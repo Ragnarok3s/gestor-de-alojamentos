@@ -1,0 +1,19 @@
+<nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>
+  <% groups.forEach(function(group) { %>
+    <section class="bo-nav__group">
+      <h2 class="bo-nav__title"><%= esc(group.title) %></h2>
+      <ul class="bo-nav__list">
+        <% group.items.forEach(function(item) { %>
+          <li class="bo-nav__item">
+            <a
+              href="<%= esc(item.href) %>"
+              class="bo-nav__link<%= item.href === activeNav ? ' active' : '' %>"
+            >
+              <span><%= esc(item.label) %></span>
+            </a>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+  <% }) %>
+</nav>

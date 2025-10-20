@@ -1,0 +1,365 @@
+<div class="bo-page housekeeping-board">
+  <div class="housekeeping-board__header">
+    <div class="housekeeping-board__intro">
+      <h1 class="text-2xl font-semibold">Housekeeping</h1>
+      <p class="text-sm text-slate-600">Arraste cartões entre colunas para actualizar o estado das tarefas.</p>
+    </div>
+    <button class="btn btn-primary" type="button" data-hk-open-modal>
+      Adicionar tarefa
+    </button>
+  </div>
+
+  <div
+    class="housekeeping-board__columns"
+    data-hk-board
+    data-status-endpoint="<%= statusEndpoint %>"
+  >
+    <section class="housekeeping-column" data-hk-column>
+      <header class="housekeeping-column__header">
+        <h2>Por fazer</h2>
+        <span class="housekeeping-column__counter" data-hk-count><%= todo.length %></span>
+      </header>
+      <div class="housekeeping-column__list" data-hk-list data-status="pending">
+        <p class="housekeeping-column__empty <%= todo.length ? 'is-hidden' : '' %>" data-hk-empty>
+          Sem tarefas por fazer.
+        </p>
+        <% todo.forEach(task => { %>
+          <article class="housekeeping-card" draggable="true" data-task-id="<%= task.id %>">
+            <header class="housekeeping-card__header">
+              <h3 class="housekeeping-card__title"><%= esc(task.title || 'Tarefa de housekeeping') %></h3>
+              <% if (task.priority === 'alta') { %>
+                <span class="housekeeping-card__badge">Prioridade alta</span>
+              <% } %>
+            </header>
+            <p class="housekeeping-card__unit">
+              <%= esc(task.property_name ? `${task.property_name} · ${task.unit_name || 'Sem unidade'}` : task.unit_name || 'Sem unidade') %>
+            </p>
+            <p class="housekeeping-card__description">
+              <%= esc(task.details || 'Sem descrição adicional.') %>
+            </p>
+            <dl class="housekeeping-card__meta">
+              <div>
+                <dt>Data limite</dt>
+                <dd>
+                  <%= formatDate(task.due_date) %>
+                  <% if (task.due_time) { %>
+                    às <%= esc(task.due_time) %>
+                  <% } %>
+                </dd>
+              </div>
+              <div>
+                <dt>Responsável</dt>
+                <dd><%= esc(resolveResponsible(task)) %></dd>
+              </div>
+            </dl>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <section class="housekeeping-column" data-hk-column>
+      <header class="housekeeping-column__header">
+        <h2>Em curso</h2>
+        <span class="housekeeping-column__counter" data-hk-count><%= inProgress.length %></span>
+      </header>
+      <div class="housekeeping-column__list" data-hk-list data-status="in_progress">
+        <p class="housekeeping-column__empty <%= inProgress.length ? 'is-hidden' : '' %>" data-hk-empty>
+          Ainda sem tarefas em curso.
+        </p>
+        <% inProgress.forEach(task => { %>
+          <article class="housekeeping-card" draggable="true" data-task-id="<%= task.id %>">
+            <header class="housekeeping-card__header">
+              <h3 class="housekeeping-card__title"><%= esc(task.title || 'Tarefa de housekeeping') %></h3>
+              <span class="housekeeping-card__badge housekeeping-card__badge--progress">Em curso</span>
+            </header>
+            <p class="housekeeping-card__unit">
+              <%= esc(task.property_name ? `${task.property_name} · ${task.unit_name || 'Sem unidade'}` : task.unit_name || 'Sem unidade') %>
+            </p>
+            <p class="housekeeping-card__description">
+              <%= esc(task.details || 'Sem descrição adicional.') %>
+            </p>
+            <dl class="housekeeping-card__meta">
+              <div>
+                <dt>Data limite</dt>
+                <dd>
+                  <%= formatDate(task.due_date) %>
+                  <% if (task.due_time) { %>
+                    às <%= esc(task.due_time) %>
+                  <% } %>
+                </dd>
+              </div>
+              <div>
+                <dt>Responsável</dt>
+                <dd><%= esc(resolveResponsible(task)) %></dd>
+              </div>
+            </dl>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <section class="housekeeping-column" data-hk-column>
+      <header class="housekeeping-column__header">
+        <h2>Concluídas</h2>
+        <span class="housekeeping-column__counter" data-hk-count><%= done.length %></span>
+      </header>
+      <div class="housekeeping-column__list" data-hk-list data-status="completed">
+        <p class="housekeeping-column__empty <%= done.length ? 'is-hidden' : '' %>" data-hk-empty>
+          Sem tarefas concluídas até ao momento.
+        </p>
+        <% done.forEach(task => { %>
+          <article class="housekeeping-card housekeeping-card--done" draggable="true" data-task-id="<%= task.id %>">
+            <header class="housekeeping-card__header">
+              <h3 class="housekeeping-card__title"><%= esc(task.title || 'Tarefa de housekeeping') %></h3>
+              <span class="housekeeping-card__badge housekeeping-card__badge--done">Concluída</span>
+            </header>
+            <p class="housekeeping-card__unit">
+              <%= esc(task.property_name ? `${task.property_name} · ${task.unit_name || 'Sem unidade'}` : task.unit_name || 'Sem unidade') %>
+            </p>
+            <p class="housekeeping-card__description">
+              <%= esc(task.details || 'Sem descrição adicional.') %>
+            </p>
+            <dl class="housekeeping-card__meta">
+              <div>
+                <dt>Data limite</dt>
+                <dd>
+                  <%= formatDate(task.due_date) %>
+                  <% if (task.due_time) { %>
+                    às <%= esc(task.due_time) %>
+                  <% } %>
+                </dd>
+              </div>
+              <div>
+                <dt>Responsável</dt>
+                <dd><%= esc(resolveResponsible(task)) %></dd>
+              </div>
+            </dl>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="hk-modal" data-hk-modal hidden>
+  <div class="hk-modal__overlay" data-hk-close></div>
+  <div class="hk-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="hk-modal-title">
+    <header class="hk-modal__header">
+      <h2 id="hk-modal-title">Nova tarefa de housekeeping</h2>
+      <button type="button" class="hk-modal__close" data-hk-close aria-label="Fechar">×</button>
+    </header>
+    <form method="post" action="<%= createTaskAction %>" class="hk-modal__form">
+      <input type="hidden" name="redirect" value="/admin/limpeza" />
+      <label class="hk-modal__field">
+        <span>Descrição</span>
+        <input class="input" type="text" name="title" required placeholder="Ex: Preparar suite 302" />
+      </label>
+      <label class="hk-modal__field">
+        <span>Detalhes adicionais</span>
+        <textarea class="input" name="details" rows="3" placeholder="Notas para a equipa"></textarea>
+      </label>
+      <label class="hk-modal__field">
+        <span>Unidade</span>
+        <select class="input" name="unit_id">
+          <option value="">Selecionar unidade</option>
+          <% units.forEach(unit => { %>
+            <option value="<%= unit.id %>">
+              <%= esc(unit.property_name) %> · <%= esc(unit.name) %>
+            </option>
+          <% }) %>
+        </select>
+      </label>
+      <label class="hk-modal__field">
+        <span>Data limite</span>
+        <input class="input" type="date" name="due_date" />
+      </label>
+      <footer class="hk-modal__footer">
+        <button type="button" class="btn" data-hk-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Criar tarefa</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const board = document.querySelector('[data-hk-board]');
+    if (!board) return;
+
+    const statusEndpoint = board.getAttribute('data-status-endpoint');
+    const columns = Array.from(board.querySelectorAll('[data-hk-column]'));
+    let draggingCard = null;
+    let sourceList = null;
+    let sourceIndex = -1;
+
+    const getCards = (list) => Array.from(list.querySelectorAll('[data-task-id]'));
+
+    const updateColumnState = (column) => {
+      if (!column) return;
+      const list = column.querySelector('[data-hk-list]');
+      const cards = list ? getCards(list) : [];
+      const counter = column.querySelector('[data-hk-count]');
+      if (counter) counter.textContent = cards.length;
+      const empty = column.querySelector('[data-hk-empty]');
+      if (empty) {
+        if (cards.length === 0) empty.classList.remove('is-hidden');
+        else empty.classList.add('is-hidden');
+      }
+    };
+
+    const revertCardPosition = () => {
+      if (!draggingCard || !sourceList) return;
+      const cards = getCards(sourceList).filter((card) => card !== draggingCard);
+      const reference = cards[sourceIndex] || null;
+      sourceList.insertBefore(draggingCard, reference);
+      const sourceColumn = sourceList.closest('[data-hk-column]');
+      updateColumnState(sourceColumn);
+    };
+
+    const findReferenceForDrop = (list, pointerY) => {
+      const candidates = getCards(list).filter((card) => card !== draggingCard);
+      for (const card of candidates) {
+        const rect = card.getBoundingClientRect();
+        if (pointerY < rect.top + rect.height / 2) {
+          return card;
+        }
+      }
+      return null;
+    };
+
+    const attachCardEvents = (card) => {
+      card.addEventListener('dragstart', (event) => {
+        draggingCard = card;
+        sourceList = card.parentElement;
+        sourceIndex = getCards(sourceList).indexOf(card);
+        card.classList.add('housekeeping-card--dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', card.getAttribute('data-task-id') || '');
+      });
+
+      card.addEventListener('dragend', () => {
+        card.classList.remove('housekeeping-card--dragging');
+        columns.forEach((column) => column.classList.remove('is-drop-target'));
+        draggingCard = null;
+        sourceList = null;
+        sourceIndex = -1;
+      });
+    };
+
+    columns.forEach((column) => {
+      const list = column.querySelector('[data-hk-list]');
+      if (!list) return;
+
+      list.addEventListener('dragenter', (event) => {
+        event.preventDefault();
+        column.classList.add('is-drop-target');
+      });
+
+      list.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        column.classList.add('is-drop-target');
+      });
+
+      list.addEventListener('dragleave', (event) => {
+        if (!column.contains(event.relatedTarget)) {
+          column.classList.remove('is-drop-target');
+        }
+      });
+
+      list.addEventListener('drop', (event) => {
+        event.preventDefault();
+        column.classList.remove('is-drop-target');
+        if (!draggingCard) return;
+
+        const targetList = list;
+        const targetColumn = targetList.closest('[data-hk-column]');
+        const sourceColumn = sourceList ? sourceList.closest('[data-hk-column]') : null;
+        const taskId = draggingCard.getAttribute('data-task-id');
+        const newStatus = targetList.getAttribute('data-status');
+        const previousStatus = sourceList ? sourceList.getAttribute('data-status') : null;
+
+        const reference = findReferenceForDrop(targetList, event.clientY);
+        if (reference) targetList.insertBefore(draggingCard, reference);
+        else targetList.appendChild(draggingCard);
+
+        updateColumnState(sourceColumn);
+        updateColumnState(targetColumn);
+
+        if (!taskId || !newStatus || !statusEndpoint) {
+          revertCardPosition();
+          return;
+        }
+
+        if (targetList === sourceList && newStatus === previousStatus) {
+          return;
+        }
+
+        const payload = new URLSearchParams();
+        payload.set('status', newStatus);
+
+        fetch(`${statusEndpoint}/${taskId}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            Accept: 'application/json'
+          },
+          body: payload.toString()
+        })
+          .then((response) => {
+            if (!response.ok) throw new Error('Erro na actualização');
+            return response.json();
+          })
+          .then(() => {
+            updateColumnState(sourceColumn);
+            updateColumnState(targetColumn);
+          })
+          .catch(() => {
+            revertCardPosition();
+            updateColumnState(sourceColumn);
+            updateColumnState(targetColumn);
+            window.alert('Não foi possível actualizar o estado da tarefa.');
+          });
+      });
+    });
+
+    columns.forEach((column) => {
+      const list = column.querySelector('[data-hk-list]');
+      if (!list) return;
+      getCards(list).forEach(attachCardEvents);
+      updateColumnState(column);
+    });
+
+    const modal = document.querySelector('[data-hk-modal]');
+    if (!modal) return;
+
+    const openButtons = document.querySelectorAll('[data-hk-open-modal]');
+    const closeElements = modal.querySelectorAll('[data-hk-close]');
+
+    const openModal = () => {
+      modal.removeAttribute('hidden');
+      modal.classList.add('is-open');
+      const firstField = modal.querySelector('input, textarea, select, button');
+      if (firstField) firstField.focus();
+    };
+
+    const closeModal = () => {
+      modal.classList.remove('is-open');
+      modal.setAttribute('hidden', '');
+    };
+
+    openButtons.forEach((button) => button.addEventListener('click', openModal));
+    closeElements.forEach((element) => element.addEventListener('click', closeModal));
+
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) {
+        closeModal();
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && modal.classList.contains('is-open')) {
+        closeModal();
+      }
+    });
+  });
+</script>

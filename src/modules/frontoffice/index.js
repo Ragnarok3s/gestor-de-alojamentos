@@ -1356,7 +1356,26 @@ app.get('/book/:unitId', (req, res) => {
   const quote = rateQuote(u.id, checkin, checkout, u.base_price_cents);
   if (quote.nights < quote.minStayReq) return res.status(400).send('Estadia mínima: ' + quote.minStayReq + ' noites');
   const total = quote.total_cents;
-  const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), { className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3', badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full', iconWrapClass: 'inline-flex items-center justify-center text-emerald-700' });
+  const unitFeaturesBooking = featureChipsHtml(parseFeaturesStored(u.features), {
+    className: 'flex flex-wrap gap-2 text-xs text-slate-600 mt-3',
+    badgeClass: 'inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full',
+    iconWrapClass: 'inline-flex items-center justify-center text-emerald-700'
+  });
+  const checkinLabel = dayjs(checkin).isValid() ? dayjs(checkin).format('DD/MM/YYYY') : checkin;
+  const checkoutLabel = dayjs(checkout).isValid() ? dayjs(checkout).format('DD/MM/YYYY') : checkout;
+  const occupancyLabel = (() => {
+    const adultLabel = `${adults} adulto${adults === 1 ? '' : 's'}`;
+    if (children > 0) {
+      return `${adultLabel} · ${children} criança${children === 1 ? '' : 's'}`;
+    }
+    return adultLabel;
+  })();
+  const propertyPolicy = db
+    .prepare('SELECT cancellation_policy FROM property_policies WHERE property_id = ?')
+    .get(u.property_id);
+  const cancellationPolicyText = propertyPolicy && propertyPolicy.cancellation_policy
+    ? propertyPolicy.cancellation_policy.trim()
+    : 'Cancelamentos gratuitos até 48 horas antes da chegada. Após esse período poderá ser cobrada a primeira noite de estadia.';
   const theme = resolveBrandingForRequest(req, { propertyId: u.property_id, propertyName: u.property_name });
   rememberActiveBrandingProperty(res, u.property_id);
 
@@ -1378,63 +1397,260 @@ app.get('/book/:unitId', (req, res) => {
           <li class="progress-step is-active">3. Confirme e relaxe</li>
         </ul>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="card p-4">
-          <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
-          <ul class="text-sm text-slate-700 space-y-1">
-            <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
-            <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
-            <li>Noites: <strong>${quote.nights}</strong></li>
-            <li>Hóspedes: <strong data-occupancy-summary>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
-            <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
-            <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
-          </ul>
-          ${unitFeaturesBooking}
-        </div>
-        <form class="card p-4" method="post" action="/book" data-booking-form>
+      <div class="fo-booking-layout grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+        <form class="card p-6 fo-booking-form space-y-6" method="post" action="/book" data-booking-form>
           <input type="hidden" name="_csrf" value="${csrfToken}" />
-          <h2 class="font-semibold mb-3">Dados do hóspede</h2>
-          <p class="text-sm text-slate-500 mb-3">Confirmamos a reserva assim que estes dados forem submetidos. Usamos esta informação apenas para contacto com o hóspede.</p>
           <input type="hidden" name="unit_id" value="${u.id}" />
-          <input type="hidden" name="checkin" value="${checkin}" />
-          <input type="hidden" name="checkout" value="${checkout}" />
           <input type="hidden" name="rate_plan_id" value="${ratePlanId ? ratePlanId : ''}" />
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="text-sm">Adultos</label>
-              <input required type="number" min="1" name="adults" value="${adults}" class="input"/>
-            </div>
-            <div>
-              <label class="text-sm">Crianças</label>
-              <input required type="number" min="0" name="children" value="${children}" class="input"/>
-            </div>
-          </div>
-          <div class="inline-feedback mt-4" data-booking-feedback data-variant="info" aria-live="polite" role="status">
-            <span class="inline-feedback-icon">ℹ</span>
-            <div><strong>Preencha os dados do hóspede.</strong><br/>Os campos abaixo permitem-nos enviar a confirmação personalizada.</div>
-          </div>
-          <div class="grid gap-3 mt-2">
-            <input required name="guest_name" class="input" placeholder="Nome completo" data-required />
-            <input required name="guest_nationality" class="input" placeholder="Nacionalidade" data-required />
-            <input required name="guest_phone" class="input" placeholder="Telefone/Telemóvel" data-required />
-            <input required type="email" name="guest_email" class="input" placeholder="Email" data-required />
-            ${user ? `
-              <div>
-                <label class="text-sm">Agencia</label>
-                <input name="agency" class="input" placeholder="Ex: BOOKING" list="agency-options" required data-required />
+          <fieldset class="fo-form-section">
+            <legend>Detalhes da estadia</legend>
+            <p class="fo-section-helper">Revise as datas, o número de hóspedes e confirme a unidade antes de avançar.</p>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="fo-field" data-field>
+                <label for="booking-checkin">Check-in</label>
+                <input
+                  type="date"
+                  id="booking-checkin"
+                  name="checkin"
+                  class="input"
+                  value="${esc(checkin)}"
+                  required
+                  data-validate="checkin"
+                />
+                <p class="fo-field-error" data-error-for="checkin"></p>
               </div>
-            ` : ''}
-            <button class="btn btn-primary">Confirmar Reserva</button>
+              <div class="fo-field" data-field>
+                <label for="booking-checkout">Check-out</label>
+                <input
+                  type="date"
+                  id="booking-checkout"
+                  name="checkout"
+                  class="input"
+                  value="${esc(checkout)}"
+                  min="${esc(checkin)}"
+                  required
+                  data-validate="checkout"
+                />
+                <p class="fo-field-error" data-error-for="checkout"></p>
+              </div>
+              <div class="fo-field" data-field>
+                <label for="booking-adults">Adultos</label>
+                <input
+                  type="number"
+                  min="1"
+                  id="booking-adults"
+                  name="adults"
+                  class="input"
+                  value="${esc(String(adults))}"
+                  placeholder="Número de adultos"
+                  required
+                  data-validate="adults"
+                />
+                <p class="fo-field-error" data-error-for="adults"></p>
+              </div>
+              <div class="fo-field" data-field>
+                <label for="booking-children">Crianças</label>
+                <input
+                  type="number"
+                  min="0"
+                  id="booking-children"
+                  name="children"
+                  class="input"
+                  value="${esc(String(children))}"
+                  placeholder="Número de crianças"
+                  data-validate="children"
+                />
+                <p class="fo-field-error" data-error-for="children"></p>
+              </div>
+              <div class="fo-field fo-field--full" data-field>
+                <label for="booking-unit">Unidade seleccionada</label>
+                <input
+                  type="text"
+                  id="booking-unit"
+                  class="input"
+                  value="${esc(`${u.property_name} – ${u.name}`)}"
+                  readonly
+                  aria-readonly="true"
+                />
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="fo-form-section">
+            <legend>Dados pessoais</legend>
+            <p class="fo-section-helper">Os contactos são usados para enviar a confirmação e comunicar qualquer alteração.</p>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="fo-field fo-field--full" data-field>
+                <label for="booking-guest-name">Nome completo</label>
+                <input
+                  id="booking-guest-name"
+                  name="guest_name"
+                  class="input"
+                  placeholder="Ex.: Maria Silva"
+                  required
+                  data-required
+                  data-validate="guest_name"
+                />
+                <p class="fo-field-error" data-error-for="guest_name"></p>
+              </div>
+              <div class="fo-field" data-field>
+                <label for="booking-guest-email">Email</label>
+                <input
+                  id="booking-guest-email"
+                  type="email"
+                  name="guest_email"
+                  class="input"
+                  placeholder="nome@email.com"
+                  required
+                  data-required
+                  data-validate="guest_email"
+                />
+                <p class="fo-field-error" data-error-for="guest_email"></p>
+              </div>
+              <div class="fo-field" data-field>
+                <label for="booking-guest-phone">Telefone</label>
+                <input
+                  id="booking-guest-phone"
+                  name="guest_phone"
+                  class="input"
+                  placeholder="Inclua o indicativo do país"
+                  required
+                  data-required
+                  data-validate="guest_phone"
+                />
+                <p class="fo-field-error" data-error-for="guest_phone"></p>
+              </div>
+              <div class="fo-field" data-field>
+                <label for="booking-guest-nationality">Nacionalidade</label>
+                <input
+                  id="booking-guest-nationality"
+                  name="guest_nationality"
+                  class="input"
+                  placeholder="Ex.: Portuguesa"
+                  required
+                  data-required
+                  data-validate="guest_nationality"
+                />
+                <p class="fo-field-error" data-error-for="guest_nationality"></p>
+              </div>
+              ${user
+                ? `
+                  <div class="fo-field" data-field>
+                    <label for="booking-agency">Agência</label>
+                    <input
+                      id="booking-agency"
+                      name="agency"
+                      class="input"
+                      placeholder="Ex.: BOOKING"
+                      list="agency-options"
+                      required
+                      data-required
+                      data-validate="agency"
+                    />
+                    <p class="fo-field-error" data-error-for="agency"></p>
+                  </div>
+                `
+                : ''}
+            </div>
+          </fieldset>
+          <fieldset class="fo-form-section">
+            <legend>Pagamento</legend>
+            <p class="fo-section-helper">Confirme o resumo financeiro e escolha o método preferido.</p>
+            <div class="fo-payment-summary">
+              <div class="fo-payment-row">
+                <span>Entrada</span>
+                <strong data-summary-checkin>${esc(checkinLabel)}</strong>
+              </div>
+              <div class="fo-payment-row">
+                <span>Saída</span>
+                <strong data-summary-checkout>${esc(checkoutLabel)}</strong>
+              </div>
+              <div class="fo-payment-row">
+                <span>Noites</span>
+                <strong data-summary-nights>${esc(String(quote.nights))}</strong>
+              </div>
+              <div class="fo-payment-row">
+                <span>Hóspedes</span>
+                <strong data-occupancy-summary>${esc(occupancyLabel)}</strong>
+              </div>
+              <div class="fo-payment-row fo-payment-total">
+                <span>Total estimado</span>
+                <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${esc(eur(total))}</strong>
+              </div>
+            </div>
+            <p class="fo-payment-note">O valor poderá ser ajustado caso altere as datas ou aplique extras. Receberá uma confirmação detalhada por email.</p>
+            <div class="fo-field fo-field--full" data-field>
+              <label for="booking-payment-method">Método de pagamento preferido</label>
+              <select
+                id="booking-payment-method"
+                name="payment_method"
+                class="input"
+                required
+                data-validate="payment_method"
+              >
+                <option value="">Selecione uma opção</option>
+                <option value="card">Cartão de crédito</option>
+                <option value="transfer">Transferência bancária</option>
+                <option value="arrival">Pagamento no local</option>
+              </select>
+              <p class="fo-field-error" data-error-for="payment_method"></p>
+            </div>
+          </fieldset>
+          <div class="inline-feedback" data-booking-feedback data-variant="info" aria-live="polite" role="status">
+            <span class="inline-feedback-icon">ℹ</span>
+            <div><strong>Preencha os campos obrigatórios.</strong><br/>Os avisos acima indicam qualquer informação em falta.</div>
           </div>
-          ${user ? `
-            <datalist id="agency-options">
-              <option value="BOOKING"></option>
-              <option value="EXPEDIA"></option>
-              <option value="AIRBNB"></option>
-              <option value="DIRECT"></option>
-            </datalist>
-          ` : ''}
+          ${user
+            ? `
+              <datalist id="agency-options">
+                <option value="BOOKING"></option>
+                <option value="EXPEDIA"></option>
+                <option value="AIRBNB"></option>
+                <option value="DIRECT"></option>
+              </datalist>
+            `
+            : ''}
+          <button type="submit" class="btn btn-primary btn-lg w-full fo-submit">Confirmar reserva</button>
+          <p class="fo-cancellation-note">${esc(cancellationPolicyText).replace(/\n/g, '<br/>')}</p>
         </form>
+        <aside class="card p-6 fo-booking-aside space-y-4">
+          <div>
+            <h2 class="font-semibold text-lg">Resumo da unidade</h2>
+            <p class="text-sm text-slate-600">${esc(u.property_name)} · ${esc(u.name)}</p>
+          </div>
+          <div class="fo-summary-panel">
+            <dl>
+              <div class="fo-summary-row">
+                <dt>Check-in</dt>
+                <dd data-summary-checkin-secondary>${esc(checkinLabel)}</dd>
+              </div>
+              <div class="fo-summary-row">
+                <dt>Check-out</dt>
+                <dd data-summary-checkout-secondary>${esc(checkoutLabel)}</dd>
+              </div>
+              <div class="fo-summary-row">
+                <dt>Noites</dt>
+                <dd data-summary-nights-secondary>${esc(String(quote.nights))}</dd>
+              </div>
+              <div class="fo-summary-row">
+                <dt>Hóspedes</dt>
+                <dd data-occupancy-summary-secondary>${esc(occupancyLabel)}</dd>
+              </div>
+              <div class="fo-summary-row">
+                <dt>Estadia mínima</dt>
+                <dd>${esc(String(quote.minStayReq))} noite(s)</dd>
+              </div>
+              <div class="fo-summary-row">
+                <dt>Total</dt>
+                <dd class="font-semibold">€ ${esc(eur(total))}</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="fo-summary-features">
+            <h3 class="font-semibold text-base">Incluído na estadia</h3>
+            ${unitFeaturesBooking}
+          </div>
+          <p class="text-sm text-slate-500">Após confirmar a reserva receberá instruções de check-in e poderá acrescentar extras no portal do hóspede.</p>
+        </aside>
       </div>
     `
   }));
@@ -1594,7 +1810,7 @@ app.post('/book', (req, res) => {
     }
 
     csrfProtection.rotateToken(req, res);
-    res.redirect(`/guest/${id}?token=${confirmationToken}`);
+    res.redirect(`/book/confirmation/${id}?token=${encodeURIComponent(confirmationToken)}`);
   } catch (e) {
     csrfProtection.rotateToken(req, res);
     if (e instanceof ConflictError || e.message === 'conflict') {
@@ -1605,6 +1821,257 @@ app.post('/book', (req, res) => {
     res.status(500).send('Erro ao criar reserva');
   }
 });
+
+  app.get('/book/confirmation/:bookingId', (req, res) => {
+    const bookingId = Number.parseInt(req.params.bookingId, 10);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    const requestedToken = normalizeGuestToken(req.query.token);
+    const bookingRow = loadGuestBookingRow(bookingId);
+    if (!bookingRow) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    const sess = getSession(req.cookies.adm, req);
+    const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+    const allowWithoutToken = user && userCan(user, 'bookings.edit');
+    const storedToken = normalizeGuestToken(bookingRow.confirmation_token);
+    if ((!requestedToken || !storedToken || requestedToken !== storedToken) && !allowWithoutToken) {
+      return res.status(403).send('Reserva não encontrada');
+    }
+
+    const theme = resolveBrandingForRequest(req, {
+      propertyId: bookingRow.property_id,
+      propertyName: bookingRow.property_name
+    });
+    rememberActiveBrandingProperty(res, bookingRow.property_id);
+
+    const checkinDate = dayjs(bookingRow.checkin);
+    const checkoutDate = dayjs(bookingRow.checkout);
+    const checkinLabel = checkinDate.isValid() ? checkinDate.format('DD/MM/YYYY') : bookingRow.checkin;
+    const checkoutLabel = checkoutDate.isValid() ? checkoutDate.format('DD/MM/YYYY') : bookingRow.checkout;
+    const nightsCount = checkinDate.isValid() && checkoutDate.isValid() && checkoutDate.isAfter(checkinDate)
+      ? dateRangeNights(bookingRow.checkin, bookingRow.checkout).length
+      : null;
+    const adultsValue = Number(bookingRow.adults || 1);
+    const childrenValue = Number(bookingRow.children || 0);
+    const guestLabel = (() => {
+      const adultPart = `${adultsValue} adulto${adultsValue === 1 ? '' : 's'}`;
+      if (childrenValue > 0) {
+        return `${adultPart} · ${childrenValue} criança${childrenValue === 1 ? '' : 's'}`;
+      }
+      return adultPart;
+    })();
+    const totalFormatted = `€ ${eur(Number(bookingRow.total_cents || 0))}`;
+    const statusRaw = (bookingRow.status || '').toUpperCase();
+    const statusHeadline = statusRaw === 'CONFIRMED'
+      ? 'Reserva confirmada!'
+      : statusRaw === 'PENDING'
+        ? 'Reserva recebida!'
+        : 'Atualização da reserva';
+    const statusDescription = statusRaw === 'CONFIRMED'
+      ? 'Enviámos a confirmação para o email indicado e reservámos a unidade para as datas selecionadas.'
+      : statusRaw === 'PENDING'
+        ? 'Estamos a validar a disponibilidade final. Receberá uma confirmação por email assim que o pedido for confirmado.'
+        : 'Consulte os detalhes abaixo para acompanhar o estado da sua reserva.';
+    const cancellationPolicy = bookingRow.cancellation_policy
+      ? bookingRow.cancellation_policy.trim()
+      : 'Cancelamentos gratuitos até 48 horas antes da chegada. Após esse período poderá ser cobrada a primeira noite de estadia.';
+    const cancellationPolicyHtml = esc(cancellationPolicy).replace(/\n/g, '<br/>');
+    const tokenForLinks = requestedToken || storedToken;
+    const calendarLink = tokenForLinks
+      ? `/book/${bookingId}/ical?token=${encodeURIComponent(tokenForLinks)}`
+      : null;
+    const guestPortalLink = tokenForLinks
+      ? `/guest/${bookingId}?token=${encodeURIComponent(tokenForLinks)}`
+      : `/guest/${bookingId}`;
+
+    serverRender('route:/book/confirmation/:bookingId');
+    res.send(layout({
+      title: 'Resumo da reserva',
+      user,
+      branding: theme,
+      activeNav: 'search',
+      pageClass: 'page-frontoffice page-booking-confirmation',
+      body: html`
+        <section class="fo-confirmation">
+          <header class="fo-confirmation__header">
+            <span class="pill-indicator">Reserva #${esc(String(bookingId))}</span>
+            <h1 class="text-2xl font-semibold">${esc(statusHeadline)}</h1>
+            <p class="text-slate-600">${esc(statusDescription)}</p>
+          </header>
+          <div class="grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+            <article class="card p-6 space-y-5">
+              <section>
+                <h2 class="font-semibold text-lg">Resumo da estadia</h2>
+                <dl class="fo-confirmation__summary">
+                  <div>
+                    <dt>Check-in</dt>
+                    <dd>${esc(checkinLabel)}</dd>
+                  </div>
+                  <div>
+                    <dt>Check-out</dt>
+                    <dd>${esc(checkoutLabel)}</dd>
+                  </div>
+                  <div>
+                    <dt>Noites</dt>
+                    <dd>${nightsCount != null ? esc(String(nightsCount)) : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Hóspedes</dt>
+                    <dd>${esc(guestLabel)}</dd>
+                  </div>
+                  <div>
+                    <dt>Unidade</dt>
+                    <dd>${esc(bookingRow.property_name)} · ${esc(bookingRow.unit_name)}</dd>
+                  </div>
+                  <div>
+                    <dt>Total estimado</dt>
+                    <dd class="font-semibold">${esc(totalFormatted)}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section>
+                <h2 class="font-semibold text-lg">Próximos passos</h2>
+                <ul class="fo-confirmation__steps">
+                  <li>Revise o email de confirmação que enviámos com todos os detalhes da estadia.</li>
+                  <li>Guarde o contacto da propriedade para comunicar qualquer alteração ou pedido especial.</li>
+                  <li>Adicione a reserva ao seu calendário para receber lembretes automáticos.</li>
+                </ul>
+              </section>
+              <section>
+                <h2 class="font-semibold text-lg">Política de cancelamento</h2>
+                <p class="text-sm text-slate-600">${cancellationPolicyHtml}</p>
+              </section>
+              <div class="fo-confirmation__actions">
+                ${calendarLink
+                  ? `<a class="btn btn-secondary" href="${esc(calendarLink)}" download="reserva-${bookingId}.ics">Adicionar ao calendário</a>`
+                  : ''}
+                <a class="btn btn-light" href="${esc(guestPortalLink)}">Abrir portal do hóspede</a>
+              </div>
+            </article>
+            <aside class="card p-6 space-y-4 fo-confirmation__aside">
+              <div>
+                <h2 class="font-semibold text-lg">Contactos úteis</h2>
+                <p class="text-sm text-slate-600">Em caso de dúvida, responda ao email de confirmação ou contacte diretamente a equipa da propriedade.</p>
+              </div>
+              <div>
+                <h3 class="font-semibold text-base">Localização</h3>
+                <p class="text-sm text-slate-600">
+                  ${esc(bookingRow.property_address || 'Morada enviada por email')}
+                  ${bookingRow.property_locality ? `<br/>${esc(bookingRow.property_locality)}` : ''}
+                  ${bookingRow.property_district ? `<br/>${esc(bookingRow.property_district)}` : ''}
+                </p>
+              </div>
+              <div>
+                <h3 class="font-semibold text-base">Estado atual</h3>
+                <p class="text-sm text-slate-600">${esc(statusHeadline)}</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+      `
+    }));
+  });
+
+  app.get('/book/:bookingId/ical', (req, res) => {
+    const bookingId = Number.parseInt(req.params.bookingId, 10);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    const requestedToken = normalizeGuestToken(req.query.token);
+    const bookingRow = loadGuestBookingRow(bookingId);
+    if (!bookingRow) {
+      return res.status(404).send('Reserva não encontrada');
+    }
+
+    const sess = getSession(req.cookies.adm, req);
+    const user = sess ? { id: sess.user_id, username: sess.username, role: sess.role } : undefined;
+    const allowWithoutToken = user && userCan(user, 'bookings.edit');
+    const storedToken = normalizeGuestToken(bookingRow.confirmation_token);
+    if ((!requestedToken || !storedToken || requestedToken !== storedToken) && !allowWithoutToken) {
+      return res.status(403).send('Reserva não encontrada');
+    }
+
+    const checkinDate = dayjs(bookingRow.checkin);
+    const checkoutDate = dayjs(bookingRow.checkout);
+    if (!checkinDate.isValid() || !checkoutDate.isValid()) {
+      return res.status(400).send('Datas inválidas para exportação.');
+    }
+
+    const pad = value => String(value).padStart(2, '0');
+    const now = new Date();
+    const dtStamp =
+      now.getUTCFullYear().toString() +
+      pad(now.getUTCMonth() + 1) +
+      pad(now.getUTCDate()) +
+      'T' +
+      pad(now.getUTCHours()) +
+      pad(now.getUTCMinutes()) +
+      pad(now.getUTCSeconds()) +
+      'Z';
+    const dtStart = checkinDate.format('YYYYMMDD');
+    const dtEnd = checkoutDate.format('YYYYMMDD');
+    const escapeICS = (value) => {
+      return String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\n/g, '\\n')
+        .replace(/,/g, '\\,')
+        .replace(/;/g, '\\;');
+    };
+    const locationParts = [bookingRow.property_address, bookingRow.property_locality, bookingRow.property_district]
+      .map(part => (part ? String(part).trim() : ''))
+      .filter(Boolean);
+    const location = locationParts.join(', ');
+    const statusRaw = (bookingRow.status || '').toUpperCase();
+    const statusMap = { CONFIRMED: 'CONFIRMED', PENDING: 'TENTATIVE', CANCELLED: 'CANCELLED' };
+    const status = statusMap[statusRaw] || 'CONFIRMED';
+    const baseHost = req.get('host');
+    const protocol = req.protocol || 'https';
+    const tokenForLinks = requestedToken || storedToken;
+    const portalUrl = baseHost && tokenForLinks
+      ? `${protocol}://${baseHost}/guest/${bookingId}?token=${encodeURIComponent(tokenForLinks)}`
+      : '';
+    const summary = `${bookingRow.property_name} – ${bookingRow.unit_name}`;
+    const statusLabel = statusRaw === 'CONFIRMED'
+      ? 'Confirmada'
+      : statusRaw === 'PENDING'
+        ? 'Pendente'
+        : statusRaw === 'CANCELLED'
+          ? 'Cancelada'
+          : 'Reserva';
+    const descriptionLines = [
+      `Hóspede: ${bookingRow.guest_name || '—'}`,
+      `Estado: ${statusLabel}`,
+      `Reserva #${bookingId}`
+    ];
+    const icsLines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Gestor de Alojamentos//Frontoffice//PT',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:booking-${bookingId}@${escapeICS(baseHost || 'gestor.local')}`,
+      `DTSTAMP:${dtStamp}`,
+      `DTSTART;VALUE=DATE:${dtStart}`,
+      `DTEND;VALUE=DATE:${dtEnd}`,
+      `SUMMARY:${escapeICS(summary)}`,
+      `DESCRIPTION:${escapeICS(descriptionLines.join('\n'))}`,
+      location ? `LOCATION:${escapeICS(location)}` : null,
+      `STATUS:${status}`,
+      portalUrl ? `URL:${escapeICS(portalUrl)}` : null,
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].filter(Boolean);
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="reserva-${bookingId}.ics"`);
+    res.send(icsLines.join('\r\n') + '\r\n');
+  });
 
   app.get('/guest/:bookingId', (req, res) => {
     const bookingId = Number.parseInt(req.params.bookingId, 10);
