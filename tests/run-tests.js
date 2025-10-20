@@ -811,6 +811,20 @@ async function testReviewRequestService() {
     i18n
   });
 
+  const reviewId = db
+    .prepare(
+      'INSERT INTO reviews(property_id, unit_id, guest_name, rating, body, title, source) VALUES (?,?,?,?,?,?,?)'
+    )
+    .run(
+      propertyId,
+      unitId,
+      'Joana Silva',
+      5,
+      'Adorámos a estadia, recomendamos vivamente.',
+      'Experiência fantástica',
+      'manual'
+    ).lastInsertRowid;
+
   const firstResult = await service.requestReviewForBooking({ bookingId });
   assert.equal(firstResult.status, 'requested');
   assert.equal(firstResult.language, 'pt', 'idioma deve respeitar nacionalidade portuguesa');
@@ -834,11 +848,11 @@ async function testReviewRequestService() {
   assert.equal(retryResult.status, 'requested', 'reenvio autorizado deve atualizar estado');
   assert.equal(fakeMailer.sent.length, 2, 'reenvio deve enviar novo email');
 
-  const marked = service.markRequestReceived({ bookingId, reviewId: 99 });
+  const marked = service.markRequestReceived({ bookingId, reviewId });
   assert.equal(marked, true, 'marcar como recebido deve devolver true');
   const afterMark = service.getRequestForBooking(bookingId);
   assert.equal(afterMark.status, 'received', 'estado deve passar para received');
-  assert.equal(afterMark.review_id, 99, 'review_id deve ser registado');
+  assert.equal(afterMark.review_id, reviewId, 'review_id deve corresponder à avaliação criada');
 
   const secondBookingId = db
     .prepare(
