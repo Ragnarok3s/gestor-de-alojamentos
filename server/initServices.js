@@ -930,12 +930,77 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   const UPLOAD_CHANNEL_IMPORTS = path.join(UPLOAD_ROOT, 'channel-imports');
   const EXPORTS_DIR = path.join(UPLOAD_ROOT, 'exports');
   const paths = { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS, exports: EXPORTS_DIR };
-  function ensureDir(p){ if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
-  ensureDir(UPLOAD_ROOT);
-  ensureDir(UPLOAD_UNITS);
-  ensureDir(UPLOAD_BRANDING);
-  ensureDir(UPLOAD_CHANNEL_IMPORTS);
-  ensureDir(EXPORTS_DIR);
+  function ensureDir(p) {
+    if (!fs.existsSync(p)) {
+      fs.mkdirSync(p, { recursive: true });
+    }
+  }
+  [UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING, UPLOAD_CHANNEL_IMPORTS, EXPORTS_DIR].forEach(ensureDir);
+
+  const uploadGuards = [
+    {
+      section: 'units',
+      baseDir: UPLOAD_UNITS,
+      minSegments: 3,
+      notFoundMessage: 'Imagem de unidade não encontrada'
+    },
+    {
+      section: 'branding',
+      baseDir: UPLOAD_BRANDING,
+      minSegments: 2,
+      notFoundMessage: 'Recurso de branding não encontrado'
+    }
+  ];
+
+  function respondUploadError(res, status, message) {
+    res.status(status).type('application/json').send({ error: message });
+  }
+
+  function buildUploadGuard({ section, baseDir, minSegments, notFoundMessage }) {
+    return function uploadGuard(req, res, next) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+
+      const rawParts = req.path.split('/').filter(Boolean);
+      if (!rawParts.length || rawParts[0] !== section) return next();
+
+      const parts = rawParts.map(part => {
+        try {
+          return decodeURIComponent(part);
+        } catch (_) {
+          return part;
+        }
+      });
+
+      if (parts.length < minSegments) {
+        return respondUploadError(res, 404, notFoundMessage);
+      }
+
+      const targetPath = path.resolve(baseDir, ...parts.slice(1));
+      const relative = path.relative(baseDir, targetPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        return respondUploadError(res, 400, 'Caminho de upload inválido');
+      }
+
+      if (!fs.existsSync(targetPath)) {
+        return respondUploadError(res, 404, notFoundMessage);
+      }
+
+      try {
+        const stat = fs.statSync(targetPath);
+        if (!stat.isFile()) {
+          return respondUploadError(res, 404, notFoundMessage);
+        }
+      } catch (_) {
+        return respondUploadError(res, 404, notFoundMessage);
+      }
+
+      return next();
+    };
+  }
+
+  uploadGuards.forEach(guardConfig => {
+    app.use('/uploads', buildUploadGuard(guardConfig));
+  });
 
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {

@@ -331,6 +331,22 @@ module.exports = function registerBackoffice(app, context) {
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
 
+  // Registar API de suporte à experiência do utilizador no backoffice.
+  registerUxApi(app, context);
+
+  // Registar centro de conteúdos no backoffice.
+  registerContentCenter(app, context);
+
+  // Registar rotas do calendário no backoffice.
+  registerCalendar(app, {
+    ...context,
+    inlineScript,
+    renderBreadcrumbs,
+    renderModalShell,
+    ensureNoIndex,
+    isFlagEnabled,
+  });
+
   // registerFinance consolida todas as rotas financeiras num único módulo.
   registerFinance(app, {
     ...context,
@@ -338,6 +354,15 @@ module.exports = function registerBackoffice(app, context) {
     renderBreadcrumbs,
     serverRender,
     extrasManagerScript,
+  });
+
+  // Registar rotas de reservas no backoffice.
+  registerBookings(app, context);
+
+  // Registar rotas de housekeeping no backoffice.
+  const { getHousekeepingTasks, computeHousekeepingBoard } = registerHousekeeping(app, {
+    ...context,
+    renderBreadcrumbs,
   });
 
   function jsonScriptPayload(value) {
