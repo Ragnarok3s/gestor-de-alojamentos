@@ -834,11 +834,11 @@ async function testReviewRequestService() {
   assert.equal(retryResult.status, 'requested', 'reenvio autorizado deve atualizar estado');
   assert.equal(fakeMailer.sent.length, 2, 'reenvio deve enviar novo email');
 
-  const marked = service.markRequestReceived({ bookingId, reviewId: 99 });
+  const marked = service.markRequestReceived({ bookingId });
   assert.equal(marked, true, 'marcar como recebido deve devolver true');
   const afterMark = service.getRequestForBooking(bookingId);
   assert.equal(afterMark.status, 'received', 'estado deve passar para received');
-  assert.equal(afterMark.review_id, 99, 'review_id deve ser registado');
+  assert.equal(afterMark.review_id, null, 'review_id deve permanecer null sem avaliação associada');
 
   const secondBookingId = db
     .prepare(
