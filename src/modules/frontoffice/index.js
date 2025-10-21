@@ -1397,8 +1397,20 @@ app.get('/book/:unitId', (req, res) => {
           <li class="progress-step is-active">3. Confirme e relaxe</li>
         </ul>
       </div>
-      <div class="fo-booking-layout grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-        <form class="card p-6 fo-booking-form space-y-6" method="post" action="/book" data-booking-form>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card p-4">
+          <h2 class="font-semibold mb-3">Detalhes da reserva</h2>
+          <ul class="text-sm text-slate-700 space-y-1">
+            <li>Check-in: <strong>${dayjs(checkin).format('DD/MM/YYYY')}</strong></li>
+            <li>Check-out: <strong>${dayjs(checkout).format('DD/MM/YYYY')}</strong></li>
+            <li>Noites: <strong>${quote.nights}</strong></li>
+            <li>Hóspedes: <strong data-occupancy-summary>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
+            <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
+            <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
+          </ul>
+          ${unitFeaturesBooking}
+        </div>
+        <form class="card p-4" method="post" action="/book" data-booking-form>
           <input type="hidden" name="_csrf" value="${csrfToken}" />
           <input type="hidden" name="unit_id" value="${u.id}" />
           <input type="hidden" name="rate_plan_id" value="${ratePlanId ? ratePlanId : ''}" />

@@ -280,13 +280,20 @@ function registerBookings(app, context) {
   }
 
   app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
+<<<<<<< HEAD
     const search = String(req.query.search || '').trim();
     const statusRaw = String(req.query.status || '').trim().toLowerCase();
     const sortRaw = String(req.query.sort || '').trim().toLowerCase();
+=======
+    const q = String(req.query.q || '').trim();
+    const status = String(req.query.status || '').trim();
+    const ym = String(req.query.ym || '').trim();
+>>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
 
     const where = [];
     const args = [];
 
+<<<<<<< HEAD
     if (search) {
       where.push('(b.guest_name LIKE ? OR CAST(b.id AS TEXT) LIKE ?)');
       const likeTerm = `%${search}%`;
@@ -314,6 +321,22 @@ function registerBookings(app, context) {
       sortKey === 'arrival_date'
         ? 'b.checkin DESC, b.created_at DESC'
         : 'b.created_at DESC';
+=======
+    if (q) {
+      where.push(`(b.guest_name LIKE ? OR b.guest_email LIKE ? OR u.name LIKE ? OR p.name LIKE ? OR b.agency LIKE ?)`);
+      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (status) {
+      where.push(`b.status = ?`);
+      args.push(status);
+    }
+    if (/^\d{4}-\d{2}$/.test(ym)) {
+      const startYM = `${ym}-01`;
+      const endYM = dayjs(startYM).endOf('month').add(1, 'day').format('YYYY-MM-DD');
+      where.push(`NOT (b.checkout <= ? OR b.checkin >= ?)`);
+      args.push(startYM, endYM);
+    }
+>>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
 
     const sql = `
       SELECT b.*, u.name AS unit_name, p.name AS property_name
@@ -321,7 +344,11 @@ function registerBookings(app, context) {
         JOIN units u ON u.id = b.unit_id
         JOIN properties p ON p.id = u.property_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+<<<<<<< HEAD
         ORDER BY ${orderClause}
+=======
+        ORDER BY b.checkin DESC, b.created_at DESC
+>>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
         LIMIT 500
     `;
     const rows = db.prepare(sql).all(...args);
@@ -329,6 +356,7 @@ function registerBookings(app, context) {
     const canEditBooking = userCan(req.user, 'bookings.edit');
     const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
+<<<<<<< HEAD
     const filters = { search, status: statusRaw, sort: sortKey };
     const statusOptions = [
       { value: '', label: 'Todos' },
@@ -400,13 +428,75 @@ function registerBookings(app, context) {
     }
 
     res.locals.activeNav = '/admin/bookings';
+=======
+>>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
     res.send(layout({
       title: 'Reservas',
       user: req.user,
       activeNav: 'bookings',
       branding: resolveBrandingForRequest(req),
       pageClass: 'page-backoffice page-bookings',
+<<<<<<< HEAD
       body: bodyContent
+=======
+      body: html`
+        <div class="bo-page">
+          <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+
+          <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+          <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
+          <select class="input" name="status">
+            <option value="">Todos os estados</option>
+            <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
+            <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
+          </select>
+          <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
+          <button class="btn btn-primary">Filtrar</button>
+        </form>
+
+        <div class="card p-0">
+          <div class="responsive-table">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(b => `
+                  <tr>
+                    <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
+                    <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
+                    <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
+                    <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
+                    <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
+                    <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
+                    <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
+                    <td data-label="Status">
+                      <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
+                        ${b.status}
+                      </span>
+                    </td>
+                    <td data-label="Ações">
+                      <div class="table-cell-actions">
+                        <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
+                        ${canCancelBooking ? `
+                          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
+                            <button class="text-rose-600">Cancelar</button>
+                          </form>
+                        ` : ''}
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
+        </div>
+      </div>
+    `
+>>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
     }));
   });
 

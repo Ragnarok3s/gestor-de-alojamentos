@@ -3065,18 +3065,6 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             document.addEventListener('DOMContentLoaded', initNotificationsPopover);
             document.addEventListener('DOMContentLoaded', initUserMenu);
           }
-          const languageSwitcher = document.querySelector('[data-language-switcher]');
-          if (languageSwitcher) {
-            languageSwitcher.addEventListener('change', (event) => {
-              const selected = event.target.value;
-              if (!selected || selected === '${languageCode}') return;
-              document.cookie = `lang=${encodeURIComponent(selected)}; path=/; max-age=31536000; SameSite=Lax`;
-              const localeUrl = `/locales/${encodeURIComponent(selected)}.json`;
-              fetch(localeUrl, { cache: 'no-cache' }).finally(() => {
-                window.location.reload();
-              });
-            });
-          }
           document.addEventListener('htmx:afterSwap', () => { notificationsInitialized = false; initNotificationsPopover(); userMenuInitialized = false; initUserMenu(); });
           function syncCheckout(e){
             const ci = e.target.value; const co = document.getElementById('checkout');

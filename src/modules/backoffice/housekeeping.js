@@ -1105,6 +1105,7 @@ function createHousekeepingModule(context = {}) {
       res.send(
         layout({
           title: 'Gestão de limpezas',
+          activeNav: 'housekeeping',
           user: req.user,
           activeNav: 'housekeeping',
           branding: resolveBrandingForRequest(req),
