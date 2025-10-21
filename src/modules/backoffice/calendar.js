@@ -11,6 +11,7 @@ function registerCalendar(app, context) {
     dayjs,
     html,
     layout,
+    renderIcon,
     esc,
     formatMonthYear,
     resolveBrandingForRequest,
@@ -214,7 +215,7 @@ function registerCalendar(app, context) {
         <details class="bo-calendar-filters__details"${filtersOpenAttr}>
           <summary class="bo-calendar-filters__summary">
             <span class="bo-calendar-filters__summary-label">
-              <i aria-hidden="true" data-lucide="sliders"></i>
+              ${renderIcon('sliders')}
               <span>Filtros de reservas</span>
             </span>
             <span class="bo-calendar-filters__summary-hint">${esc(filtersHint)}</span>
@@ -417,6 +418,8 @@ function registerCalendar(app, context) {
     serverRender('route:/calendar');
     res.send(layout({
       title: 'Mapa de Reservas',
+      language: req.language,
+      t: req.t,
       user: req.user,
       activeNav: 'calendar',
       branding: resolveBrandingForRequest(req),

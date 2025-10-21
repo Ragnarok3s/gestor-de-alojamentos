@@ -337,6 +337,8 @@ function registerRateRules(app, context) {
     res.send(
       layout({
         title: 'Regras automáticas de tarifas',
+        language: req.language,
+        t: req.t,
         user: req.user,
         activeNav: 'backoffice',
         pageClass: 'page-backoffice page-rates',

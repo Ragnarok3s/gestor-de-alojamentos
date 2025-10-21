@@ -542,6 +542,8 @@ module.exports = function registerOwnersPortal(app, context) {
     res.send(
       layout({
         title: 'Área de Proprietários',
+        language: req.language,
+        t: req.t,
         user: viewer,
         activeNav: 'owners',
         pageClass: 'page-backoffice page-owners',

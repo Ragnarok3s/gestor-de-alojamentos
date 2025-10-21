@@ -1,0 +1,438 @@
+{
+  "language": {
+    "label": "Idioma",
+    "pt": "Português",
+    "en": "Inglês"
+  },
+  "actions": {
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "remove": "Remover",
+    "cancel": "Cancelar",
+    "edit": "Editar",
+    "duplicate": "Duplicar",
+    "confirm": "Confirmar",
+    "close": "Fechar",
+    "back": "Voltar",
+    "continue": "Continuar",
+    "create": "Criar",
+    "update": "Actualizar",
+    "search": "Pesquisar",
+    "filter": "Filtrar",
+    "apply": "Aplicar",
+    "view": "Ver",
+    "add": "Adicionar"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "search": "Pesquisar",
+    "owners": "Área de proprietários",
+    "calendar": "Mapa de reservas",
+    "housekeeping": "Limpezas",
+    "backoffice": "Backoffice",
+    "login": "Iniciar sessão",
+    "notifications": "Notificações",
+    "notificationsEmpty": "Sem notificações no momento.",
+    "notificationsViewBookings": "Ver reservas",
+    "notificationsMarkAllRead": "Marcar todas como lidas",
+    "themeLight": "Modo claro",
+    "themeDark": "Modo escuro",
+    "globalSearch": "Pesquisa global",
+    "globalSearchPlaceholder": "Pesquisar reservas, unidades, hóspedes e conteúdos",
+    "globalSearchHint": "Introduza pelo menos dois caracteres para pesquisar reservas, unidades, hóspedes e conteúdos.",
+    "globalSearchEmpty": "Sem resultados para esta pesquisa.",
+    "searchGroupBookings": "Reservas",
+    "searchGroupUnits": "Unidades",
+    "searchGroupGuests": "Hóspedes",
+    "searchGroupContent": "Conteúdos",
+    "searchUnknownGuest": "Hóspede",
+    "searchLastCheckin": "Último check-in",
+    "primaryNavigation": "Navegação principal",
+    "loadingShell": "A preparar a área de trabalho…",
+    "languageSelectorLabel": "Idioma",
+    "logout": "Terminar sessão",
+    "security": "Segurança"
+  },
+  "table": {
+    "empty": "Sem registos para apresentar.",
+    "actionsColumn": "Ações",
+    "errorLoading": "Não foi possível carregar a tabela.",
+    "controls": {
+      "searchLabel": "Pesquisa",
+      "searchPlaceholder": "Pesquisar…",
+      "filterLabel": "Filtro",
+      "submit": "Aplicar"
+    },
+    "pagination": {
+      "aria": "Paginação",
+      "range": "{from}–{to} de {total}",
+      "pageCounter": "Página {page} de {pageCount}",
+      "next": "Seguinte",
+      "previous": "Anterior"
+    },
+    "sort": {
+      "unsorted": "Ordenar",
+      "asc": "Ordenar ascendente",
+      "desc": "Ordenar descendente"
+    },
+    "confirm": {
+      "title": "Confirmar ação",
+      "cancel": "Cancelar",
+      "accept": "Confirmar"
+    }
+  },
+  "errors": {
+    "generic": "Ocorreu um problema inesperado. Por favor, tente novamente.",
+    "invalidCredentials": "Não foi possível validar as credenciais. Confirme os dados e volte a tentar.",
+    "twoFactorFailed": "O código de verificação não está correcto. Tente novamente ou solicite um novo código.",
+    "missingField": "Preencha todos os campos obrigatórios antes de continuar.",
+    "unauthorised": "Não tem permissões para aceder a esta área.",
+    "notFound": "Não encontrámos o que procurava."
+  },
+  "messages": {
+    "welcome": "Bem-vindo de volta",
+    "updateSuccess": "Actualização concluída com sucesso.",
+    "deleteConfirm": "Tem a certeza que pretende eliminar este item?",
+    "update": "Actualização"
+  },
+  "labels": {
+    "password": "Password",
+    "email": "Email",
+    "search": "Pesquisa",
+    "status": "Estado"
+  },
+  "backoffice": {
+    "common": {
+      "breadcrumb": {
+        "backoffice": "Backoffice"
+      }
+    },
+    "dashboard": {
+      "kicker": "Visão geral",
+      "title": "Painel de desempenho",
+      "subtitle": "Acompanha rapidamente o estado do negócio e acede às áreas mais usadas.",
+      "quickActions": {
+        "calendar": "Calendário",
+        "reservations": "Reservas",
+        "housekeeping": "Housekeeping"
+      },
+      "gridAria": "Indicadores principais",
+      "cards": {
+        "occupancy": {
+          "label": "Ocupação actual",
+          "link": "Ver reservas de hoje"
+        },
+        "revenue": {
+          "label": "Receitas do mês",
+          "link": "Abrir calendário de receita"
+        },
+        "futureBookings": {
+          "label": "Reservas futuras",
+          "link": "Gerir reservas"
+        },
+        "pendingTasks": {
+          "label": "Tarefas pendentes",
+          "link": "Abrir painel de limpezas"
+        }
+      },
+      "metrics": {
+        "occupancy": {
+          "meta": "{occupied} de {total} unidades ocupadas hoje.",
+          "empty": "Nenhuma unidade registada."
+        },
+        "revenue": {
+          "meta": "Reservas confirmadas em {month} {year}."
+        },
+        "futureBookings": {
+          "meta": "Check-ins agendados a partir de {date}.",
+          "empty": "Nenhuma reserva futura registada."
+        },
+        "pendingTasks": {
+          "meta": "Tarefas a aguardar intervenção da equipa.",
+          "empty": "Sem tarefas pendentes neste momento."
+        }
+      },
+      "updated": "Actualizado em"
+    },
+    "bookings": {
+      "title": "Reservas",
+      "filters": {
+        "formLabel": "Filtros de reservas",
+        "searchLabel": "Pesquisar reservas",
+        "searchPlaceholder": "Procurar por hóspede, email, unidade, propriedade",
+        "statusAny": "Todos os estados",
+        "statusLabel": "Filtrar por estado",
+        "monthLabel": "Filtrar por mês"
+      },
+      "status": {
+        "confirmed": "Confirmada",
+        "pending": "Pendente"
+      },
+      "actions": {
+        "cancelConfirm": "Cancelar esta reserva?"
+      },
+      "export": {
+        "groupLabel": "Exportar reservas",
+        "csv": "Exportar CSV",
+        "xlsx": "Exportar XLSX"
+      },
+      "table": {
+        "propertyUnit": "Propriedade/Unidade",
+        "agency": "Agência",
+        "guest": "Hóspede",
+        "occupancy": "Ocup.",
+        "total": "Total"
+      }
+    },
+    "properties": {
+      "title": "Propriedades",
+      "breadcrumb": "Propriedades",
+      "description": "Consulta e gere as propriedades com pesquisa, filtros e ações consistentes para toda a equipa.",
+      "status": {
+        "active": "Ativa",
+        "empty": "Sem unidades"
+      },
+      "actions": {
+        "delete": {
+          "title": "Eliminar propriedade",
+          "message": "Tem a certeza que deseja eliminar \"{name}\"? Esta ação não pode ser anulada."
+        }
+      },
+      "feedback": {
+        "deleted": "Propriedade eliminada com sucesso.",
+        "created": "Propriedade criada com sucesso."
+      },
+      "table": {
+        "columns": {
+          "name": "Propriedade",
+          "unitCount": "Unidades",
+          "revenue": "Receita confirmada",
+          "status": "Estado"
+        },
+        "search": {
+          "label": "Pesquisa",
+          "placeholder": "Pesquisar por nome ou localização"
+        },
+        "filters": {
+          "status": {
+            "label": "Estado",
+            "all": "Todos os estados",
+            "active": "Ativas",
+            "empty": "Sem unidades"
+          }
+        },
+        "empty": "Sem propriedades encontradas."
+      }
+    },
+    "units": {
+      "title": "Unidades",
+      "breadcrumb": "Unidades",
+      "description": "Consulta rápida das unidades ativas, o estado atual e ações consistentes para gestão diária.",
+      "status": {
+        "available": "Disponível",
+        "occupied": "Ocupada",
+        "blocked": "Bloqueada"
+      },
+      "actions": {
+        "delete": {
+          "title": "Eliminar unidade",
+          "message": "Deseja eliminar a unidade \"{name}\"? Reservas associadas permanecerão no histórico."
+        }
+      },
+      "feedback": {
+        "deleted": "Unidade eliminada com sucesso."
+      },
+      "table": {
+        "columns": {
+          "name": "Unidade",
+          "capacity": "Capacidade",
+          "price": "Preço base",
+          "status": "Estado"
+        },
+        "search": {
+          "label": "Pesquisa",
+          "placeholder": "Pesquisar por unidade ou propriedade"
+        },
+        "filters": {
+          "status": {
+            "label": "Estado",
+            "all": "Todos os estados",
+            "available": "Disponíveis",
+            "occupied": "Ocupadas",
+            "blocked": "Bloqueadas"
+          }
+        },
+        "empty": "Sem unidades encontradas."
+      }
+    },
+    "extras": {
+      "title": "Extras & serviços",
+      "breadcrumb": "Extras & serviços",
+      "header": {
+        "lead": "Define os extras disponíveis para o hóspede, incluindo preços, descontos de estadias longas e janelas de disponibilidade."
+      },
+      "noProperty": {
+        "description": "Para configurar extras é necessário ter pelo menos uma propriedade ativa.",
+        "cta": "Ir para o painel de propriedades"
+      },
+      "form": {
+        "propertyLabel": "Propriedade",
+        "propertySubmit": "Trocar propriedade",
+        "sectionTitle": "Extras configurados",
+        "sectionDescription": "Itens adicionados aqui ficam disponíveis no portal do hóspede para esta propriedade.",
+        "addButton": "Adicionar extra",
+        "emptyTitle": "Sem extras configurados.",
+        "emptyDescription": "Utiliza o botão \"Adicionar extra\" para criar o primeiro serviço disponível.",
+        "autosaveNote": "As alterações são aplicadas de imediato no portal do hóspede assim que guardares.",
+        "submit": "Guardar extras",
+        "itemFallback": "Extra {number}",
+        "detailsHint": "Define os detalhes visíveis para o hóspede e as regras de preço.",
+        "fields": {
+          "name": {
+            "label": "Nome",
+            "placeholder": "Ex.: Transfer aeroporto"
+          },
+          "code": {
+            "label": "Código interno",
+            "placeholder": "Ex.: transfer",
+            "help": "Sem espaços; usado para identificar o extra nas reservas."
+          },
+          "description": {
+            "label": "Descrição (opcional)",
+            "placeholder": "Notas ou limites do serviço"
+          },
+          "price": {
+            "label": "Preço (€)",
+            "placeholder": "Ex.: 30",
+            "help": "Usa 0 para incluir sem custo adicional."
+          },
+          "rule": {
+            "label": "Regra de preço",
+            "options": {
+              "standard": "Preço fixo por reserva",
+              "long_stay": "Desconto para estadias longas"
+            }
+          },
+          "minNights": {
+            "label": "Noites mínimas",
+            "placeholder": "Ex.: 7"
+          },
+          "discountPercent": {
+            "label": "Desconto (%)",
+            "placeholder": "Ex.: 15"
+          },
+          "availabilityFrom": {
+            "label": "Disponível a partir das (opcional)"
+          },
+          "availabilityTo": {
+            "label": "Disponível até às (opcional)"
+          }
+        }
+      },
+      "table": {
+        "columns": {
+          "name": "Extra",
+          "price": "Preço (€)",
+          "rule": "Regra",
+          "availability": "Disponibilidade"
+        },
+        "search": {
+          "label": "Pesquisa",
+          "placeholder": "Pesquisar por nome ou descrição"
+        },
+        "filters": {
+          "rule": {
+            "label": "Tipo",
+            "all": "Todos os tipos"
+          }
+        },
+        "empty": "Sem extras configurados."
+      },
+      "rules": {
+        "alwaysAvailable": "Sempre disponível"
+      },
+      "actions": {
+        "duplicate": {
+          "title": "Duplicar extra",
+          "message": "Criar uma cópia de \"{name}\" com os mesmos detalhes?"
+        },
+        "delete": {
+          "title": "Eliminar extra",
+          "message": "Tem a certeza que deseja eliminar \"{name}\"?"
+        }
+      },
+      "notices": {
+        "saved": "Extras atualizados com sucesso.",
+        "deleted": "Extra eliminado com sucesso.",
+        "duplicated": "Extra duplicado com sucesso.",
+        "notFound": "Não foi possível localizar o extra indicado."
+      },
+      "errors": {
+        "invalidProperty": "Seleciona uma propriedade válida.",
+        "propertyNotFound": "A propriedade selecionada não foi encontrada.",
+        "invalidPayload": "Não foi possível ler os dados enviados.",
+        "saveFailed": "Não foi possível guardar os extras. Tenta novamente."
+      },
+      "validation": {
+        "nameRequired": "Indica um nome para o extra #{position}.",
+        "invalidCode": "O código de \"{name}\" é inválido.",
+        "duplicateCode": "O código \"{code}\" já está a ser utilizado.",
+        "invalidPrice": "O preço de \"{name}\" não é válido.",
+        "invalidMinNights": "As noites mínimas de \"{name}\" têm de ser superiores a 0.",
+        "invalidDiscount": "O desconto de \"{name}\" deve estar entre 0 e 100."
+      },
+      "duplicate": {
+        "copyOfName": "{name} (cópia)",
+        "fallbackName": "Extra duplicado"
+      }
+    },
+    "users": {
+      "title": "Utilizadores",
+      "breadcrumb": "Utilizadores",
+      "description": "Pesquisa e gere rapidamente as contas com filtros partilháveis e ações consistentes.",
+      "status": {
+        "active": "Com email",
+        "missingEmail": "Sem email"
+      },
+      "actions": {
+        "delete": {
+          "title": "Eliminar utilizador",
+          "message": "Tem a certeza que pretende eliminar \"{name}\"? Esta ação termina sessões ativas, revoga tokens API e remove {count} permissões base associadas."
+        }
+      },
+      "table": {
+        "columns": {
+          "name": "Utilizador",
+          "role": "Perfil",
+          "status": "Estado"
+        },
+        "search": {
+          "label": "Pesquisa",
+          "placeholder": "Pesquisar por nome ou email"
+        },
+        "filters": {
+          "status": {
+            "label": "Estado",
+            "all": "Todos os estados",
+            "active": "Com email",
+            "noEmail": "Sem email"
+          }
+        },
+        "noEmail": "Sem email definido",
+        "empty": "Sem utilizadores encontrados."
+      },
+      "feedback": {
+        "deleted": "Utilizador eliminado com sucesso."
+      },
+      "warning": {
+        "delete": "Eliminar um utilizador revoga tokens de API, termina sessões ativas e remove escopos personalizados. Reatribui as permissões essenciais a outro membro antes de confirmar a remoção."
+      }
+    }
+  },
+  "page": {
+    "notFound": {
+      "title": "404",
+      "body": "Página não encontrada."
+    }
+  }
+}

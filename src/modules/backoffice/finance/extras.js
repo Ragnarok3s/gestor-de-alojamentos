@@ -6,7 +6,9 @@ function registerExtras(app, context) {
     db,
     html,
     layout,
+    renderIcon,
     esc,
+    eur,
     renderBreadcrumbs,
     resolveBrandingForRequest,
     rememberActiveBrandingProperty,
@@ -17,6 +19,8 @@ function registerExtras(app, context) {
     requireLogin,
     requirePermission,
     extrasManagerScript,
+    renderDataTable,
+    isSafeRedirectTarget,
   } = context;
 
   function normalizePricingRuleValue(value) {
@@ -36,6 +40,53 @@ function registerExtras(app, context) {
     if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return '';
     if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return '';
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  }
+
+  function buildQueryString(params) {
+    if (!params || typeof params !== 'object') return '';
+    return Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+      .join('&');
+  }
+
+  function appendNotice(url, notice) {
+    if (!url) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}notice=${encodeURIComponent(notice)}`;
+  }
+
+  function formatTemplate(template, values) {
+    if (typeof template !== 'string' || !values) {
+      return template;
+    }
+    return template.replace(/\{(\w+)\}/g, (match, key) => {
+      if (Object.prototype.hasOwnProperty.call(values, key)) {
+        const value = values[key];
+        return value == null ? '' : String(value);
+      }
+      return match;
+    });
+  }
+
+  function translateText(translator, key, defaultValue, values) {
+    if (typeof translator === 'function') {
+      return translator(key, { defaultValue, values });
+    }
+    if (defaultValue === undefined) {
+      return key;
+    }
+    if (typeof defaultValue === 'string') {
+      return formatTemplate(defaultValue, values);
+    }
+    return defaultValue;
+  }
+
+  function resolveExtrasRedirect(rawTarget, fallback) {
+    if (typeof rawTarget === 'string' && rawTarget && isSafeRedirectTarget && isSafeRedirectTarget(rawTarget)) {
+      return rawTarget;
+    }
+    return fallback;
   }
 
   function normalizePolicyExtrasForForm(rawExtras) {
@@ -109,7 +160,8 @@ function registerExtras(app, context) {
       .filter(extra => extra && (extra.name || extra.code));
   }
 
-  function parseExtrasSubmission(payload) {
+  function parseExtrasSubmission(payload, translator) {
+    const translate = (key, defaultValue, values) => translateText(translator, key, defaultValue, values);
     const extrasArray = payload && Array.isArray(payload.extras) ? payload.extras : [];
     const output = [];
     const usedCodes = new Set();
@@ -118,16 +170,30 @@ function registerExtras(app, context) {
       if (!raw || typeof raw !== 'object') return;
       const name = typeof raw.name === 'string' ? raw.name.trim() : '';
       if (!name) {
-        throw new ValidationError(`Nome obrigatório no extra #${index + 1}`);
+        throw new ValidationError(
+          translate(
+            'backoffice.extras.validation.nameRequired',
+            'Please add a name to extra #{position}.',
+            { position: index + 1 }
+          )
+        );
       }
       const codeInput = typeof raw.code === 'string' ? raw.code.trim() : '';
       const normalizedCode = slugify(codeInput || name);
       if (!normalizedCode) {
-        throw new ValidationError(`Código inválido no extra "${name}"`);
+        throw new ValidationError(
+          translate('backoffice.extras.validation.invalidCode', 'The code for "{name}" is invalid.', {
+            name
+          })
+        );
       }
       const codeKey = normalizedCode.toLowerCase();
       if (usedCodes.has(codeKey)) {
-        throw new ValidationError(`Código duplicado: ${normalizedCode}`);
+        throw new ValidationError(
+          translate('backoffice.extras.validation.duplicateCode', 'The code "{code}" is already being used.', {
+            code: normalizedCode
+          })
+        );
       }
       usedCodes.add(codeKey);
 
@@ -145,7 +211,11 @@ function registerExtras(app, context) {
         if (!Number.isNaN(priceNumber) && Number.isFinite(priceNumber) && priceNumber >= 0) {
           priceCents = Math.round(priceNumber * 100);
         } else {
-          throw new ValidationError(`Preço inválido no extra "${name}"`);
+          throw new ValidationError(
+            translate('backoffice.extras.validation.invalidPrice', 'The price for "{name}" is not valid.', {
+              name
+            })
+          );
         }
       }
 
@@ -172,7 +242,11 @@ function registerExtras(app, context) {
           if (!Number.isNaN(minValue) && minValue > 0) {
             config.min_nights = minValue;
           } else {
-            throw new ValidationError(`Noites mínimas inválidas no extra "${name}"`);
+            throw new ValidationError(
+              translate('backoffice.extras.validation.invalidMinNights', 'The minimum nights for "{name}" must be greater than 0.', {
+                name
+              })
+            );
           }
         }
         if (discountRaw != null && String(discountRaw).trim() !== '') {
@@ -180,7 +254,11 @@ function registerExtras(app, context) {
           if (!Number.isNaN(discountValue) && discountValue >= 0 && discountValue <= 100) {
             config.discount_percent = discountValue;
           } else {
-            throw new ValidationError(`Desconto inválido no extra "${name}"`);
+            throw new ValidationError(
+              translate('backoffice.extras.validation.invalidDiscount', 'The discount for "{name}" must be between 0 and 100.', {
+                name
+              })
+            );
           }
         }
         if (Object.keys(config).length) {
@@ -221,6 +299,7 @@ function registerExtras(app, context) {
     res,
     { propertyId, formState, successMessage, errorMessage } = {}
   ) {
+    const translate = (key, defaultValue, values) => translateText(req.t, key, defaultValue, values);
     const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
 
     if (!properties.length) {
@@ -228,24 +307,43 @@ function registerExtras(app, context) {
       serverRender('route:/admin/extras');
       return res.send(
         layout({
-          title: 'Extras & serviços',
+          title: translate('backoffice.extras.title', 'Extras & add-ons'),
+          language: req.language,
+          t: req.t,
           user: req.user,
           activeNav: 'backoffice',
           branding: theme,
           body: html`
             <div class="bo-page bo-page--wide">
               ${renderBreadcrumbs([
-                { label: 'Backoffice', href: '/admin' },
-                { label: 'Extras & serviços' },
+                {
+                  label: translate('backoffice.common.breadcrumb.backoffice', 'Backoffice'),
+                  href: '/admin'
+                },
+                { label: translate('backoffice.extras.breadcrumb', 'Extras & add-ons') },
               ])}
-              <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+              <a class="text-slate-600 underline" href="/admin">&larr; ${esc(
+                translate('backoffice.common.breadcrumb.backoffice', 'Backoffice')
+              )}</a>
               <div class="card p-6 space-y-4 mt-6">
-                <h1 class="text-2xl font-semibold text-slate-900">Extras & serviços</h1>
+                <h1 class="text-2xl font-semibold text-slate-900">${esc(
+                  translate('backoffice.extras.title', 'Extras & add-ons')
+                )}</h1>
                 <p class="text-sm text-slate-600">
-                  Para configurar extras é necessário ter pelo menos uma propriedade ativa no sistema.
+                  ${esc(
+                    translate(
+                      'backoffice.extras.noProperty.description',
+                      'You need at least one active property to configure extras.'
+                    )
+                  )}
                 </p>
                 <div>
-                  <a class="bo-button bo-button--primary" href="/admin">Ir para o painel de propriedades</a>
+                  <a class="bo-button bo-button--primary" href="/admin">${esc(
+                    translate(
+                      'backoffice.extras.noProperty.cta',
+                      'Go to the properties dashboard'
+                    )
+                  )}</a>
                 </div>
               </div>
             </div>
@@ -266,7 +364,336 @@ function registerExtras(app, context) {
     const extrasFormState = Array.isArray(formState)
       ? formState
       : normalizePolicyExtrasForForm(storedExtras);
-    const extrasPayloadJson = JSON.stringify({ extras: extrasFormState }).replace(/</g, '\\u003c');
+
+    const scriptTranslations = {
+      actions: {
+        remove: translate('actions.remove', 'Remove')
+      },
+      form: {
+        itemFallback: translate('backoffice.extras.form.itemFallback', 'Extra {number}'),
+        detailsHint: translate(
+          'backoffice.extras.form.detailsHint',
+          'Set the information visible to guests and choose pricing rules.'
+        ),
+        sectionTitle: translate('backoffice.extras.form.sectionTitle', 'Configured extras'),
+        sectionDescription: translate(
+          'backoffice.extras.form.sectionDescription',
+          'Extras added here become available in the guest portal for this property.'
+        ),
+        addButton: translate('backoffice.extras.form.addButton', 'Add extra'),
+        emptyTitle: translate('backoffice.extras.form.emptyTitle', 'No extras configured yet.'),
+        emptyDescription: translate(
+          'backoffice.extras.form.emptyDescription',
+          'Use the “Add extra” button to create the first service.'
+        ),
+        autosaveNote: translate(
+          'backoffice.extras.form.autosaveNote',
+          'Changes go live for guests as soon as you save.'
+        ),
+        submit: translate('backoffice.extras.form.submit', 'Save extras')
+      },
+      fields: {
+        name: {
+          label: translate('backoffice.extras.form.fields.name.label', 'Name'),
+          placeholder: translate('backoffice.extras.form.fields.name.placeholder', 'Ex.: Airport transfer')
+        },
+        code: {
+          label: translate('backoffice.extras.form.fields.code.label', 'Internal code'),
+          placeholder: translate('backoffice.extras.form.fields.code.placeholder', 'Ex.: transfer'),
+          help: translate(
+            'backoffice.extras.form.fields.code.help',
+            'No spaces; used to identify the extra in bookings.'
+          )
+        },
+        description: {
+          label: translate('backoffice.extras.form.fields.description.label', 'Description (optional)'),
+          placeholder: translate(
+            'backoffice.extras.form.fields.description.placeholder',
+            'Notes or limits for the service'
+          )
+        },
+        price: {
+          label: translate('backoffice.extras.form.fields.price.label', 'Price (€)'),
+          placeholder: translate('backoffice.extras.form.fields.price.placeholder', 'Ex.: 30'),
+          help: translate(
+            'backoffice.extras.form.fields.price.help',
+            'Use 0 to include it without additional cost.'
+          )
+        },
+        rule: {
+          label: translate('backoffice.extras.form.fields.rule.label', 'Pricing rule'),
+          options: {
+            standard: translate(
+              'backoffice.extras.form.fields.rule.options.standard',
+              'Fixed price per booking'
+            ),
+            long_stay: translate(
+              'backoffice.extras.form.fields.rule.options.longStay',
+              'Long-stay discount'
+            )
+          }
+        },
+        minNights: {
+          label: translate('backoffice.extras.form.fields.minNights.label', 'Minimum nights'),
+          placeholder: translate('backoffice.extras.form.fields.minNights.placeholder', 'Ex.: 7')
+        },
+        discountPercent: {
+          label: translate('backoffice.extras.form.fields.discountPercent.label', 'Discount (%)'),
+          placeholder: translate('backoffice.extras.form.fields.discountPercent.placeholder', 'Ex.: 15')
+        },
+        availabilityFrom: {
+          label: translate(
+            'backoffice.extras.form.fields.availabilityFrom.label',
+            'Available from (optional)'
+          )
+        },
+        availabilityTo: {
+          label: translate(
+            'backoffice.extras.form.fields.availabilityTo.label',
+            'Available until (optional)'
+          )
+        }
+      }
+    };
+
+    const extrasPayloadJson = JSON.stringify({
+      extras: extrasFormState,
+      translations: scriptTranslations
+    }).replace(/</g, '\\u003c');
+
+    let extrasTableHtml = '';
+    if (typeof renderDataTable === 'function') {
+      const query = req.query || {};
+      const searchValue = typeof query.search === 'string' ? query.search : '';
+      const searchTerm = searchValue.trim().toLowerCase();
+      const ruleRaw = typeof query.rule === 'string' ? query.rule.trim().toLowerCase() : '';
+      const ruleFilter = ruleRaw === 'long_stay' || ruleRaw === 'standard' ? ruleRaw : '';
+      const allowedSort = new Set(['name', 'price', 'rule', 'availability']);
+      const requestedSort = typeof query.sort === 'string' ? query.sort.trim() : '';
+      const sortKey = allowedSort.has(requestedSort) ? requestedSort : 'name';
+      const sortDirection = query.direction === 'desc' ? 'desc' : 'asc';
+      const requestedPage = Number.parseInt(query.page, 10);
+      const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+      const pageSize = 10;
+      const locale = req.language || 'pt';
+
+      const ruleLabels = {
+        standard: scriptTranslations.fields.rule.options.standard,
+        long_stay: scriptTranslations.fields.rule.options.long_stay
+      };
+      const alwaysAvailableLabel = translate(
+        'backoffice.extras.rules.alwaysAvailable',
+        'Always available'
+      );
+
+      const extrasEntries = extrasFormState.map((extra, index) => {
+        const code = extra.code || slugify(extra.name || `extra-${index + 1}`);
+        const safeCode = code || `extra-${index + 1}`;
+        const nameLabel = extra.name
+          || translate('backoffice.extras.form.itemFallback', 'Extra {number}', { number: index + 1 });
+        const description = extra.description || '';
+        const priceValue = extra.priceEuros
+          ? Number.parseFloat(String(extra.priceEuros).replace(',', '.'))
+          : null;
+        const priceLabel = extra.priceEuros
+          ? `<span class="bo-data-table__value">€ ${esc(extra.priceEuros)}</span>`
+          : '<span class="bo-data-table__muted">—</span>';
+        const ruleKey = extra.pricingRule === 'long_stay' ? 'long_stay' : 'standard';
+        const ruleLabel = ruleLabels[ruleKey] || ruleLabels.standard;
+        const ruleTone = ruleKey === 'long_stay' ? 'is-warning' : 'is-muted';
+        const availabilityFrom = extra.availabilityFrom || '';
+        const availabilityTo = extra.availabilityTo || '';
+        const availabilityLabel = availabilityFrom || availabilityTo
+          ? `<span class="bo-data-table__value">${esc(availabilityFrom || '00:00')} – ${esc(availabilityTo || '23:59')}</span>`
+          : `<span class="bo-data-table__muted">${esc(alwaysAvailableLabel)}</span>`;
+        const availabilitySort = `${(availabilityFrom || '').padStart(5, '0')}|${(availabilityTo || '').padStart(5, '0')}`;
+        const editAnchor = `#extra-${slugify(safeCode)}`;
+
+        return {
+          id: safeCode,
+          nameLabel,
+          nameSearch: `${nameLabel} ${description}`.toLowerCase(),
+          description,
+          priceLabel,
+          priceValue: Number.isFinite(priceValue) ? priceValue : null,
+          ruleKey,
+          ruleLabel,
+          ruleTone,
+          availabilityLabel,
+          availabilitySort,
+          editAnchor
+        };
+      });
+
+      const filteredEntries = extrasEntries.filter(entry => {
+        if (searchTerm && !entry.nameSearch.includes(searchTerm)) return false;
+        if (ruleFilter && entry.ruleKey !== ruleFilter) return false;
+        return true;
+      });
+
+      const sorters = {
+        name: (a, b) => a.nameLabel.localeCompare(b.nameLabel, locale),
+        price: (a, b) => {
+          const left = a.priceValue != null ? a.priceValue : Number.POSITIVE_INFINITY;
+          const right = b.priceValue != null ? b.priceValue : Number.POSITIVE_INFINITY;
+          return left - right;
+        },
+        rule: (a, b) => a.ruleLabel.localeCompare(b.ruleLabel, locale),
+        availability: (a, b) => a.availabilitySort.localeCompare(b.availabilitySort)
+      };
+      const sorter = sorters[sortKey] || sorters.name;
+      filteredEntries.sort(sorter);
+      if (sortDirection === 'desc') {
+        filteredEntries.reverse();
+      }
+
+      const total = filteredEntries.length;
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      const currentPage = Math.min(page, pageCount);
+      const startIndex = (currentPage - 1) * pageSize;
+      const paginatedEntries = filteredEntries.slice(startIndex, startIndex + pageSize);
+
+      const queryState = {
+        propertyId: String(selectedProperty.id),
+        search: searchValue,
+        rule: ruleFilter,
+        sort: sortKey,
+        direction: sortDirection,
+        page: currentPage
+      };
+      const redirectQuery = buildQueryString(queryState);
+      const redirectBase = redirectQuery
+        ? `/admin/extras?${redirectQuery}`
+        : `/admin/extras?propertyId=${selectedProperty.id}`;
+
+      const extrasTableRows = paginatedEntries.map(entry => {
+        const redirectHidden = { name: 'redirect', value: redirectBase };
+        return {
+          id: entry.id,
+          cells: [
+            {
+              html: `<span class="bo-data-table__value">${esc(entry.nameLabel)}</span>${entry.description
+                ? `<span class="bo-data-table__muted">${esc(entry.description)}</span>`
+                : ''}`
+            },
+            { html: entry.priceLabel },
+            { html: `<span class="bo-data-table__badge ${entry.ruleTone}">${esc(entry.ruleLabel)}</span>` },
+            { html: entry.availabilityLabel }
+          ],
+          actions: [
+            {
+              type: 'link',
+              href: entry.editAnchor,
+              label: translate('actions.edit', 'Edit'),
+              icon: 'pencil',
+              variant: 'ghost',
+              name: 'edit'
+            },
+            {
+              type: 'post',
+              action: `/admin/extras/${encodeURIComponent(entry.id)}/duplicate`,
+              label: translate('actions.duplicate', 'Duplicate'),
+              icon: 'copy',
+              variant: 'ghost',
+              name: 'duplicate',
+              hidden: [
+                { name: 'property_id', value: String(selectedProperty.id) },
+                redirectHidden
+              ],
+              confirm: {
+                title: translate('backoffice.extras.actions.duplicate.title', 'Duplicate extra'),
+                message: translate(
+                  'backoffice.extras.actions.duplicate.message',
+                  'Create a copy of "{name}" with the same details?',
+                  { name: entry.nameLabel }
+                ),
+                confirmLabel: translate('actions.duplicate', 'Duplicate')
+              }
+            },
+            {
+              type: 'post',
+              action: `/admin/extras/${encodeURIComponent(entry.id)}/delete`,
+              label: translate('actions.delete', 'Delete'),
+              icon: 'trash-2',
+              variant: 'danger',
+              name: 'delete',
+              hidden: [
+                { name: 'property_id', value: String(selectedProperty.id) },
+                redirectHidden
+              ],
+              confirm: {
+                title: translate('backoffice.extras.actions.delete.title', 'Delete extra'),
+                message: translate(
+                  'backoffice.extras.actions.delete.message',
+                  'Are you sure you want to delete "{name}"?',
+                  { name: entry.nameLabel }
+                ),
+                confirmLabel: translate('actions.delete', 'Delete')
+              }
+            }
+          ]
+        };
+      });
+
+      extrasTableHtml = renderDataTable({
+        id: 'extras-table',
+        action: '/admin/extras',
+        columns: [
+          {
+            key: 'name',
+            label: translate('backoffice.extras.table.columns.name', 'Extra'),
+            sortable: true
+          },
+          {
+            key: 'price',
+            label: translate('backoffice.extras.table.columns.price', 'Price (€)'),
+            sortable: true,
+            align: 'right'
+          },
+          {
+            key: 'rule',
+            label: translate('backoffice.extras.table.columns.rule', 'Rule'),
+            sortable: true
+          },
+          {
+            key: 'availability',
+            label: translate('backoffice.extras.table.columns.availability', 'Availability'),
+            sortable: true
+          }
+        ],
+        rows: extrasTableRows,
+        search: {
+          name: 'search',
+          label: translate('backoffice.extras.table.search.label', 'Search'),
+          placeholder: translate(
+            'backoffice.extras.table.search.placeholder',
+            'Search by name or description'
+          ),
+          value: searchValue
+        },
+        filters: [
+          {
+            name: 'rule',
+            label: translate('backoffice.extras.table.filters.rule.label', 'Type'),
+            options: [
+              {
+                value: '',
+                label: translate('backoffice.extras.table.filters.rule.all', 'All types')
+              },
+              { value: 'standard', label: scriptTranslations.fields.rule.options.standard },
+              { value: 'long_stay', label: scriptTranslations.fields.rule.options.long_stay }
+            ],
+            value: ruleFilter
+          }
+        ],
+        sort: { key: sortKey, direction: sortDirection },
+        pagination: { page: currentPage, pageSize, pageCount, total },
+        query: queryState,
+        preserve: ['propertyId', 'sort', 'direction'],
+        emptyState: translate('backoffice.extras.table.empty', 'No extras configured.'),
+        t: req.t
+      });
+    }
 
     const propertyOptions = properties
       .map(p => {
@@ -274,6 +701,23 @@ function registerExtras(app, context) {
         return `<option value="${p.id}" ${isSelected}>${esc(p.name)}</option>`;
       })
       .join('');
+
+    const propertyLabel = translate('backoffice.extras.form.propertyLabel', 'Property');
+    const propertySubmitLabel = translate('backoffice.extras.form.propertySubmit', 'Switch property');
+    const sectionTitle = scriptTranslations.form.sectionTitle;
+    const sectionDescription = scriptTranslations.form.sectionDescription;
+    const addButtonLabel = scriptTranslations.form.addButton;
+    const emptyTitle = scriptTranslations.form.emptyTitle;
+    const emptyDescription = scriptTranslations.form.emptyDescription;
+    const autosaveNote = scriptTranslations.form.autosaveNote;
+    const submitLabel = scriptTranslations.form.submit;
+    const headerLead = translate(
+      'backoffice.extras.header.lead',
+      'Define extras available to guests, including pricing, long-stay discounts, and availability windows.'
+    );
+    const breadcrumbBackoffice = translate('backoffice.common.breadcrumb.backoffice', 'Backoffice');
+    const extrasTitle = translate('backoffice.extras.title', 'Extras & add-ons');
+    const breadcrumbExtras = translate('backoffice.extras.breadcrumb', extrasTitle);
 
     const theme = resolveBrandingForRequest(req, {
       propertyId: selectedProperty.id,
@@ -301,60 +745,63 @@ function registerExtras(app, context) {
     serverRender('route:/admin/extras');
     res.send(
       layout({
-        title: 'Extras & serviços',
+        title: extrasTitle,
+        language: req.language,
+        t: req.t,
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
         body: html`
           <div class="bo-page bo-page--wide">
             ${renderBreadcrumbs([
-              { label: 'Backoffice', href: '/admin' },
-              { label: 'Extras & serviços' },
+              { label: breadcrumbBackoffice, href: '/admin' },
+              { label: breadcrumbExtras }
             ])}
-            <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+            <a class="text-slate-600 underline" href="/admin">&larr; ${esc(breadcrumbBackoffice)}</a>
             <header class="space-y-2 mt-6">
               <div class="flex flex-wrap items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
                 <span class="inline-flex items-center gap-1">
-                  <i data-lucide="building-2" class="w-4 h-4" aria-hidden="true"></i>
+                  ${renderIcon('building-2', { className: 'w-4 h-4', label: propertyLabel })}
                   <span>${esc(selectedProperty.name)}</span>
                 </span>
               </div>
-              <h1 class="text-2xl font-semibold text-slate-900">Extras & serviços</h1>
-              <p class="text-sm text-slate-600 max-w-3xl">
-                Define os extras disponíveis para a reserva do hóspede, incluindo preços, descontos de estadias longas e janelas de disponibilidade.
-              </p>
+              <h1 class="text-2xl font-semibold text-slate-900">${esc(extrasTitle)}</h1>
+              <p class="text-sm text-slate-600 max-w-3xl">${esc(headerLead)}</p>
             </header>
             <form method="get" class="card p-4 mt-6 mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div class="grid gap-2 md:grid-cols-2 md:gap-4 w-full">
                 <label class="grid gap-1 text-sm md:col-span-2 md:max-w-sm">
-                  <span>Propriedade</span>
+                  <span>${esc(propertyLabel)}</span>
                   <select class="input" name="propertyId">${propertyOptions}</select>
                 </label>
               </div>
-              <button type="submit" class="bo-button bo-button--secondary self-start md:self-auto">Trocar propriedade</button>
+              <button type="submit" class="bo-button bo-button--secondary self-start md:self-auto">${esc(
+                propertySubmitLabel
+              )}</button>
             </form>
             ${feedbackBlocks.join('')}
+            ${extrasTableHtml ? `<div class="card p-4 mt-6">${extrasTableHtml}</div>` : ''}
             <form method="post" action="/admin/extras" class="space-y-6" data-extras-form>
               <input type="hidden" name="property_id" value="${selectedProperty.id}" />
               <input type="hidden" name="extras_json" data-extras-json />
               <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 class="text-lg font-semibold text-slate-800">Extras configurados</h2>
-                  <p class="text-sm text-slate-600">Itens adicionados aqui ficam disponíveis no portal do hóspede para esta propriedade.</p>
+                  <h2 class="text-lg font-semibold text-slate-800">${esc(sectionTitle)}</h2>
+                  <p class="text-sm text-slate-600">${esc(sectionDescription)}</p>
                 </div>
                 <button type="button" class="bo-button bo-button--ghost" data-add-extra>
-                  <i data-lucide="plus" class="w-4 h-4" aria-hidden="true"></i>
-                  <span>Adicionar extra</span>
+                  ${renderIcon('plus', { className: 'w-4 h-4', label: addButtonLabel })}
+                  <span>${esc(addButtonLabel)}</span>
                 </button>
               </div>
               <div class="space-y-4" data-extras-list></div>
               <div class="border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-500" data-extras-empty>
-                <p class="font-medium text-slate-700 mb-1">Sem extras configurados.</p>
-                <p>Utiliza o botão "Adicionar extra" para criar o primeiro serviço disponível.</p>
+                <p class="font-medium text-slate-700 mb-1">${esc(emptyTitle)}</p>
+                <p>${esc(emptyDescription)}</p>
               </div>
               <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 pt-4">
-                <div class="text-xs text-slate-500">As alterações são aplicadas de imediato no portal do hóspede assim que guardares.</div>
-                <button type="submit" class="btn btn-primary">Guardar extras</button>
+                <div class="text-xs text-slate-500">${esc(autosaveNote)}</div>
+                <button type="submit" class="btn btn-primary">${esc(submitLabel)}</button>
               </div>
             </form>
             <script type="application/json" id="extras-data">${extrasPayloadJson}</script>
@@ -371,8 +818,34 @@ function registerExtras(app, context) {
     requirePermission('properties.manage'),
     (req, res) => {
       const propertyId = req.query && req.query.propertyId ? String(req.query.propertyId) : undefined;
-      const successMessage = req.query && req.query.saved ? 'Extras atualizados com sucesso.' : null;
-      renderExtrasManagementPage(req, res, { propertyId, successMessage });
+      let successMessage = null;
+      let errorMessage = null;
+      if (req.query && req.query.saved) {
+        successMessage = translateText(
+          req.t,
+          'backoffice.extras.notices.saved',
+          'Extras updated successfully.'
+        );
+      } else if (req.query && req.query.notice === 'deleted') {
+        successMessage = translateText(
+          req.t,
+          'backoffice.extras.notices.deleted',
+          'Extra deleted successfully.'
+        );
+      } else if (req.query && req.query.notice === 'duplicated') {
+        successMessage = translateText(
+          req.t,
+          'backoffice.extras.notices.duplicated',
+          'Extra duplicated successfully.'
+        );
+      } else if (req.query && req.query.notice === 'not_found') {
+        errorMessage = translateText(
+          req.t,
+          'backoffice.extras.notices.notFound',
+          'We couldn’t find the selected extra.'
+        );
+      }
+      renderExtrasManagementPage(req, res, { propertyId, successMessage, errorMessage });
     }
   );
 
@@ -386,7 +859,11 @@ function registerExtras(app, context) {
       const propertyId = Number.parseInt(propertyIdRaw, 10);
       if (!Number.isInteger(propertyId)) {
         return renderExtrasManagementPage(req, res, {
-          errorMessage: 'Propriedade inválida.',
+          errorMessage: translateText(
+            req.t,
+            'backoffice.extras.errors.invalidProperty',
+            'Select a valid property.'
+          ),
           formState: [],
           propertyId: propertyIdRaw,
         });
@@ -396,7 +873,11 @@ function registerExtras(app, context) {
       if (!property) {
         return renderExtrasManagementPage(req, res, {
           propertyId,
-          errorMessage: 'Propriedade não encontrada.',
+          errorMessage: translateText(
+            req.t,
+            'backoffice.extras.errors.propertyNotFound',
+            'The selected property could not be found.'
+          ),
           formState: [],
         });
       }
@@ -409,7 +890,11 @@ function registerExtras(app, context) {
           if (parsed === undefined) {
             return renderExtrasManagementPage(req, res, {
               propertyId: property.id,
-              errorMessage: 'Formato de dados inválido.',
+              errorMessage: translateText(
+                req.t,
+                'backoffice.extras.errors.invalidPayload',
+                'We couldn’t read the submitted extras.'
+              ),
               formState: [],
             });
           }
@@ -424,7 +909,7 @@ function registerExtras(app, context) {
       const submittedExtras = payloadRaw && Array.isArray(payloadRaw.extras) ? payloadRaw.extras : [];
 
       try {
-        const parsedExtras = parseExtrasSubmission(payloadRaw || {});
+        const parsedExtras = parseExtrasSubmission(payloadRaw || {}, req.t);
         const extrasJson = JSON.stringify(parsedExtras);
         const existingPolicy = db
           .prepare('SELECT extras FROM property_policies WHERE property_id = ?')
@@ -455,13 +940,128 @@ function registerExtras(app, context) {
             formState: submittedExtras,
           });
         }
-        console.error('Falha ao guardar extras:', err);
+        console.error('Failed to save extras:', err);
         return renderExtrasManagementPage(req, res, {
           propertyId: property.id,
-          errorMessage: 'Não foi possível guardar os extras. Tenta novamente.',
+          errorMessage: translateText(
+            req.t,
+            'backoffice.extras.errors.saveFailed',
+            'We couldn’t save the extras. Please try again.'
+          ),
           formState: submittedExtras,
         });
       }
+    }
+  );
+
+  app.post(
+    '/admin/extras/:code/delete',
+    requireLogin,
+    requirePermission('properties.manage'),
+    (req, res) => {
+      const propertyId = Number.parseInt(req.body.property_id, 10);
+      if (!Number.isInteger(propertyId)) {
+        return res
+          .status(400)
+          .send(translateText(req.t, 'backoffice.extras.errors.invalidProperty', 'Select a valid property.'));
+      }
+      const property = db.prepare('SELECT id, name FROM properties WHERE id = ?').get(propertyId);
+      if (!property) {
+        return res
+          .status(404)
+          .send(
+            translateText(req.t, 'backoffice.extras.errors.propertyNotFound', 'The selected property could not be found.')
+          );
+      }
+      const code = String(req.params.code || '').trim();
+      const redirectBase = resolveExtrasRedirect(req.body && req.body.redirect, `/admin/extras?propertyId=${propertyId}`);
+      if (!code) {
+        return res.redirect(appendNotice(redirectBase, 'not_found'));
+      }
+      const existingPolicy = db.prepare('SELECT extras FROM property_policies WHERE property_id = ?').get(propertyId);
+      const storedExtras = existingPolicy ? safeJsonParse(existingPolicy.extras, []) : [];
+      const formExtras = normalizePolicyExtrasForForm(storedExtras);
+      const filteredExtras = formExtras.filter(extra => extra.code !== code);
+      if (filteredExtras.length === formExtras.length) {
+        return res.redirect(appendNotice(redirectBase, 'not_found'));
+      }
+      const parsedExtras = parseExtrasSubmission({ extras: filteredExtras }, req.t);
+      db.prepare(
+        `INSERT INTO property_policies(property_id, extras)
+         VALUES (?, ?)
+         ON CONFLICT(property_id) DO UPDATE SET extras = excluded.extras`
+      ).run(propertyId, JSON.stringify(parsedExtras));
+      logChange(
+        req.user.id,
+        'property_policy',
+        propertyId,
+        'update',
+        { extras: storedExtras },
+        { extras: parsedExtras }
+      );
+      res.redirect(appendNotice(redirectBase, 'deleted'));
+    }
+  );
+
+  app.post(
+    '/admin/extras/:code/duplicate',
+    requireLogin,
+    requirePermission('properties.manage'),
+    (req, res) => {
+      const propertyId = Number.parseInt(req.body.property_id, 10);
+      if (!Number.isInteger(propertyId)) {
+        return res
+          .status(400)
+          .send(translateText(req.t, 'backoffice.extras.errors.invalidProperty', 'Select a valid property.'));
+      }
+      const property = db.prepare('SELECT id, name FROM properties WHERE id = ?').get(propertyId);
+      if (!property) {
+        return res
+          .status(404)
+          .send(
+            translateText(req.t, 'backoffice.extras.errors.propertyNotFound', 'The selected property could not be found.')
+          );
+      }
+      const code = String(req.params.code || '').trim();
+      const redirectBase = resolveExtrasRedirect(req.body && req.body.redirect, `/admin/extras?propertyId=${propertyId}`);
+      const existingPolicy = db.prepare('SELECT extras FROM property_policies WHERE property_id = ?').get(propertyId);
+      const storedExtras = existingPolicy ? safeJsonParse(existingPolicy.extras, []) : [];
+      const formExtras = normalizePolicyExtrasForForm(storedExtras);
+      const target = formExtras.find(extra => extra.code === code);
+      if (!target) {
+        return res.redirect(appendNotice(redirectBase, 'not_found'));
+      }
+      const copyName = target.name
+        ? translateText(req.t, 'backoffice.extras.duplicate.copyOfName', '{name} (copy)', { name: target.name })
+        : translateText(req.t, 'backoffice.extras.duplicate.fallbackName', 'Duplicated extra');
+      const baseCode = slugify(`${target.code || target.name || 'extra'}-copy`) || `extra-${Date.now().toString(36)}`;
+      let newCode = baseCode;
+      let attempt = 2;
+      while (formExtras.some(extra => extra.code === newCode)) {
+        newCode = `${baseCode}-${attempt}`;
+        attempt += 1;
+      }
+      const duplicateExtra = {
+        ...target,
+        name: copyName,
+        code: newCode
+      };
+      formExtras.push(duplicateExtra);
+      const parsedExtras = parseExtrasSubmission({ extras: formExtras }, req.t);
+      db.prepare(
+        `INSERT INTO property_policies(property_id, extras)
+         VALUES (?, ?)
+         ON CONFLICT(property_id) DO UPDATE SET extras = excluded.extras`
+      ).run(propertyId, JSON.stringify(parsedExtras));
+      logChange(
+        req.user.id,
+        'property_policy',
+        propertyId,
+        'update',
+        { extras: storedExtras },
+        { extras: parsedExtras }
+      );
+      res.redirect(appendNotice(redirectBase, 'duplicated'));
     }
   );
 }

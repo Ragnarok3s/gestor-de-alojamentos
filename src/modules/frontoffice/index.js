@@ -9,6 +9,7 @@ module.exports = function registerFrontoffice(app, context) {
     db,
     html,
     layout,
+    renderIcon,
     esc,
     crypto,
     fs,
@@ -1110,9 +1111,9 @@ module.exports = function registerFrontoffice(app, context) {
               <p class="search-banner__subtitle">Mostramos apenas as unidades disponíveis para estes critérios.</p>
             </div>
             <div class="search-banner__chips">
-              <span class="search-banner__chip"><i data-lucide="calendar"></i>${esc(dateSummary)}</span>
-              <span class="search-banner__chip"><i data-lucide="users"></i>${esc(guestsSummary)}</span>
-              <span class="search-banner__chip"><i data-lucide="map-pin"></i>${esc(propertySummary)}</span>
+              <span class="search-banner__chip">${renderIcon('calendar')}${esc(dateSummary)}</span>
+              <span class="search-banner__chip">${renderIcon('users')}${esc(guestsSummary)}</span>
+              <span class="search-banner__chip">${renderIcon('map-pin')}${esc(propertySummary)}</span>
             </div>
           </section>
         `
@@ -1176,7 +1177,7 @@ module.exports = function registerFrontoffice(app, context) {
                             ${featuresHtml}
                             <div class="search-unit__price">
                               <span class="search-unit__price-label">${esc(priceLabel)}</span>
-                              <span class="search-unit__price-value"><i data-lucide="euro" class="w-4 h-4"></i>${priceValue}</span>
+                              <span class="search-unit__price-value">${renderIcon('euro', { className: 'w-4 h-4' })}${priceValue}</span>
                               <span class="search-unit__price-note">${esc(priceNote)}</span>
                             </div>
                             <div class="search-unit__cta">
@@ -1224,6 +1225,8 @@ module.exports = function registerFrontoffice(app, context) {
     const resetLink = formAction;
     res.send(layout({
       title: 'Pesquisar disponibilidade',
+      language: req.language,
+      t: req.t,
       user,
       activeNav: 'search',
       branding: theme,
@@ -1364,6 +1367,8 @@ app.get('/book/:unitId', (req, res) => {
   serverRender('route:/book/:unitId');
   res.send(layout({
     title: 'Confirmar Reserva',
+    language: req.language,
+    t: req.t,
     user,
     activeNav: 'search',
     branding: theme,
@@ -1387,7 +1392,7 @@ app.get('/book/:unitId', (req, res) => {
             <li>Noites: <strong>${quote.nights}</strong></li>
             <li>Hóspedes: <strong data-occupancy-summary>${adults} adulto(s)${children?` + ${children} criança(s)`:''}</strong></li>
             <li>Estadia mínima aplicada: <strong>${quote.minStayReq} noites</strong></li>
-            <li>Total: <strong class="inline-flex items-center gap-1"><i data-lucide="euro" class="w-4 h-4"></i>${eur(total)}</strong></li>
+            <li>Total: <strong class="inline-flex items-center gap-1">${renderIcon('euro', { className: 'w-4 h-4' })}${eur(total)}</strong></li>
           </ul>
           ${unitFeaturesBooking}
         </div>
@@ -1844,11 +1849,13 @@ app.post('/book', (req, res) => {
       payload
     });
 
-    res.send(layout({
-      title: 'Portal do hóspede',
-      branding: theme,
-      user: null,
-      body: html`
+  res.send(layout({
+    title: 'Portal do hóspede',
+    language: req.language,
+    t: req.t,
+    branding: theme,
+    user: null,
+    body: html`
         <div class="max-w-4xl mx-auto space-y-6" data-guest-portal-root data-booking-id="${bookingSummary.id}" data-token="${esc(requestedToken)}">
           <header class="card p-6 space-y-2 bg-white shadow-sm">
             <span class="pill-indicator">${esc(bookingSummary.statusLabel)}</span>
@@ -2488,11 +2495,13 @@ app.get('/booking/:id', (req, res) => {
       </aside>`
     : '';
 
-  res.send(layout({
-    title: headerTitle,
-    user,
-    activeNav: 'search',
-    branding: theme,
+res.send(layout({
+  title: headerTitle,
+  language: req.language,
+  t: req.t,
+  user,
+  activeNav: 'search',
+  branding: theme,
     body: html`
       <div class="result-header">
         <span class="pill-indicator">${headerPill}</span>
@@ -2556,6 +2565,8 @@ app.get('/admin/export', requireLogin, requirePermission('bookings.export'), (re
   res.send(
     layout({
       title: 'Exportar Mapa (Excel)',
+      language: req.language,
+      t: req.t,
       user: req.user,
       activeNav: 'export',
       branding: resolveBrandingForRequest(req),

@@ -344,6 +344,8 @@ module.exports = function registerAccountModule(app, context) {
     res.send(
       layout({
         title: 'Segurança da Conta',
+        language: req.language,
+        t: req.t,
         user: viewer,
         activeNav: null,
         branding: resolveBrandingForRequest(req),

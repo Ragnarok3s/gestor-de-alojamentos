@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 const SUPPORTED_LANGUAGES = ['pt', 'en'];
 const LANGUAGE_ALIASES = new Map([
   ['pt', 'pt'],
@@ -20,6 +22,93 @@ const LANGUAGE_LABELS = {
   pt: 'Português',
   en: 'Inglês'
 };
+
+const TRANSLATION_FILES = SUPPORTED_LANGUAGES.reduce((map, code) => {
+  map[code] = path.join(__dirname, '..', 'i18n', `${code}.json`);
+  return map;
+}, {});
+
+const TRANSLATIONS = new Map();
+
+function loadTranslationFile(language) {
+  const normalized = normalizeLanguage(language);
+  if (!normalized) return {};
+  if (TRANSLATIONS.has(normalized)) {
+    return TRANSLATIONS.get(normalized);
+  }
+  const filePath = TRANSLATION_FILES[normalized];
+  if (!filePath) {
+    TRANSLATIONS.set(normalized, {});
+    return TRANSLATIONS.get(normalized);
+  }
+  try {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    const contents = require(filePath);
+    if (contents && typeof contents === 'object') {
+      TRANSLATIONS.set(normalized, contents);
+      return contents;
+    }
+  } catch (err) {
+    console.warn(`Falha ao carregar traduções para "${normalized}":`, err.message);
+  }
+  TRANSLATIONS.set(normalized, {});
+  return TRANSLATIONS.get(normalized);
+}
+
+function getTranslations(language) {
+  const normalized = normalizeLanguage(language) || 'pt';
+  return loadTranslationFile(normalized);
+}
+
+function resolveDictionaryValue(dictionary, key) {
+  if (!dictionary || !key) return undefined;
+  const segments = String(key).split('.');
+  let current = dictionary;
+  for (const segment of segments) {
+    if (current && Object.prototype.hasOwnProperty.call(current, segment)) {
+      current = current[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function formatMessage(template, values) {
+  if (!template || typeof template !== 'string' || !values) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (match, key) => {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      const value = values[key];
+      return value == null ? '' : String(value);
+    }
+    return match;
+  });
+}
+
+function translate(key, { language, fallbackLanguage = 'pt', defaultValue, values } = {}) {
+  if (!key) return '';
+  const primaryLang = normalizeLanguage(language) || 'pt';
+  const fallbackLang = normalizeLanguage(fallbackLanguage) || primaryLang;
+  const primaryDict = getTranslations(primaryLang);
+  let result = resolveDictionaryValue(primaryDict, key);
+  if (result === undefined) {
+    const fallbackDict = fallbackLang === primaryLang ? primaryDict : getTranslations(fallbackLang);
+    result = resolveDictionaryValue(fallbackDict, key);
+  }
+  if (result === undefined) {
+    if (defaultValue !== undefined) {
+      result = defaultValue;
+    } else {
+      return String(key);
+    }
+  }
+  if (typeof result === 'string') {
+    return formatMessage(result, values);
+  }
+  return result;
+}
 
 const PORTUGUESE_TOKEN_SET = new Set([
   'olá',
@@ -146,6 +235,8 @@ function createI18nService() {
     supportedLanguages: SUPPORTED_LANGUAGES.slice(),
     normalizeLanguage,
     detectLanguage,
+    getTranslations,
+    translate,
     getLanguageLabel(language) {
       const normalized = normalizeLanguage(language);
       return normalized ? LANGUAGE_LABELS[normalized] || normalized.toUpperCase() : null;
@@ -158,5 +249,7 @@ module.exports = {
   SUPPORTED_LANGUAGES,
   LANGUAGE_LABELS,
   normalizeLanguage,
-  detectLanguage
+  detectLanguage,
+  getTranslations,
+  translate
 };

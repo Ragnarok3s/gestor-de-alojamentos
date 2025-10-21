@@ -32,7 +32,8 @@ module.exports = function registerContentCenter(app, context) {
     requireLogin,
     requireBackofficeAccess,
     logActivity,
-    logChange
+    logChange,
+    renderIcon
   } = context;
 
   if (!channelContentService) {
@@ -77,15 +78,27 @@ module.exports = function registerContentCenter(app, context) {
       if (!activeUnit) {
         const body = html`
           <div class="bo-page">
-            <section class="bg-white shadow-sm rounded-2xl p-8">
-              <h1 class="text-2xl font-semibold text-slate-900 mb-2">Centro de Conteúdos</h1>
+            <section class="bg-white shadow-sm rounded-2xl p-8 space-y-3">
+              <h1 class="text-2xl font-semibold text-slate-900">Centro de Conteúdos</h1>
+              <p class="lead">Centralize descrições, destaques e galerias antes de publicar nas OTAs conectadas.</p>
               <p class="text-slate-600">Ainda não existem unidades configuradas para este tenant. Crie uma unidade para começar a gerir conteúdos.</p>
+              <a
+                class="inline-flex items-center gap-2 text-sm font-medium text-sky-700 hover:text-sky-800"
+                href="https://docs.gestalojamentos.pt/centro-de-conteudos"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ${renderIcon('book-open', { className: 'text-sky-700' })}
+                Abrir guia do Centro de Conteúdos
+              </a>
             </section>
           </div>
         `;
         return res.send(
           layout({
             title: 'Centro de Conteúdos',
+            language: req.language,
+            t: req.t,
             user: req.user,
             activeNav: 'backoffice',
             branding: resolveBrandingForRequest(req),
@@ -123,11 +136,22 @@ module.exports = function registerContentCenter(app, context) {
         <div class="bo-page bo-page--wide">
           <div class="space-y-10 py-10">
             <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-            <div>
-              <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
-              <p class="text-slate-600 mt-2 max-w-2xl">
-                Centralize descrições, destaques, políticas e galerias de cada unidade antes de publicar rapidamente nas OTAs conectadas.
-              </p>
+            <div class="space-y-3">
+              <div>
+                <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
+                <p class="lead max-w-2xl">
+                  Defina textos, políticas e multimédia de cada unidade antes de sincronizar com Booking, Airbnb e restantes canais.
+                </p>
+              </div>
+              <a
+                class="inline-flex items-center gap-2 text-sm font-medium text-sky-700 hover:text-sky-800"
+                href="https://docs.gestalojamentos.pt/centro-de-conteudos"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ${renderIcon('graduation-cap', { className: 'text-sky-700' })}
+                Ver tutoriais e FAQs do Centro de Conteúdos
+              </a>
             </div>
             <div class="w-full lg:w-80">
               <label class="block text-sm font-medium text-slate-700 mb-1" for="content-center-unit-select">Unidade</label>
@@ -706,6 +730,8 @@ module.exports = function registerContentCenter(app, context) {
       res.send(
         layout({
           title: 'Centro de Conteúdos',
+          language: req.language,
+          t: req.t,
           user: req.user,
           activeNav: 'backoffice',
           branding,

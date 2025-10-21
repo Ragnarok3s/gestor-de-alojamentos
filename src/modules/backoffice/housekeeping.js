@@ -974,6 +974,8 @@ function createHousekeepingModule(context = {}) {
       res.send(
         layout({
           title: 'Mapa de limpezas',
+          language: req.language,
+          t: req.t,
           activeNav: 'housekeeping',
           user: req.user,
           branding: resolveBrandingForRequest(req),
@@ -1576,6 +1578,8 @@ function createHousekeepingModule(context = {}) {
       res.send(
         layout({
           title: 'Gestão de limpezas',
+          language: req.language,
+          t: req.t,
           activeNav: 'housekeeping',
           user: req.user,
           branding: resolveBrandingForRequest(req),
