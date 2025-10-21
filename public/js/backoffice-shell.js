@@ -117,6 +117,52 @@
     }
   }
 
+  function getCurrentLanguage() {
+    const html = document.documentElement;
+    if (html && html.getAttribute) {
+      const lang = html.getAttribute('lang');
+      if (lang) {
+        return lang.toLowerCase();
+      }
+    }
+    return '';
+  }
+
+  function setLanguageCookie(code) {
+    if (typeof document === 'undefined') return;
+    const encoded = encodeURIComponent(code);
+    document.cookie = `lang=${encoded}; path=/; max-age=31536000; SameSite=Lax`;
+  }
+
+  function initLanguageSwitcher() {
+    const switcher = document.querySelector('[data-language-switcher]');
+    if (!switcher) return;
+
+    if (switcher.dataset.languageBound === 'true') return;
+    switcher.dataset.languageBound = 'true';
+
+    const resolveCurrentLanguage = () => {
+      const fromDataset = switcher.getAttribute('data-current-language');
+      if (fromDataset) return fromDataset.toLowerCase();
+      return getCurrentLanguage();
+    };
+
+    switcher.addEventListener('change', event => {
+      const selected = (event.target && event.target.value ? event.target.value : '').trim();
+      const current = resolveCurrentLanguage();
+      if (!selected || selected.toLowerCase() === current) return;
+
+      setLanguageCookie(selected);
+
+      const localeUrl = `/locales/${encodeURIComponent(selected)}.json`;
+      fetch(localeUrl, { cache: 'no-cache', credentials: 'same-origin' })
+        .catch(() => {})
+        .finally(() => {
+          window.location.reload();
+        });
+    });
+  }
+
   function initGlobalSearch() {
     const root = document.querySelector('[data-global-search]');
     if (!root) return;
@@ -537,8 +583,13 @@
   onReady(() => {
     initShellLoader();
     initThemeToggle();
+    initLanguageSwitcher();
     initGlobalSearch();
     initNotificationsPanel();
+  });
+
+  document.addEventListener('htmx:afterSwap', () => {
+    initLanguageSwitcher();
   });
 })();
 
