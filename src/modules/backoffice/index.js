@@ -1648,19 +1648,23 @@ module.exports = function registerBackoffice(app, context) {
     };
     const revenueAnalyticsJson = jsonScriptPayload(revenueAnalytics);
 
-    const numberFormatter = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0 });
-    const decimalFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const revenueNumberFormatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+    const revenueDecimalFormatter = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const revenuePercentFormatter = new Intl.NumberFormat(locale, {
+      style: 'percent',
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    });
 
     const revenueSummaryLabels = {
       revenue: `€ ${eur(revenueSummary.revenueCents || 0)}`,
       adr: revenueSummary.adrCents ? `€ ${eur(revenueSummary.adrCents)}` : '€ 0,00',
       revpar: revenueSummary.revparCents ? `€ ${eur(revenueSummary.revparCents)}` : '€ 0,00',
-      occupancy: percentFormatter.format(revenueSummary.occupancyRate || 0),
-      nights: numberFormatter.format(revenueSummary.nights || 0),
-      reservations: numberFormatter.format(revenueSummary.reservations || 0),
-      averageStay: decimalFormatter.format(revenueSummary.averageStay || 0),
-      bookingPace: decimalFormatter.format(revenueSummary.bookingPace || 0)
+      occupancy: revenuePercentFormatter.format(revenueSummary.occupancyRate || 0),
+      nights: revenueNumberFormatter.format(revenueSummary.nights || 0),
+      reservations: revenueNumberFormatter.format(revenueSummary.reservations || 0),
+      averageStay: revenueDecimalFormatter.format(revenueSummary.averageStay || 0),
+      bookingPace: revenueDecimalFormatter.format(revenueSummary.bookingPace || 0)
     };
 
     const unitsForPricing = units.map(u => ({
@@ -1693,7 +1697,7 @@ module.exports = function registerBackoffice(app, context) {
     const revenueChannelsHtml = revenueChannels
       .map(channel => {
         const revenueLabel = `€ ${eur(channel.revenueCents || 0)}`;
-        const pctLabel = percentFormatter.format(channel.percentage || 0);
+        const pctLabel = revenuePercentFormatter.format(channel.percentage || 0);
         return `
           <li class="flex items-center justify-between gap-3">
             <div>
@@ -1711,11 +1715,17 @@ module.exports = function registerBackoffice(app, context) {
             const revenueLabel = `€ ${eur(row.revenueCents || 0)}`;
             const adrLabel = row.nightsSold ? `€ ${eur(row.adrCents || 0)}` : '—';
             const revparLabel = `€ ${eur(row.revparCents || 0)}`;
-            const occupancyLabel = row.nightsSold ? percentFormatter.format(row.occupancyRate || 0) : '—';
-            const nightsLabel = numberFormatter.format(row.nightsSold || 0);
-            const bookingsLabel = numberFormatter.format(row.bookingsCount || 0);
-            const averageStayLabel = row.bookingsCount ? decimalFormatter.format(row.averageStay || 0) : '—';
-            const bookingPaceLabel = row.createdCount ? numberFormatter.format(row.createdCount || 0) : '—';
+            const occupancyLabel = row.nightsSold
+              ? revenuePercentFormatter.format(row.occupancyRate || 0)
+              : '—';
+            const nightsLabel = revenueNumberFormatter.format(row.nightsSold || 0);
+            const bookingsLabel = revenueNumberFormatter.format(row.bookingsCount || 0);
+            const averageStayLabel = row.bookingsCount
+              ? revenueDecimalFormatter.format(row.averageStay || 0)
+              : '—';
+            const bookingPaceLabel = row.createdCount
+              ? revenueNumberFormatter.format(row.createdCount || 0)
+              : '—';
             return `
               <tr>
                 <td data-label="Data"><span class="table-cell-value">${esc(row.display || row.label)}</span></td>
@@ -2274,7 +2284,7 @@ module.exports = function registerBackoffice(app, context) {
           .join('')
       : '<tr><td colspan="4" class="text-sm text-center text-slate-500">Sem reservas futuras.</td></tr>';
 
-    const theme = resolveBrandingForRequest(req);
+    const shellTheme = resolveBrandingForRequest(req);
 
     serverRender('route:/admin');
     res.send(
@@ -2282,7 +2292,7 @@ module.exports = function registerBackoffice(app, context) {
         title: 'Backoffice',
         user: req.user,
         activeNav: 'backoffice',
-        branding: theme,
+        branding: shellTheme,
         notifications,
         pageClass: 'page-backoffice',
         body: html`
