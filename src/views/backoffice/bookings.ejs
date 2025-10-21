@@ -1,0 +1,123 @@
+<div class="bo-page">
+  <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+
+  <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 bo-bookings-filter">
+    <label class="grid gap-1 text-sm">
+      <span class="font-medium">Pesquisa</span>
+      <input
+        class="input"
+        type="text"
+        name="search"
+        placeholder="Hóspede ou ID"
+        value="<%= esc(filters.search || '') %>"
+      />
+    </label>
+
+    <label class="grid gap-1 text-sm">
+      <span class="font-medium">Estado</span>
+      <select class="input" name="status">
+        <% statusOptions.forEach(option => { %>
+          <option value="<%= option.value %>" <%= filters.status === option.value ? 'selected' : '' %>>
+            <%= option.label %>
+          </option>
+        <% }) %>
+      </select>
+    </label>
+
+    <label class="grid gap-1 text-sm">
+      <span class="font-medium">Ordenar por</span>
+      <select class="input" name="sort">
+        <% sortOptions.forEach(option => { %>
+          <option value="<%= option.value %>" <%= filters.sort === option.value ? 'selected' : '' %>>
+            <%= option.label %>
+          </option>
+        <% }) %>
+      </select>
+    </label>
+
+    <div class="flex items-end">
+      <button class="btn btn-primary w-full" type="submit">Filtrar</button>
+    </div>
+  </form>
+
+  <div class="card p-0">
+    <div class="responsive-table">
+      <table class="w-full text-sm bookings-table">
+        <thead>
+          <tr class="text-left text-slate-500">
+            <th class="sortable <%= sortKey === 'created_at' ? 'sorted' : '' %>" scope="col">
+              <a href="<%= buildSortUrl('created_at') %>" class="sortable-link">Data de reserva</a>
+            </th>
+            <th class="sortable <%= sortKey === 'arrival_date' ? 'sorted' : '' %>" scope="col">
+              <a href="<%= buildSortUrl('arrival_date') %>" class="sortable-link">Data de chegada</a>
+            </th>
+            <th scope="col">Data de saída</th>
+            <th scope="col">Propriedade/Unidade</th>
+            <th scope="col">Agência</th>
+            <th scope="col">Hóspede</th>
+            <th scope="col">Ocup.</th>
+            <th scope="col">Total</th>
+            <th scope="col">Estado</th>
+            <th scope="col" class="text-right">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (bookings.length === 0) { %>
+            <tr>
+              <td colspan="10" class="p-4 text-center text-slate-500">Sem resultados para os filtros aplicados.</td>
+            </tr>
+          <% } else { %>
+            <% bookings.forEach(booking => { %>
+              <tr>
+                <td data-label="Data de reserva">
+                  <span class="table-cell-value"><%= formatDate(booking.created_at) %></span>
+                </td>
+                <td data-label="Data de chegada">
+                  <span class="table-cell-value"><%= formatDate(booking.checkin) %></span>
+                </td>
+                <td data-label="Data de saída">
+                  <span class="table-cell-value"><%= formatDate(booking.checkout) %></span>
+                </td>
+                <td data-label="Propriedade/Unidade">
+                  <span class="table-cell-value">
+                    <%= esc(booking.property_name) %> - <%= esc(booking.unit_name) %>
+                  </span>
+                </td>
+                <td data-label="Agência">
+                  <span class="table-cell-value"><%= esc(booking.agency || '') || '—' %></span>
+                </td>
+                <td data-label="Hóspede">
+                  <span class="table-cell-value">
+                    <%= esc(booking.guest_name) %>
+                    <span class="table-cell-muted"><%= esc(booking.guest_email || '') %></span>
+                  </span>
+                </td>
+                <td data-label="Ocupação">
+                  <span class="table-cell-value"><%= Number(booking.adults) %>A+<%= Number(booking.children) %>C</span>
+                </td>
+                <td data-label="Total">
+                  <span class="table-cell-value"><%= formatCurrency(booking.total_cents) %></span>
+                </td>
+                <td data-label="Estado">
+                  <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 <%= statusClass(booking.status_normalized || booking.status) %>">
+                    <%= esc(booking.status_label) %>
+                  </span>
+                </td>
+                <td data-label="Ações" class="text-right">
+                  <div class="table-cell-actions">
+                    <a class="underline" href="/admin/bookings/<%= booking.id %>"><%= canEditBooking ? 'Editar' : 'Ver' %></a>
+                    <% if (canCancelBooking) { %>
+                      <form method="post" action="/admin/bookings/<%= booking.id %>/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
+                        <button class="text-rose-600" type="submit">Cancelar</button>
+                      </form>
+                    <% } %>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

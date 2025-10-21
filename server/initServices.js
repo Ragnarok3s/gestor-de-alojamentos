@@ -2381,6 +2381,8 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
         ${telemetryBootstrapScript}
         ${telemetryClientScript}
+        <link rel="stylesheet" href="/public/css/style.css" />
+        <link rel="stylesheet" href="/css/responsive.css" />
         <style>
           :root{
             --brand-primary:${baseTheme.primaryColor};
@@ -2605,10 +2607,9 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice{background:#fef9f3;}
           .page-backoffice .topbar{background:rgba(255,255,255,.94);}
           .page-backoffice .main-content{max-width:1280px;}
-          .page-backoffice .bo-shell{--bo-sidebar-width:264px;position:relative;display:grid;grid-template-columns:var(--bo-sidebar-width) minmax(0,1fr);gap:24px;align-items:start;}
-          .page-backoffice .bo-shell.is-collapsed{--bo-sidebar-width:92px;}
-          .page-backoffice .bo-shell.is-sidebar-open{--bo-sidebar-width:264px;}
-          .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;max-height:calc(100vh - 120px);overflow:auto;overflow-x:hidden;overflow-y:auto;box-shadow:0 18px 40px rgba(249,115,22,.12);}
+          .page-backoffice .bo-shell{position:relative;display:flex;flex-wrap:nowrap;gap:24px;align-items:flex-start;}
+          .page-backoffice .bo-shell.is-collapsed .bo-sidebar{flex:0 0 92px;max-width:92px;}
+          .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;flex:0 0 250px;max-width:250px;max-height:calc(100vh - 120px);overflow-x:hidden;overflow-y:auto;box-shadow:0 18px 40px rgba(249,115,22,.12);}
           .page-backoffice .bo-sidebar:focus{outline:2px solid rgba(249,115,22,.5);outline-offset:4px;}
           .page-backoffice .bo-sidebar__header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
           .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#c2410c;font-weight:600;}
@@ -2634,7 +2635,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice .bo-tab:hover{background:rgba(253,230,138,.65);color:#9a3412;transform:translateY(-1px);}
           .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
           .page-backoffice .bo-tab[disabled]{opacity:.45;cursor:not-allowed;}
-          .page-backoffice .bo-main{display:grid;gap:24px;}
+          .page-backoffice .bo-main{flex:1 1 auto;min-width:0;display:grid;gap:24px;}
           .page-backoffice .bo-main__menu{display:none;align-items:center;gap:8px;background:#fff7ed;border:1px solid #fed7aa;border-radius:16px;padding:10px 16px;font-weight:600;color:#b45309;cursor:pointer;transition:all .2s ease;}
           .page-backoffice .bo-main__menu:hover{background:#fed7aa;color:#9a3412;}
           .page-backoffice .bo-shell.is-collapsed .bo-sidebar{padding:16px 12px;}
@@ -2864,8 +2865,8 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             .page-backoffice .bo-calendar-mobile__booking{padding:12px 14px;}
             .page-backoffice .bo-calendar-mobile__badge{font-size:.6rem;padding:4px 8px;}
           }
-          .page-backoffice .bo-table{overflow:auto;}
-          .page-backoffice .bo-table table{min-width:100%;border-collapse:collapse;}
+          .page-backoffice .bo-table{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
+          .page-backoffice .bo-table table{min-width:640px;border-collapse:collapse;}
           .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}
           .page-backoffice .bo-empty{color:#c2410c;font-size:.85rem;}
           .page-backoffice .bo-subtitle{font-size:.9rem;color:#b45309;margin:0 0 16px;}
@@ -2888,18 +2889,6 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             .page-backoffice .bo-property-card__meta-item{padding:.2rem .45rem;}
           }
           .page-backoffice .bo-pane .responsive-table tbody tr{border-color:rgba(249,115,22,.18);}
-          @media (max-width:1080px){
-            .page-backoffice .bo-shell{--bo-sidebar-width:100%;grid-template-columns:1fr;}
-            .page-backoffice .bo-sidebar{position:fixed;top:0;left:0;bottom:0;width:min(320px,85vw);max-height:100vh;border-radius:0;padding:24px 20px;transform:translateX(-110%);transition:transform .3s ease;z-index:80;box-shadow:0 24px 48px rgba(15,23,42,.35);}
-            .page-backoffice .bo-shell.is-sidebar-open .bo-sidebar{transform:translateX(0);}
-            .page-backoffice .bo-sidebar__scrim{position:fixed;inset:0;background:rgba(15,23,42,.35);backdrop-filter:blur(2px);z-index:70;display:none;}
-            .page-backoffice .bo-shell.is-sidebar-open .bo-sidebar__scrim{display:block;}
-            .page-backoffice .bo-sidebar__toggle{border-color:rgba(15,23,42,.18);background:rgba(255,255,255,.92);color:#0f172a;}
-            .page-backoffice .bo-sidebar__toggle-icon--collapse,
-            .page-backoffice .bo-sidebar__toggle-icon--expand{display:none;}
-            .page-backoffice .bo-shell.is-sidebar-open .bo-sidebar__toggle-icon--close{display:inline-block;}
-            .page-backoffice .bo-main__menu{display:inline-flex;}
-          }
           @media (max-width:720px){.page-backoffice .bo-pane{grid-template-columns:1fr;}.page-backoffice .bo-card{padding:20px;}}
           @media (max-width:640px){.page-backoffice .bo-card{padding:18px;border-radius:22px;}}
           @media (max-width:480px){.page-backoffice .bo-card{padding:16px;border-radius:20px;}}
@@ -2939,8 +2928,8 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .gallery-overlay .gallery-prev{left:-1.5rem;}
           .gallery-overlay .gallery-next{right:-1.5rem;}
           .gallery-overlay .gallery-counter{font-weight:600;}
-          .responsive-table{overflow:hidden;}
-          .responsive-table table{width:100%;border-collapse:collapse;min-width:0;}
+          .responsive-table{overflow-x:auto;overflow-y:hidden;max-width:100%;-webkit-overflow-scrolling:touch;}
+          .responsive-table table{width:100%;border-collapse:collapse;min-width:640px;}
           .responsive-table thead th{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;padding:.65rem .9rem;border-bottom:1px solid rgba(148,163,184,.4);background:rgba(248,250,252,.7);}
           .responsive-table tbody tr{border-top:1px solid rgba(148,163,184,.35);}
           .responsive-table tbody tr:first-child{border-top:none;}
@@ -2953,36 +2942,10 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .responsive-table td .table-cell-content{display:flex;align-items:center;flex-wrap:wrap;gap:.35rem;}
           .responsive-table td .table-cell-meta{display:block;font-size:.8rem;color:#475569;margin-top:.35rem;}
           .responsive-table td .table-cell-meta:empty{display:none;}
-          @media (min-width:901px){
+          @media (min-width:992px){
             .responsive-table td .table-cell-meta{display:inline-block;margin-top:0;margin-left:.5rem;}
           }
           .responsive-table td .table-cell-muted{color:#64748b;font-size:.8rem;display:block;margin-top:.1rem;}
-          @media (max-width:900px){
-            .responsive-table{padding:0;}
-            .responsive-table table,
-            .responsive-table thead,
-            .responsive-table tbody,
-            .responsive-table th,
-            .responsive-table td,
-            .responsive-table tr{display:block;width:100%;}
-            .responsive-table thead{display:none;}
-            .responsive-table tbody{display:grid;gap:14px;margin:0;padding:16px 16px 18px;}
-            .responsive-table tbody tr{border:1px solid var(--brand-surface-border);border-radius:var(--brand-radius);padding:16px;background:#fff;box-shadow:0 10px 22px rgba(15,23,42,.05);}
-            .responsive-table td{border:none;padding:10px 0;display:grid;grid-template-columns:minmax(6rem,auto) minmax(0,1fr);gap:10px;align-items:start;}
-            .responsive-table td::before{content:attr(data-label);font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.08em;font-size:.68rem;line-height:1.25;}
-            .responsive-table td .table-cell-content{flex-direction:column;align-items:flex-start;gap:.3rem;}
-            .responsive-table td .table-cell-value{font-weight:500;word-break:break-word;}
-            .responsive-table td .table-cell-actions{justify-content:flex-start;gap:.4rem;}
-            .responsive-table td .table-cell-actions form{width:auto;}
-            .responsive-table td .table-cell-meta{margin:.25rem 0 0;}
-            .responsive-table td:last-child{padding-bottom:0;}
-          }
-          @media (max-width:560px){
-            .responsive-table tbody{padding:14px;gap:12px;}
-            .responsive-table tbody tr{padding:14px;}
-            .responsive-table td{grid-template-columns:minmax(5.5rem,auto) minmax(0,1fr);padding:8px 0;gap:8px;}
-            .responsive-table td::before{font-size:.65rem;}
-          }
           @keyframes spin{to{transform:rotate(360deg);}}
           @media (max-width:640px){
             .gallery-overlay{padding:1rem;}
@@ -3188,38 +3151,240 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             if (!form || form.dataset.enhanced === 'true') return;
             form.dataset.enhanced = 'true';
             const feedback = form.querySelector('[data-booking-feedback]');
-            const adults = form.querySelector('input[name="adults"]');
-            const children = form.querySelector('input[name="children"]');
-            const required = Array.from(form.querySelectorAll('[data-required]'));
-            const occupancy = form.querySelector('[data-occupancy-summary]');
-            const update = () => {
-              const missing = required.filter(field => !String(field.value || '').trim());
-              if (occupancy) {
-                const ad = adults ? Math.max(0, Number(adults.value || 0)) : 0;
-                const ch = children ? Math.max(0, Number(children.value || 0)) : 0;
-                let summary = ad + ' adulto' + (ad !== 1 ? 's' : '');
-                if (ch > 0) summary += ' · ' + ch + ' criança' + (ch !== 1 ? 's' : '');
-                occupancy.textContent = summary;
-              }
-              if (missing.length > 0) {
-                const first = missing[0];
-                const label = first.getAttribute('placeholder') || first.getAttribute('aria-label') || (first.previousElementSibling ? first.previousElementSibling.textContent.trim() : 'campo obrigatório');
-                renderFeedback(feedback, 'warning', 'Ainda falta completar os dados.', 'Preencha ' + label.toLowerCase() + ' para finalizar com segurança.');
-              } else {
-                renderFeedback(feedback, 'success', 'Tudo pronto para confirmar!', 'Revise os dados e confirme para bloquear imediatamente a estadia.');
-              }
+            const submitButton = form.querySelector('[type="submit"]');
+            const fieldSelectors = {
+              checkin: '[name="checkin"]',
+              checkout: '[name="checkout"]',
+              adults: '[name="adults"]',
+              children: '[name="children"]',
+              guest_name: '[name="guest_name"]',
+              guest_email: '[name="guest_email"]',
+              guest_phone: '[name="guest_phone"]',
+              guest_nationality: '[name="guest_nationality"]',
+              payment_method: '[name="payment_method"]',
+              agency: '[name="agency"]'
             };
-            required.forEach(field => {
-              field.addEventListener('input', update);
-              field.addEventListener('change', update);
+            const fields = Object.keys(fieldSelectors).reduce((acc, key) => {
+              const el = form.querySelector(fieldSelectors[key]);
+              if (el) acc[key] = el;
+              return acc;
+            }, {});
+            const errorElements = {};
+            form.querySelectorAll('[data-error-for]').forEach(el => {
+              const key = el.getAttribute('data-error-for');
+              if (key) errorElements[key] = el;
             });
-            [adults, children]
-              .filter(Boolean)
-              .forEach(field => {
-                field.addEventListener('input', update);
-                field.addEventListener('change', update);
-              });
-            update();
+            const summaryTargets = {
+              checkin: Array.from(document.querySelectorAll('[data-summary-checkin], [data-summary-checkin-secondary]')),
+              checkout: Array.from(document.querySelectorAll('[data-summary-checkout], [data-summary-checkout-secondary]')),
+              nights: Array.from(document.querySelectorAll('[data-summary-nights], [data-summary-nights-secondary]')),
+              occupancy: Array.from(document.querySelectorAll('[data-occupancy-summary], [data-occupancy-summary-secondary]'))
+            };
+            const fieldErrors = {};
+
+            function formatDate(value){
+              if (!value) return '';
+              const parsed = new Date(value);
+              if (Number.isNaN(parsed.getTime())) return '';
+              return parsed.toLocaleDateString('pt-PT');
+            }
+
+            function formatGuests(ad, ch){
+              const adultsLabel = ad + ' adulto' + (ad === 1 ? '' : 's');
+              if (ch > 0) {
+                return adultsLabel + ' · ' + ch + ' criança' + (ch === 1 ? '' : 's');
+              }
+              return adultsLabel;
+            }
+
+            function setFieldError(name, message){
+              fieldErrors[name] = message || '';
+              const errorEl = errorElements[name];
+              const field = fields[name];
+              const wrapper = field ? field.closest('[data-field]') : null;
+              if (!errorEl || !wrapper) return;
+              if (message) {
+                wrapper.classList.add('has-error');
+                errorEl.textContent = message;
+              } else {
+                wrapper.classList.remove('has-error');
+                errorEl.textContent = '';
+              }
+            }
+
+            function validateField(name){
+              const field = fields[name];
+              if (!field) {
+                setFieldError(name, '');
+                return '';
+              }
+              const rawValue = typeof field.value === 'string' ? field.value.trim() : field.value;
+              let error = '';
+              switch (name) {
+                case 'checkin':
+                  if (!rawValue) {
+                    error = 'Indique a data de chegada.';
+                  } else if (Number.isNaN(new Date(rawValue).getTime())) {
+                    error = 'Data de check-in inválida.';
+                  }
+                  break;
+                case 'checkout': {
+                  if (!rawValue) {
+                    error = 'Indique a data de saída.';
+                    break;
+                  }
+                  const checkoutDate = new Date(rawValue);
+                  if (Number.isNaN(checkoutDate.getTime())) {
+                    error = 'Data de check-out inválida.';
+                    break;
+                  }
+                  const checkinField = fields.checkin;
+                  if (checkinField && checkinField.value) {
+                    const checkinDate = new Date(checkinField.value);
+                    if (!Number.isNaN(checkinDate.getTime()) && checkoutDate <= checkinDate) {
+                      error = 'Selecione uma data de check-out posterior ao check-in.';
+                    }
+                  }
+                  break;
+                }
+                case 'adults': {
+                  const parsed = Math.floor(Number(rawValue || 0));
+                  if (!Number.isFinite(parsed) || parsed < 1) {
+                    error = 'Deve indicar pelo menos 1 adulto.';
+                  }
+                  break;
+                }
+                case 'children': {
+                  if (rawValue === '') {
+                    field.value = '0';
+                    break;
+                  }
+                  const parsedChildren = Math.max(0, Math.floor(Number(rawValue)));
+                  if (!Number.isFinite(parsedChildren)) {
+                    field.value = '0';
+                  }
+                  break;
+                }
+                case 'guest_name':
+                  if (rawValue.length < 2) {
+                    error = 'O nome completo é obrigatório.';
+                  }
+                  break;
+                case 'guest_email': {
+                  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                  if (!rawValue || !emailRegex.test(rawValue.toLowerCase())) {
+                    error = 'O campo email é obrigatório e deve ter um formato válido.';
+                  }
+                  break;
+                }
+                case 'guest_phone': {
+                  const normalized = String(field.value || '').replace(/[^0-9+]/g, '');
+                  const digits = normalized.replace(/\D/g, '');
+                  if (digits.length < 6) {
+                    error = 'Indique um contacto telefónico válido.';
+                  }
+                  break;
+                }
+                case 'guest_nationality':
+                  if (!rawValue) {
+                    error = 'A nacionalidade é obrigatória.';
+                  }
+                  break;
+                case 'payment_method':
+                  if (!rawValue) {
+                    error = 'Selecione o método de pagamento preferido.';
+                  }
+                  break;
+                case 'agency':
+                  if (!rawValue) {
+                    error = 'A agência é obrigatória para reservas internas.';
+                  }
+                  break;
+                default:
+                  break;
+              }
+              setFieldError(name, error);
+              return error;
+            }
+
+            function updateSummary(){
+              const checkinVal = fields.checkin ? fields.checkin.value : '';
+              const checkoutVal = fields.checkout ? fields.checkout.value : '';
+              const checkinFormatted = formatDate(checkinVal);
+              const checkoutFormatted = formatDate(checkoutVal);
+              summaryTargets.checkin.forEach(el => { el.textContent = checkinFormatted || '—'; });
+              summaryTargets.checkout.forEach(el => { el.textContent = checkoutFormatted || '—'; });
+
+              let nightsLabel = '—';
+              if (checkinVal && checkoutVal) {
+                const checkinDate = new Date(checkinVal);
+                const checkoutDate = new Date(checkoutVal);
+                if (!Number.isNaN(checkinDate.getTime()) && !Number.isNaN(checkoutDate.getTime()) && checkoutDate > checkinDate) {
+                  const diff = Math.round((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
+                  nightsLabel = diff.toString();
+                }
+              }
+              summaryTargets.nights.forEach(el => { el.textContent = nightsLabel; });
+
+              const adultsValue = fields.adults ? Math.max(1, Math.floor(Number(fields.adults.value || 1))) : 1;
+              const childrenValue = fields.children ? Math.max(0, Math.floor(Number(fields.children.value || 0))) : 0;
+              const occupancyLabel = formatGuests(adultsValue, childrenValue);
+              summaryTargets.occupancy.forEach(el => { el.textContent = occupancyLabel; });
+
+              if (fields.checkout && fields.checkin) {
+                if (fields.checkin.value) {
+                  fields.checkout.min = fields.checkin.value;
+                } else {
+                  fields.checkout.removeAttribute('min');
+                }
+              }
+            }
+
+            function evaluateForm(){
+              const tracked = ['checkin', 'checkout', 'adults', 'guest_name', 'guest_email', 'guest_phone', 'guest_nationality', 'payment_method'];
+              if (fields.agency) tracked.push('agency');
+              tracked.forEach(name => validateField(name));
+              updateSummary();
+              const firstErrorKey = tracked.find(name => fieldErrors[name]);
+              if (firstErrorKey) {
+                renderFeedback(feedback, 'warning', 'Revise os campos em destaque.', fieldErrors[firstErrorKey]);
+                return false;
+              }
+              renderFeedback(feedback, 'success', 'Tudo pronto para confirmar!', 'Revise os dados e confirme para bloquear imediatamente a estadia.');
+              return true;
+            }
+
+            Object.values(fields).forEach(field => {
+              if (!field) return;
+              const handler = () => {
+                const fieldName = field.getAttribute('name');
+                if (fieldName) {
+                  validateField(fieldName);
+                }
+                updateSummary();
+                evaluateForm();
+              };
+              field.addEventListener('input', handler);
+              field.addEventListener('change', handler);
+            });
+
+            form.addEventListener('submit', (event) => {
+              const isValid = evaluateForm();
+              if (!isValid) {
+                event.preventDefault();
+                const firstInvalid = Object.keys(fieldErrors).find(name => fieldErrors[name] && fields[name]);
+                if (firstInvalid && typeof fields[firstInvalid].focus === 'function') {
+                  fields[firstInvalid].focus();
+                }
+                return;
+              }
+              if (submitButton) {
+                submitButton.setAttribute('data-loading', 'true');
+              }
+            });
+
+            updateSummary();
+            evaluateForm();
           }
           function initFrontOffice(){
             enhanceSearchForm();

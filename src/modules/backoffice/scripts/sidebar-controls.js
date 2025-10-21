@@ -18,10 +18,10 @@
     var collapseState = false;
     var navSections = Array.from(sidebar.querySelectorAll("[data-nav-section]"));
     var sectionState = new WeakMap();
-    var mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 1080px)") : null;
+    var mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 767px)") : null;
 
     function isMobile() {
-      return mobileQuery ? mobileQuery.matches : window.innerWidth <= 1080;
+      return mobileQuery ? mobileQuery.matches : window.innerWidth <= 767;
     }
 
     function updateToggleLabels(isCollapsed) {

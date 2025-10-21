@@ -1,0 +1,156 @@
+<div class="bo-page">
+  <header class="flex flex-col gap-2 mb-6">
+    <h1 class="text-2xl font-semibold">Resumo financeiro</h1>
+    <p class="text-sm text-slate-600">
+      Acompanha a evolução das receitas confirmadas e a taxa média de ocupação dos últimos 12 meses.
+    </p>
+  </header>
+
+  <section class="grid gap-4 md:grid-cols-2 mb-6">
+    <div class="card p-4 flex flex-col gap-2">
+      <span class="text-xs uppercase tracking-wide text-amber-600 font-semibold">Receita confirmada</span>
+      <strong class="text-3xl text-slate-900"><%= totalRevenueLabel %></strong>
+      <p class="text-sm text-slate-500">Total acumulado no período analisado.</p>
+    </div>
+    <div class="card p-4 flex flex-col gap-2">
+      <span class="text-xs uppercase tracking-wide text-amber-600 font-semibold">Taxa média de ocupação</span>
+      <strong class="text-3xl text-slate-900"><%= averageOccupancy.toFixed(1) %>%</strong>
+      <p class="text-sm text-slate-500">Capacidade ocupada face ao inventário disponível.</p>
+    </div>
+  </section>
+
+  <section class="grid gap-6 xl:grid-cols-2">
+    <div class="card p-4 flex flex-col gap-4">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-semibold">Receitas mensais</h2>
+          <p class="text-sm text-slate-500">Comparativo mensal da receita confirmada.</p>
+        </div>
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <span class="inline-flex h-3 w-3 rounded-full" style="background: var(--brand-primary,#f97316);"></span>
+          <span>Receitas mensais</span>
+        </div>
+      </div>
+      <% if (hasRevenueData) { %>
+        <div class="relative" style="height: 320px;">
+          <canvas id="revenueChart" aria-label="Gráfico de barras com receitas mensais"></canvas>
+        </div>
+      <% } else { %>
+        <p class="bo-empty">Sem dados suficientes para gerar o gráfico.</p>
+      <% } %>
+    </div>
+
+    <div class="card p-4 flex flex-col gap-4">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-semibold">Taxa de ocupação</h2>
+          <p class="text-sm text-slate-500">Percentagem média de ocupação por mês.</p>
+        </div>
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <span class="inline-flex h-3 w-3 rounded-full" style="background: var(--brand-secondary,#0ea5e9);"></span>
+          <span>Taxa de ocupação</span>
+        </div>
+      </div>
+      <% if (hasOccupancyData) { %>
+        <div class="relative" style="height: 320px;">
+          <canvas id="occupancyChart" aria-label="Gráfico de linhas com ocupação mensal"></canvas>
+        </div>
+      <% } else { %>
+        <p class="bo-empty">Sem dados suficientes para gerar o gráfico.</p>
+      <% } %>
+    </div>
+  </section>
+
+  <section class="card mt-6">
+    <div class="p-4 border-b border-slate-100">
+      <h2 class="text-lg font-semibold">Detalhe por mês</h2>
+      <p class="text-sm text-slate-500">Consulta rápida da receita confirmada por mês.</p>
+    </div>
+    <div class="responsive-table">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-500">
+            <th>Mês</th>
+            <th>Receita confirmada</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% revenueSeries.forEach(function(row) { %>
+            <tr>
+              <td data-label="Mês"><span class="table-cell-value"><%= esc(row.label) %></span></td>
+              <td data-label="Receita"><span class="table-cell-value"><%= esc(row.formatted) %></span></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script src="/vendor/chartjs/chart.umd.js"></script>
+<script>
+  (function () {
+    var chartData = <%- chartDataJson %>;
+    if (!chartData || typeof window === 'undefined') {
+      return;
+    }
+    var styles = window.getComputedStyle(document.documentElement);
+    var primary = styles.getPropertyValue('--brand-primary').trim() || '#f97316';
+    var secondary = styles.getPropertyValue('--brand-secondary').trim() || '#0ea5e9';
+    var accent = styles.getPropertyValue('--brand-highlight').trim() || primary;
+    var revenueValues = (chartData.revenue && Array.isArray(chartData.revenue.values)) ? chartData.revenue.values : [];
+    var occupancyValues = (chartData.occupancy && Array.isArray(chartData.occupancy.values)) ? chartData.occupancy.values : [];
+
+    if (window.Chart && revenueValues.some(function (value) { return value > 0; })) {
+      var revenueCanvas = document.getElementById('revenueChart');
+      if (revenueCanvas) {
+        new Chart(revenueCanvas, {
+          type: 'bar',
+          data: {
+            labels: chartData.revenue.labels,
+            datasets: [
+              {
+                label: 'Receitas mensais',
+                data: revenueValues,
+                backgroundColor: primary || accent
+              }
+            ]
+          },
+          options: {
+            showLabels: true,
+            labelColor: '#475569',
+            showValues: false,
+            axisColor: 'rgba(15,23,42,0.2)'
+          }
+        });
+      }
+    }
+
+    if (window.Chart && occupancyValues.some(function (value) { return value > 0; })) {
+      var occupancyCanvas = document.getElementById('occupancyChart');
+      if (occupancyCanvas) {
+        new Chart(occupancyCanvas, {
+          type: 'line',
+          data: {
+            labels: chartData.occupancy.labels,
+            datasets: [
+              {
+                label: 'Taxa de ocupação',
+                data: occupancyValues,
+                borderColor: secondary || accent,
+                backgroundColor: secondary || accent,
+                fill: true,
+                tension: 0.35
+              }
+            ]
+          },
+          options: {
+            showLabels: true,
+            labelColor: '#475569',
+            axisColor: 'rgba(15,23,42,0.2)'
+          }
+        });
+      }
+    }
+  })();
+</script>

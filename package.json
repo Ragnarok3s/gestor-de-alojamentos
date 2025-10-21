@@ -18,6 +18,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^12.4.1",
+    "chart.js": "file:vendor/chart.js",
     "cookie-parser": "^1.4.7",
     "dayjs": "^1.11.18",
     "exceljs": "^4.4.0",

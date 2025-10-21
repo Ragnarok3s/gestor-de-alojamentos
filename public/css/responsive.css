@@ -1,0 +1,114 @@
+/* Layout responsiveness across frontoffice and backoffice */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Shared table handling */
+.responsive-table,
+.bo-table {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.responsive-table table,
+.bo-table table {
+  min-width: 640px;
+}
+
+/* Mobile < 768px */
+@media (max-width: 767.98px) {
+  .topbar-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .nav-links {
+    width: 100%;
+    gap: 12px;
+  }
+
+  .nav-actions {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 12px;
+  }
+
+  .main-content {
+    padding: 32px 20px 48px !important;
+  }
+
+  .page-backoffice .bo-shell {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .page-backoffice .bo-sidebar {
+    position: relative !important;
+    top: auto !important;
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    order: -1;
+    box-shadow: none !important;
+  }
+
+  .page-backoffice .bo-sidebar__toggle,
+  .page-backoffice .bo-main__menu,
+  .page-backoffice .bo-sidebar__scrim {
+    display: none !important;
+  }
+
+  .page-backoffice .bo-main {
+    width: 100%;
+  }
+
+  .housekeeping-board__columns {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .housekeeping-column {
+    min-width: 100%;
+  }
+}
+
+/* Tablet 768px – 992px */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .main-content {
+    padding: 44px 28px 56px !important;
+  }
+
+  .page-backoffice .bo-sidebar {
+    flex: 0 0 220px !important;
+    max-width: 220px !important;
+  }
+
+  .housekeeping-board__columns {
+    gap: 1.25rem;
+  }
+
+  .page-backoffice .bo-sidebar__toggle {
+    display: inline-flex;
+  }
+
+  .page-backoffice .bo-main__menu {
+    display: none;
+  }
+}
+
+/* Desktop > 992px */
+@media (min-width: 992px) {
+  .main-content {
+    padding: 56px 32px 64px !important;
+  }
+
+  .page-backoffice .bo-sidebar {
+    flex: 0 0 250px !important;
+    max-width: 250px !important;
+  }
+}

@@ -1,4 +1,69 @@
 // Housekeeping module: manages backoffice cleaning workflows and routes.
+const fs = require('fs');
+const path = require('path');
+
+const housekeepingBoardTemplatePath = path.join(
+  __dirname,
+  '..',
+  '..',
+  'views',
+  'backoffice',
+  'housekeeping.ejs'
+);
+
+let housekeepingBoardTemplateRenderer = null;
+
+function compileEjsTemplate(template) {
+  if (!template) return null;
+  const matcher = /<%([=-]?)([\s\S]+?)%>/g;
+  let index = 0;
+  let source = "let __output = '';\n";
+  source += 'const __append = value => { __output += value == null ? "" : String(value); };\n';
+  source += 'with (locals || {}) {\n';
+  let match;
+  while ((match = matcher.exec(template)) !== null) {
+    const text = template.slice(index, match.index);
+    if (text) {
+      const escapedText = text
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, '\\`')
+        .replace(/\$\{/g, '\\${');
+      source += `__output += \`${escapedText}\`;\n`;
+    }
+    const indicator = match[1];
+    const code = match[2];
+    if (indicator === '=') {
+      source += `__append(${code.trim()});\n`;
+    } else if (indicator === '-') {
+      source += `__output += (${code.trim()}) ?? '';\n`;
+    } else {
+      source += `${code}\n`;
+    }
+    index = match.index + match[0].length;
+  }
+  const tail = template.slice(index);
+  if (tail) {
+    const escapedTail = tail
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+      .replace(/\$\{/g, '\\${');
+    source += `__output += \`${escapedTail}\`;\n`;
+  }
+  source += '}\nreturn __output;';
+  try {
+    // eslint-disable-next-line no-new-func
+    return new Function('locals', source);
+  } catch (err) {
+    return null;
+  }
+}
+
+try {
+  const housekeepingBoardTemplate = fs.readFileSync(housekeepingBoardTemplatePath, 'utf8');
+  housekeepingBoardTemplateRenderer = compileEjsTemplate(housekeepingBoardTemplate);
+} catch (err) {
+  housekeepingBoardTemplateRenderer = null;
+}
 
 function createHousekeepingModule(context = {}) {
   const {
@@ -971,8 +1036,9 @@ function createHousekeepingModule(context = {}) {
           </div>
         </div>
       `;
-      res.send(
-        layout({
+    res.locals.activeNav = '/admin/limpeza';
+    res.send(
+      layout({
           title: 'Mapa de limpezas',
           activeNav: 'housekeeping',
           user: req.user,
@@ -983,606 +1049,155 @@ function createHousekeepingModule(context = {}) {
       );
     });
 
+
     app.get('/admin/limpeza', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
-      const board = computeHousekeepingBoard({ horizonDays: 6, futureWindowDays: 30 });
-      const canCompleteTasks = userCan(req.user, 'housekeeping.complete');
-      const totalTasks = board.tasks || [];
-      const pendingCount = totalTasks.filter(task => task.status === 'pending').length;
-      const inProgressCount = totalTasks.filter(task => task.status === 'in_progress').length;
-      const highPriorityCount = totalTasks.filter(task => task.priority === 'alta' && task.status !== 'completed').length;
-      const completedLast7 = getHousekeepingTasks({
-        statuses: ['completed'],
-        includeCompleted: true,
-        limit: 80,
-        order: 'completed_desc'
-      }).filter(task => task.completed_at && dayjs(task.completed_at).isAfter(dayjs().subtract(7, 'day')));
-      const boardHtml = renderHousekeepingBoard({
-        ...board,
-        canStart: canCompleteTasks,
-        canComplete: canCompleteTasks,
-        actionBase: '/limpeza/tarefas',
-        redirectPath: '/admin/limpeza'
-      });
-      const upcomingBookings = db
-        .prepare(
-          `SELECT b.id,
-                  b.checkin,
-                  b.checkout,
-                  b.guest_name,
-                  u.name AS unit_name,
-                  p.id AS property_id,
-                  p.name AS property_name
-             FROM bookings b
-             JOIN units u ON u.id = b.unit_id
-             JOIN properties p ON p.id = u.property_id
-            WHERE b.status IN ('CONFIRMED','PENDING')
-              AND b.checkout >= date('now','-3 day')
-            ORDER BY b.checkout ASC
-            LIMIT 80`
-        )
-        .all();
+      const tasks = getHousekeepingTasks({ includeCompleted: true, limit: 200 });
+      const todo = tasks.filter(task => task.status !== 'in_progress' && task.status !== 'completed');
+      const inProgress = tasks.filter(task => task.status === 'in_progress');
+      const done = tasks.filter(task => task.status === 'completed');
+
       const units = db
         .prepare(
-          `SELECT u.id, u.name, p.id AS property_id, p.name AS property_name
+          `SELECT u.id, u.name, p.name AS property_name
              FROM units u
              JOIN properties p ON p.id = u.property_id
             ORDER BY p.name, u.name`
         )
         .all();
-      const properties = db.prepare('SELECT id, name FROM properties ORDER BY name').all();
-      const recentCompleted = completedLast7.slice(0, 12);
-      const typeOptions = ['checkout', 'checkin', 'midstay', 'custom'];
-      const priorityOptions = ['alta', 'normal', 'baixa'];
-      const today = board.today || dayjs().startOf('day');
-      const todayBucket = Array.isArray(board.buckets)
-        ? board.buckets.find(bucket => bucket && bucket.isToday) || {}
-        : {};
-      const todaysTasks = Array.isArray(todayBucket.tasks) ? todayBucket.tasks : [];
-      const todaysCheckins = Array.isArray(todayBucket.checkins) ? todayBucket.checkins : [];
-      const todaysCheckouts = Array.isArray(todayBucket.checkouts) ? todayBucket.checkouts : [];
-      const priorityText = priority => (priority === 'alta' ? 'Prioridade alta' : priority === 'baixa' ? 'Prioridade baixa' : 'Prioridade normal');
-      const statusText = status => (status === 'in_progress' ? 'Em curso' : status === 'completed' ? 'Concluída' : 'Pendente');
-      const renderTodayTask = task => html`<article class="rounded-2xl border border-amber-200/80 bg-white/80 p-3 shadow-sm space-y-1">
-          <p class="font-semibold text-slate-900">${esc(task.title)}</p>
-          <p class="text-xs text-slate-600">${esc(`${task.property_name ? `${task.property_name} · ` : ''}${task.unit_name || 'Sem unidade associada'}`)}</p>
-          ${task.due_time
-            ? `<p class="text-xs text-amber-600 mt-1 flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-full bg-amber-500"></span>${esc(task.due_time)}</p>`
-            : ''}
-          <div class="mt-2 flex flex-wrap gap-2 text-[11px] font-medium">
-            <span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${esc(priorityText(task.priority))}</span>
-            <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${esc(statusText(task.status))}</span>
-          </div>
-        </article>`;
-      const todayTasksHtml = todaysTasks.length
-        ? `<div class="grid gap-3 sm:grid-cols-2">${todaysTasks.slice(0, 6).map(renderTodayTask).join('')}</div>`
-        : '<p class="text-sm text-amber-700">Sem tarefas programadas para hoje.</p>';
-      const todayMetaBadges = [];
-      if (todaysCheckouts.length) {
-        todayMetaBadges.push(
-          html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-rose-400"></span>${todaysCheckouts.length} saída${todaysCheckouts.length === 1 ? '' : 's'}</span>`
-        );
-      }
-      if (todaysCheckins.length) {
-        todayMetaBadges.push(
-          html`<span class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-amber-700"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>${todaysCheckins.length} entrada${todaysCheckins.length === 1 ? '' : 's'}</span>`
-        );
-      }
-      const todayMetaHtml = todayMetaBadges.length ? `<div class="flex flex-wrap gap-2">${todayMetaBadges.join('')}</div>` : '';
-      const todayWeekdayLabel = todayBucket.weekdayLabel || capitalizeMonth(today.format('dddd'));
-      const importantMessages = [];
-      if (board.overdueTasks && board.overdueTasks.length) {
-        importantMessages.push({
-          tone: 'alert',
-          text: `${board.overdueTasks.length} tarefa${board.overdueTasks.length === 1 ? '' : 's'} em atraso aguardam ação.`
-        });
-      }
-      if (board.backlogCheckouts && board.backlogCheckouts.length) {
-        importantMessages.push({
-          tone: 'warning',
-          text: `${board.backlogCheckouts.length} unidade${board.backlogCheckouts.length === 1 ? '' : 's'} aguardam limpeza após check-out.`
-        });
-      }
-      if (highPriorityCount) {
-        importantMessages.push({
-          tone: 'info',
-          text: `${highPriorityCount} tarefa${highPriorityCount === 1 ? '' : 's'} com prioridade alta estão abertas.`
-        });
-      }
-      if (!importantMessages.length) {
-        importantMessages.push({ tone: 'info', text: 'Sem alertas no momento. Continue o excelente trabalho!' });
-      }
-      const messageToneClass = tone => {
-        if (tone === 'alert') return 'bg-rose-50 border-rose-200 text-rose-700';
-        if (tone === 'warning') return 'bg-amber-50 border-amber-200 text-amber-700';
-        return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+
+      const formatDate = value => (value ? dayjs(value).format('DD/MM/YYYY') : 'Sem data');
+      const resolveResponsible = task => {
+        if (task.completed_by_username) return task.completed_by_username;
+        if (task.started_by_username) return task.started_by_username;
+        if (task.created_by_username) return task.created_by_username;
+        return '—';
       };
-      const messagesHtml = `<ul class="space-y-3">${importantMessages
-        .map(
-          message => html`<li class="rounded-2xl border ${messageToneClass(message.tone)} px-4 py-3 text-sm leading-relaxed">${esc(
-            message.text
-          )}</li>`
-        )
-        .join('')}</ul>`;
-      const quickStats = [
-        {
-          label: 'Pendentes',
-          value: pendingCount,
-          className: 'border-amber-200 bg-amber-50 text-amber-700'
-        },
-        {
-          label: 'Em curso',
-          value: inProgressCount,
-          className: 'border-orange-200 bg-orange-50 text-orange-700'
-        },
-        {
-          label: 'Prioridade alta',
-          value: highPriorityCount,
-          className: 'border-rose-200 bg-rose-50 text-rose-700'
-        }
-      ];
-      const quickStatsHtml = quickStats
-        .map(
-          stat => html`<div class="rounded-2xl border ${stat.className} px-4 py-3 shadow-sm">
-            <p class="text-xs uppercase tracking-wide text-slate-500">${esc(stat.label)}</p>
-            <p class="text-2xl font-semibold">${stat.value}</p>
-          </div>`
-        )
-        .join('');
-      const computeAverageDurationMinutes = taskList => {
-        if (!Array.isArray(taskList) || !taskList.length) return null;
-        const durations = taskList
-          .map(task => {
-            if (!task.started_at || !task.completed_at) return null;
-            const duration = dayjs(task.completed_at).diff(dayjs(task.started_at), 'minute');
-            return Number.isFinite(duration) && duration >= 0 ? duration : null;
-          })
-          .filter(value => value !== null);
-        if (!durations.length) return null;
-        const total = durations.reduce((sum, value) => sum + value, 0);
-        return Math.round(total / durations.length);
-      };
-      const formatDurationLabel = minutes => {
-        if (minutes === null || minutes === undefined) return '—';
-        if (minutes < 60) return `${minutes} min`;
-        const hours = Math.floor(minutes / 60);
-        const mins = minutes % 60;
-        return mins ? `${hours}h ${mins}min` : `${hours}h`;
-      };
-      const averageDuration = computeAverageDurationMinutes(recentCompleted);
-      const averageHighPriorityDuration = computeAverageDurationMinutes(
-        recentCompleted.filter(task => task.priority === 'alta')
-      );
-      const tempoMetrics = [
-        {
-          label: 'Média geral',
-          value: formatDurationLabel(averageDuration),
-          className: 'border-amber-200 bg-amber-50 text-amber-700'
-        },
-        {
-          label: 'Alta prioridade',
-          value: averageHighPriorityDuration !== null ? formatDurationLabel(averageHighPriorityDuration) : 'Sem dados',
-          className: 'border-rose-200 bg-rose-50 text-rose-700'
-        },
-        {
-          label: 'Concluídas (7 dias)',
-          value: recentCompleted.length,
-          className: 'border-emerald-200 bg-emerald-50 text-emerald-700'
-        }
-      ];
-      const tempoMetricsHtml = tempoMetrics
-        .map(
-          metric => html`<div class="rounded-2xl border ${metric.className} px-4 py-3 shadow-sm">
-            <p class="text-xs uppercase tracking-wide text-slate-500">${esc(metric.label)}</p>
-            <p class="text-xl font-semibold">${esc(String(metric.value))}</p>
-          </div>`
-        )
-        .join('');
-      const weeklyBuckets = Array.isArray(board.buckets) ? board.buckets.slice(0, 6) : [];
-      const weeklyHtml = weeklyBuckets.length
-        ? `<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">${weeklyBuckets
-            .map(bucket => {
-              const taskList = Array.isArray(bucket.tasks) ? bucket.tasks : [];
-              const checkinCount = Array.isArray(bucket.checkins) ? bucket.checkins.length : 0;
-              const checkoutCount = Array.isArray(bucket.checkouts) ? bucket.checkouts.length : 0;
-              return html`<article class="rounded-2xl border border-amber-100 bg-white/80 p-4 shadow-sm space-y-3">
-                <header class="flex items-start justify-between gap-2">
-                  <div>
-                    <p class="text-xs uppercase tracking-wide text-amber-600">${esc(bucket.weekdayLabel || '')}</p>
-                    <h3 class="text-base font-semibold text-slate-900">${esc(bucket.displayLabel || '')}</h3>
-                  </div>
-                  ${bucket.isToday
-                    ? '<span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">Hoje</span>'
-                    : ''}
-                </header>
-                <p class="text-sm text-slate-500">${taskList.length ? `${taskList.length} tarefa${taskList.length === 1 ? '' : 's'}` : 'Sem tarefas'}</p>
-                ${taskList.length
-                  ? `<ul class="space-y-1 text-xs text-slate-600">${taskList
-                      .slice(0, 3)
-                      .map(task => `<li>• ${esc(task.title)}</li>`)
-                      .join('')}</ul>${taskList.length > 3 ? '<p class="text-xs text-slate-400">+' + (taskList.length - 3) + ' tarefa(s)</p>' : ''}`
-                  : ''}
-                ${(checkinCount || checkoutCount)
-                  ? `<div class="flex flex-wrap gap-2 text-[11px] text-slate-600">
-                      ${checkoutCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-600">${checkoutCount} saída${checkoutCount === 1 ? '' : 's'}</span>` : ''}
-                      ${checkinCount ? `<span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-600">${checkinCount} entrada${checkinCount === 1 ? '' : 's'}</span>` : ''}
-                    </div>`
-                  : ''}
-              </article>`;
-            })
-            .join('')}</div>`
-        : '<p class="text-sm text-amber-700">Sem tarefas planeadas para os próximos dias.</p>';
-      const taskTypeInventory = typeOptions.map(type => {
-        const label = HOUSEKEEPING_TYPE_LABELS[type] || type;
-        const tasksForType = totalTasks.filter(task => task.task_type === type);
-        const pending = tasksForType.filter(task => task.status === 'pending').length;
-        const inProgress = tasksForType.filter(task => task.status === 'in_progress').length;
-        return { type, label, pending, inProgress };
-      });
-      const inventoryRowsHtml = taskTypeInventory.length
-        ? taskTypeInventory
-            .map(item => {
-              const totalActive = item.pending + item.inProgress;
-              const statusLabel = totalActive
-                ? `${item.pending} pendente${item.pending === 1 ? '' : 's'} · ${item.inProgress} em curso`
-                : 'Sem tarefas ativas';
-              return html`<tr>
-                <td data-label="Item">
-                  <div class="font-medium text-slate-800">${esc(item.label)}</div>
-                  <div class="text-xs text-slate-500">${esc(item.type === 'custom' ? 'Manual' : item.type)}</div>
-                </td>
-                <td data-label="Quantidade" class="text-sm text-slate-600">${esc(statusLabel)}</td>
-              </tr>`;
-            })
-            .join('')
-        : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem tarefas registadas.</td></tr>';
-      const propertyTaskStats = new Map();
-      const propertyKey = (id, name) => (id !== null && id !== undefined ? `prop:${id}` : `none:${name || 'Sem propriedade'}`);
-      totalTasks.forEach(task => {
-        const key = propertyKey(task.property_id, task.property_name);
-        if (!propertyTaskStats.has(key)) {
-          propertyTaskStats.set(key, {
-            id: task.property_id ?? null,
-            name: task.property_name || 'Sem propriedade',
-            pending: 0,
-            inProgress: 0,
-            highPriority: 0
+
+      let bodyContent = null;
+      if (housekeepingBoardTemplateRenderer) {
+        try {
+          bodyContent = housekeepingBoardTemplateRenderer({
+            todo,
+            inProgress,
+            done,
+            units,
+            formatDate,
+            resolveResponsible,
+            statusEndpoint: '/admin/housekeeping',
+            createTaskAction: '/admin/limpeza/tarefas',
+            esc
           });
+        } catch (err) {
+          bodyContent = null;
         }
-        const stats = propertyTaskStats.get(key);
-        if (task.status === 'in_progress') {
-          stats.inProgress += 1;
-        } else if (task.status === 'pending') {
-          stats.pending += 1;
-        }
-        if (task.priority === 'alta') {
-          stats.highPriority += 1;
-        }
-      });
-      const occupancyPriority = { Livre: 0, 'Check-out hoje': 1, 'Check-in hoje': 2, Ocupado: 3 };
-      const propertyOccupancy = new Map();
-      const setPropertyStatus = (id, name, status) => {
-        const key = propertyKey(id, name);
-        const current = propertyOccupancy.get(key);
-        if (!current || occupancyPriority[status] > occupancyPriority[current.status]) {
-          propertyOccupancy.set(key, { id: id ?? null, name, status });
-        }
-      };
-      upcomingBookings.forEach(booking => {
-        const checkinDate = dayjs(booking.checkin);
-        const checkoutDate = dayjs(booking.checkout);
-        let status = 'Livre';
-        if ((today.isSame(checkinDate, 'day') || today.isAfter(checkinDate, 'day')) && today.isBefore(checkoutDate, 'day')) {
-          status = 'Ocupado';
-        } else if (today.isSame(checkinDate, 'day')) {
-          status = 'Check-in hoje';
-        } else if (today.isSame(checkoutDate, 'day')) {
-          status = 'Check-out hoje';
-        }
-        setPropertyStatus(booking.property_id ?? null, booking.property_name, status);
-      });
-      const occupancyBadgeClass = status => {
-        if (status === 'Ocupado') return 'bg-rose-100 text-rose-700';
-        if (status === 'Check-in hoje') return 'bg-amber-100 text-amber-700';
-        if (status === 'Check-out hoje') return 'bg-orange-100 text-orange-700';
-        return 'bg-emerald-100 text-emerald-700';
-      };
-      const propertyRows = [];
-      properties.forEach(property => {
-        const key = propertyKey(property.id, property.name);
-        const stats = propertyTaskStats.get(key) || {
-          id: property.id,
-          name: property.name,
-          pending: 0,
-          inProgress: 0,
-          highPriority: 0
-        };
-        const occupancy = propertyOccupancy.get(key);
-        const status = occupancy ? occupancy.status : 'Livre';
-        propertyRows.push(
-          html`<tr>
-            <td data-label="Propriedade">
-              <div class="font-medium text-slate-800">${esc(property.name)}</div>
-              <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
-              ${stats.highPriority
-                ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
-                : ''}
-            </td>
-            <td data-label="Ocupação" class="text-right md:text-left">
-              <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${occupancyBadgeClass(status)}">${esc(
-                status
-              )}</span>
-            </td>
-          </tr>`
-        );
-      });
-      propertyTaskStats.forEach(stats => {
-        if (stats.id !== null && stats.id !== undefined) return;
-        propertyRows.push(
-          html`<tr>
-            <td data-label="Propriedade">
-              <div class="font-medium text-slate-800">${esc(stats.name)}</div>
-              <div class="text-xs text-slate-500">${stats.pending} pendente${stats.pending === 1 ? '' : 's'} · ${stats.inProgress} em curso</div>
-              ${stats.highPriority
-                ? `<div class="text-xs text-rose-600">Prioridade alta: ${stats.highPriority}</div>`
-                : ''}
-            </td>
-            <td data-label="Ocupação" class="text-right md:text-left">
-              <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-slate-100 text-slate-600">Sem reservas</span>
-            </td>
-          </tr>`
-        );
-      });
-      const propertyTableRowsHtml = propertyRows.length
-        ? propertyRows.join('')
-        : '<tr><td colspan="2" class="text-sm text-center text-amber-700">Sem propriedades registadas.</td></tr>';
-      const body = html`
-        <div class="bo-page bo-page--wide">
-          <div class="hk-dashboard space-y-8">
-            ${renderBreadcrumbs([
-              { label: 'Backoffice', href: '/admin' },
-              { label: 'Limpezas' }
-            ])}
-          <header class="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-6 shadow-sm">
-            <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h1 class="text-3xl font-semibold text-amber-900">Gestão de limpezas</h1>
-                <p class="mt-1 text-sm text-amber-800">Visualize prioridades, acompanhe tarefas em tempo real e mantenha a equipa alinhada.</p>
-              </div>
-              <div class="grid w-full gap-3 sm:grid-cols-3 md:w-auto">
-                <div class="rounded-2xl border border-amber-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                  <p class="text-xs uppercase tracking-wide text-amber-600">Pendentes</p>
-                  <p class="text-2xl font-semibold text-amber-900">${pendingCount}</p>
-                </div>
-                <div class="rounded-2xl border border-orange-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                  <p class="text-xs uppercase tracking-wide text-orange-500">Em curso</p>
-                  <p class="text-2xl font-semibold text-orange-700">${inProgressCount}</p>
-                </div>
-                <div class="rounded-2xl border border-rose-300 bg-white/80 px-4 py-3 text-center shadow-sm">
-                  <p class="text-xs uppercase tracking-wide text-rose-500">Alta prioridade</p>
-                  <p class="text-2xl font-semibold text-rose-600">${highPriorityCount}</p>
-                </div>
-              </div>
-            </div>
-          </header>
-          <section class="grid gap-5 lg:grid-cols-[1.8fr_1.2fr_1fr]">
-            <div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm space-y-4">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-amber-900">Tarefas de hoje</h2>
-                <span class="text-xs uppercase tracking-wide text-amber-600">${esc(todayWeekdayLabel)}</span>
-              </div>
-              ${todayTasksHtml}
-              ${todayMetaHtml}
-            </div>
-            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-amber-900">Mensagens</h2>
-                <span class="text-xs text-amber-500">Resumo diário</span>
-              </div>
-              ${messagesHtml}
-            </div>
-            <div class="space-y-4">
-              <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
-                <h2 class="text-lg font-semibold text-amber-900">Tarefas</h2>
-                <div class="grid gap-3">${quickStatsHtml}</div>
-              </div>
-              <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-3">
-                <h2 class="text-lg font-semibold text-amber-900">Tempo médio por limpeza</h2>
-                <div class="grid gap-3">${tempoMetricsHtml}</div>
-              </div>
-            </div>
-          </section>
-          <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="text-lg font-semibold text-amber-900">Tarefas semanais</h2>
-              <span class="text-sm text-amber-600">${weeklyBuckets.length
-                ? `${weeklyBuckets.reduce(
-                    (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
-                    0
-                  )} tarefa${weeklyBuckets.reduce(
-                    (sum, bucket) => sum + (Array.isArray(bucket.tasks) ? bucket.tasks.length : 0),
-                    0
-                  ) === 1 ? '' : 's'} nos próximos dias`
-                : 'Sem tarefas agendadas'}</span>
-            </div>
-            ${weeklyHtml}
-          </section>
-          <section class="grid gap-5 lg:grid-cols-2">
-            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-              <h2 class="text-lg font-semibold text-amber-900">Inventário de material</h2>
-              <div class="bo-table responsive-table">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-left text-amber-600">
-                      <th>Item</th>
-                      <th>Quantidade</th>
-                    </tr>
-                  </thead>
-                  <tbody>${inventoryRowsHtml}</tbody>
-                </table>
-              </div>
-            </div>
-            <div class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-              <h2 class="text-lg font-semibold text-amber-900">Listagem de propriedades</h2>
-              <div class="bo-table responsive-table">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-left text-amber-600">
-                      <th>Propriedade</th>
-                      <th class="md:text-right">Ocupação</th>
-                    </tr>
-                  </thead>
-                  <tbody>${propertyTableRowsHtml}</tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-          <section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-            <div>
-              <h2 class="text-lg font-semibold text-amber-900">Nova tarefa de limpeza</h2>
-              <p class="text-sm text-amber-700">Associe a tarefa a uma reserva existente ou defina manualmente a unidade e as datas.</p>
-            </div>
-            <form method="post" action="/admin/limpeza/tarefas" class="grid gap-4">
-              <input type="hidden" name="redirect" value="/admin/limpeza" />
-              <div class="grid gap-3 md:grid-cols-2">
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Tipo de tarefa</span>
-                  <select name="task_type" class="input">
-                    ${typeOptions
-                      .map(
-                        value =>
-                          `<option value="${esc(value)}">${esc(HOUSEKEEPING_TYPE_LABELS[value] || value)}</option>`
-                      )
-                      .join('')}
-                  </select>
-                </label>
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Prioridade</span>
-                  <select name="priority" class="input">
-                    ${priorityOptions
-                      .map(value => `<option value="${esc(value)}">${esc(value === 'alta' ? 'Alta' : value === 'baixa' ? 'Baixa' : 'Normal')}</option>`)
-                      .join('')}
-                  </select>
-                </label>
-              </div>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Reserva (opcional)</span>
-                <select name="booking_id" class="input">
-                  <option value="">Selecionar reserva...</option>
-                  ${upcomingBookings
-                    .map(
-                      booking =>
-                        `<option value="${booking.id}">${esc(
-                          `${booking.property_name} · ${booking.unit_name} — ${booking.guest_name || 'Sem hóspede'} (${formatDateRangeShort(
-                            booking.checkin,
-                            booking.checkout
-                          )})`
-                        )}</option>`
-                    )
-                    .join('')}
-                </select>
-              </label>
-              <div class="grid gap-3 md:grid-cols-2">
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Unidade (opcional)</span>
-                  <select name="unit_id" class="input">
-                    <option value="">Selecionar unidade...</option>
-                    ${units
-                      .map(unit => `<option value="${unit.id}">${esc(`${unit.property_name} · ${unit.name}`)}</option>`)
-                      .join('')}
-                  </select>
-                </label>
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Propriedade (opcional)</span>
-                  <select name="property_id" class="input">
-                    <option value="">Selecionar propriedade...</option>
-                    ${properties.map(property => `<option value="${property.id}">${esc(property.name)}</option>`).join('')}
-                  </select>
-                </label>
-              </div>
-              <div class="grid gap-3 md:grid-cols-2">
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Data prevista</span>
-                  <input type="date" name="due_date" class="input" />
-                </label>
-                <label class="grid gap-2 text-sm">
-                  <span class="font-medium text-slate-700">Hora limite (opcional)</span>
-                  <input type="time" name="due_time" class="input" />
-                </label>
-              </div>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Título</span>
-                <input name="title" class="input" placeholder="Ex.: Preparar para nova entrada" />
-              </label>
-              <label class="grid gap-2 text-sm">
-                <span class="font-medium text-slate-700">Notas para a equipa (opcional)</span>
-                <textarea name="details" class="input min-h-[96px]" placeholder="Indique instruções específicas ou pedidos dos hóspedes"></textarea>
-              </label>
-              <div class="flex justify-end">
-                <button class="btn btn-primary">Criar tarefa</button>
-              </div>
-            </form>
-          </section>
-          <section class="space-y-6">${boardHtml}</section>
-          ${recentCompleted.length
-            ? html`<section class="rounded-3xl border border-amber-100 bg-white p-5 shadow-sm space-y-4">
-                <div class="flex items-center justify-between">
-                  <h2 class="text-lg font-semibold text-amber-900">Concluídas nos últimos 7 dias</h2>
-                  <span class="text-sm text-amber-600">${completedLast7.length} no total</span>
-                </div>
-                <div class="responsive-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Tarefa</th>
-                        <th>Unidade</th>
-                        <th>Concluída</th>
-                        <th>Por</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${recentCompleted
-                        .map(
-                          task => html`<tr>
-                            <td data-label="Tarefa">
-                              <div class="font-medium text-slate-800">${esc(task.title)}</div>
-                              <div class="text-xs text-slate-500">${esc(HOUSEKEEPING_TYPE_LABELS[task.task_type] || task.task_type)}</div>
-                            </td>
-                            <td data-label="Unidade">
-                              ${task.property_name ? `<div>${esc(task.property_name)}</div>` : ''}
-                              ${task.unit_name ? `<div class="text-xs text-slate-500">${esc(task.unit_name)}</div>` : ''}
-                            </td>
-                            <td data-label="Concluída">
-                              ${task.completed_at ? esc(dayjs(task.completed_at).format('DD/MM HH:mm')) : '—'}
-                            </td>
-                            <td data-label="Por">${task.completed_by_username ? esc(task.completed_by_username) : '—'}</td>
-                            <td class="text-right">
-                              <form method="post" action="/admin/limpeza/tarefas/${task.id}/reabrir">
-                                <input type="hidden" name="redirect" value="/admin/limpeza" />
-                                <button class="btn btn-light btn-xs" type="submit">Reabrir</button>
-                              </form>
-                            </td>
-                          </tr>`
-                        )
-                        .join('')}
-                    </tbody>
-                  </table>
-                </div>
-              </section>`
-            : ''}
+      }
+
+      if (!bodyContent) {
+        bodyContent = html`
+          <div class="bo-page">
+            <h1 class="text-2xl font-semibold mb-4">Gestão de limpezas</h1>
+            <p class="text-sm text-slate-600">Não foi possível carregar o quadro Kanban de housekeeping.</p>
           </div>
-        </div>
-      `;
+        `;
+      }
+
+      res.locals.activeNav = '/admin/limpeza';
       res.send(
         layout({
           title: 'Gestão de limpezas',
-          activeNav: 'housekeeping',
           user: req.user,
+          activeNav: 'housekeeping',
           branding: resolveBrandingForRequest(req),
-          body
+          pageClass: 'page-backoffice page-housekeeping',
+          body: bodyContent
         })
       );
     });
+
+    app.post(
+      '/admin/housekeeping/:id/status',
+      requireLogin,
+      requirePermission('housekeeping.manage'),
+      (req, res) => {
+        const taskId = Number.parseInt(req.params.id, 10);
+        if (!Number.isInteger(taskId) || taskId <= 0) {
+          const message = 'Tarefa inválida';
+          if (wantsJson(req)) return res.status(400).json({ ok: false, message });
+          return res.status(400).send(message);
+        }
+
+        const statusRaw =
+          req.body && typeof req.body.status === 'string' ? req.body.status.trim().toLowerCase() : '';
+        const allowedStatuses = new Set(['pending', 'in_progress', 'completed']);
+        if (!allowedStatuses.has(statusRaw)) {
+          const message = 'Estado inválido';
+          if (wantsJson(req)) return res.status(400).json({ ok: false, message });
+          return res.status(400).send(message);
+        }
+
+        const task = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+        if (!task) {
+          const message = 'Tarefa não encontrada';
+          if (wantsJson(req)) return res.status(404).json({ ok: false, message });
+          return res.status(404).send(message);
+        }
+
+        const now = dayjs().toISOString();
+        let updateSql = '';
+        let params = [];
+
+        if (statusRaw === 'pending') {
+          updateSql = `UPDATE housekeeping_tasks
+              SET status = 'pending',
+                  started_at = NULL,
+                  started_by = NULL,
+                  completed_at = NULL,
+                  completed_by = NULL
+            WHERE id = ?`;
+          params = [taskId];
+        } else if (statusRaw === 'in_progress') {
+          updateSql = `UPDATE housekeeping_tasks
+              SET status = 'in_progress',
+                  started_at = COALESCE(started_at, ?),
+                  started_by = COALESCE(started_by, ?),
+                  completed_at = NULL,
+                  completed_by = NULL
+            WHERE id = ?`;
+          params = [now, req.user.id, taskId];
+        } else {
+          updateSql = `UPDATE housekeeping_tasks
+              SET status = 'completed',
+                  started_at = COALESCE(started_at, ?),
+                  started_by = COALESCE(started_by, ?),
+                  completed_at = ?,
+                  completed_by = ?
+            WHERE id = ?`;
+          params = [now, req.user.id, now, req.user.id, taskId];
+        }
+
+        db.prepare(updateSql).run(...params);
+        const afterTask = db.prepare('SELECT * FROM housekeeping_tasks WHERE id = ?').get(taskId);
+
+        logChange(
+          req.user.id,
+          'housekeeping_task',
+          taskId,
+          'status',
+          serializeHousekeepingTaskForAudit(task),
+          serializeHousekeepingTaskForAudit(afterTask)
+        );
+        logActivity(req.user.id, 'housekeeping:status_change', 'housekeeping_task', taskId, {
+          from: task.status,
+          to: statusRaw
+        });
+
+        if (wantsJson(req)) {
+          return res.json({ ok: true, status: afterTask.status });
+        }
+
+        res.redirect(resolveHousekeepingRedirect(req, '/admin/limpeza'));
+      }
+    );
 
     app.post('/admin/limpeza/tarefas', requireLogin, requirePermission('housekeeping.manage'), (req, res) => {
       const data = req.body || {};

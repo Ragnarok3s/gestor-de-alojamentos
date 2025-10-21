@@ -1,5 +1,62 @@
 // Bookings module: handles backoffice booking routes and reservation management helpers.
+const fs = require('fs');
+const path = require('path');
 const { ConflictError, ValidationError } = require('../../services/errors');
+
+const bookingsListTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'bookings.ejs');
+let bookingsListTemplateRenderer = null;
+
+function compileEjsTemplate(template) {
+  if (!template) return null;
+  const matcher = /<%([=-]?)([\s\S]+?)%>/g;
+  let index = 0;
+  let source = "let __output = '';\n";
+  source += 'const __append = value => { __output += value == null ? "" : String(value); };\n';
+  source += 'with (locals || {}) {\n';
+  let match;
+  while ((match = matcher.exec(template)) !== null) {
+    const text = template.slice(index, match.index);
+    if (text) {
+      const escapedText = text
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, '\\`')
+        .replace(/\$\{/g, '\\${');
+      source += `__output += \`${escapedText}\`;\n`;
+    }
+    const indicator = match[1];
+    const code = match[2];
+    if (indicator === '=') {
+      source += `__append(${code.trim()});\n`;
+    } else if (indicator === '-') {
+      source += `__output += (${code.trim()}) ?? '';\n`;
+    } else {
+      source += `${code}\n`;
+    }
+    index = match.index + match[0].length;
+  }
+  const tail = template.slice(index);
+  if (tail) {
+    const escapedTail = tail
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+      .replace(/\$\{/g, '\\${');
+    source += `__output += \`${escapedTail}\`;\n`;
+  }
+  source += '}\nreturn __output;';
+  try {
+    // eslint-disable-next-line no-new-func
+    return new Function('locals', source);
+  } catch (err) {
+    return null;
+  }
+}
+
+try {
+  const bookingsListTemplate = fs.readFileSync(bookingsListTemplatePath, 'utf8');
+  bookingsListTemplateRenderer = compileEjsTemplate(bookingsListTemplate);
+} catch (err) {
+  bookingsListTemplateRenderer = null;
+}
 
 function registerBookings(app, context) {
   if (!app) throw new Error('registerBookings: app é obrigatório');
@@ -211,6 +268,7 @@ function registerBookings(app, context) {
       </div>
     `;
 
+    res.locals.activeNav = '/admin/bookings';
     res.status(statusCode).send(layout({
       title: `Reserva #${b.id}`,
       user: req.user,
@@ -222,27 +280,40 @@ function registerBookings(app, context) {
   }
 
   app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
-    const q = String(req.query.q || '').trim();
-    const status = String(req.query.status || '').trim();
-    const ym = String(req.query.ym || '').trim();
+    const search = String(req.query.search || '').trim();
+    const statusRaw = String(req.query.status || '').trim().toLowerCase();
+    const sortRaw = String(req.query.sort || '').trim().toLowerCase();
 
     const where = [];
     const args = [];
 
-    if (q) {
-      where.push(`(b.guest_name LIKE ? OR b.guest_email LIKE ? OR u.name LIKE ? OR p.name LIKE ? OR b.agency LIKE ?)`);
-      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    if (search) {
+      where.push('(b.guest_name LIKE ? OR CAST(b.id AS TEXT) LIKE ?)');
+      const likeTerm = `%${search}%`;
+      args.push(likeTerm, likeTerm);
     }
-    if (status) {
-      where.push(`b.status = ?`);
-      args.push(status);
+
+    const statusFilters = {
+      pendente: ['PENDING'],
+      confirmada: ['CONFIRMED'],
+      cancelada: ['CANCELLED', 'CANCELED']
+    };
+    const selectedStatusValues = statusFilters[statusRaw];
+    if (selectedStatusValues && selectedStatusValues.length) {
+      if (selectedStatusValues.length === 1) {
+        where.push('b.status = ?');
+        args.push(selectedStatusValues[0]);
+      } else {
+        where.push(`b.status IN (${selectedStatusValues.map(() => '?').join(', ')})`);
+        args.push(...selectedStatusValues);
+      }
     }
-    if (/^\d{4}-\d{2}$/.test(ym)) {
-      const startYM = `${ym}-01`;
-      const endYM = dayjs(startYM).endOf('month').add(1, 'day').format('YYYY-MM-DD');
-      where.push(`NOT (b.checkout <= ? OR b.checkin >= ?)`);
-      args.push(startYM, endYM);
-    }
+
+    const sortKey = sortRaw === 'arrival_date' ? 'arrival_date' : 'created_at';
+    const orderClause =
+      sortKey === 'arrival_date'
+        ? 'b.checkin DESC, b.created_at DESC'
+        : 'b.created_at DESC';
 
     const sql = `
       SELECT b.*, u.name AS unit_name, p.name AS property_name
@@ -250,7 +321,7 @@ function registerBookings(app, context) {
         JOIN units u ON u.id = b.unit_id
         JOIN properties p ON p.id = u.property_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-        ORDER BY b.checkin DESC, b.created_at DESC
+        ORDER BY ${orderClause}
         LIMIT 500
     `;
     const rows = db.prepare(sql).all(...args);
@@ -258,69 +329,84 @@ function registerBookings(app, context) {
     const canEditBooking = userCan(req.user, 'bookings.edit');
     const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
+    const filters = { search, status: statusRaw, sort: sortKey };
+    const statusOptions = [
+      { value: '', label: 'Todos' },
+      { value: 'pendente', label: 'Pendente' },
+      { value: 'confirmada', label: 'Confirmada' },
+      { value: 'cancelada', label: 'Cancelada' }
+    ];
+    const sortOptions = [
+      { value: 'created_at', label: 'Data de reserva' },
+      { value: 'arrival_date', label: 'Data de chegada' }
+    ];
+
+    const buildSortUrl = (key) => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusRaw) params.set('status', statusRaw);
+      params.set('sort', key);
+      const queryString = params.toString();
+      return queryString ? `/admin/bookings?${queryString}` : '/admin/bookings';
+    };
+
+    const bookingRows = rows.map((row) => {
+      const normalizedStatus = typeof row.status === 'string' ? row.status.toUpperCase() : '';
+      let statusLabel = 'Cancelada';
+      if (normalizedStatus === 'CONFIRMED') statusLabel = 'Confirmada';
+      else if (normalizedStatus === 'PENDING') statusLabel = 'Pendente';
+
+      return {
+        ...row,
+        status_normalized: normalizedStatus,
+        status_label: statusLabel
+      };
+    });
+
+    let bodyContent = null;
+    if (bookingsListTemplateRenderer) {
+      try {
+        bodyContent = bookingsListTemplateRenderer({
+          filters,
+          statusOptions,
+          sortOptions,
+          bookings: bookingRows,
+          canEditBooking,
+          canCancelBooking,
+          sortKey,
+          buildSortUrl,
+          formatDate: (value) => (value ? dayjs(value).format('DD/MM/YYYY') : ''),
+          formatCurrency: (value) => `€ ${eur(value)}`,
+          statusClass: (status) => {
+            const normalized = typeof status === 'string' ? status.toUpperCase() : '';
+            if (normalized === 'CONFIRMED') return 'bg-emerald-100 text-emerald-700';
+            if (normalized === 'PENDING') return 'bg-amber-100 text-amber-700';
+            return 'bg-slate-200 text-slate-700';
+          },
+          esc
+        });
+      } catch (err) {
+        bodyContent = null;
+      }
+    }
+
+    if (!bodyContent) {
+      bodyContent = html`
+        <div class="bo-page">
+          <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
+          <p class="text-sm text-slate-600">Não foi possível carregar o template de reservas.</p>
+        </div>
+      `;
+    }
+
+    res.locals.activeNav = '/admin/bookings';
     res.send(layout({
       title: 'Reservas',
       user: req.user,
       activeNav: 'bookings',
       branding: resolveBrandingForRequest(req),
       pageClass: 'page-backoffice page-bookings',
-      body: html`
-        <div class="bo-page">
-          <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
-
-          <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-          <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
-          <select class="input" name="status">
-            <option value="">Todos os estados</option>
-            <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-            <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
-          </select>
-          <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
-          <button class="btn btn-primary">Filtrar</button>
-        </form>
-
-        <div class="card p-0">
-          <div class="responsive-table">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map(b => `
-                  <tr>
-                    <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
-                    <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
-                    <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
-                    <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                    <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                    <td data-label="Status">
-                      <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
-                        ${b.status}
-                      </span>
-                    </td>
-                    <td data-label="Ações">
-                      <div class="table-cell-actions">
-                        <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
-                        ${canCancelBooking ? `
-                          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-                            <button class="text-rose-600">Cancelar</button>
-                          </form>
-                        ` : ''}
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
-        </div>
-      </div>
-    `
+      body: bodyContent
     }));
   });
 
