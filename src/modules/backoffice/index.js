@@ -1215,6 +1215,8 @@ module.exports = function registerBackoffice(app, context) {
     const navigationHtml = renderNavigation(res.locals.activeNav, req, res);
     const { list: notifications } = loadNotifications(req, res);
 
+    const query = req.query || {};
+    let errorMessage = null;
     const searchTerm = typeof query.search === 'string' ? query.search.trim() : '';
   const statusValue = typeof query.status === 'string' && query.status ? query.status : 'all';
   const allowedSortKeys = ['username', 'role'];
