@@ -74,10 +74,11 @@ function registerFinance(app, context) {
     html,
     resolveBrandingForRequest,
     requireLogin,
-    requirePermission
+    requirePermission,
+    ExcelJS
   } = context;
 
-  app.get('/admin/finance', requireLogin, requirePermission('dashboard.view'), (req, res) => {
+  function buildFinanceSummary() {
     const months = [];
     const reference = dayjs().startOf('month');
     for (let i = 11; i >= 0; i -= 1) {
@@ -143,14 +144,6 @@ function registerFinance(app, context) {
       const cents = revenueByMonth.get(m.key) || 0;
       return Number((cents / 100).toFixed(2));
     });
-    const revenueSeries = months.map((m) => {
-      const cents = revenueByMonth.get(m.key) || 0;
-      return {
-        label: m.label,
-        cents,
-        formatted: `€ ${eur(cents)}`
-      };
-    });
 
     const occupancyValues = months.map((m) => {
       const nights = nightsByMonth.get(m.key) || 0;
@@ -165,7 +158,7 @@ function registerFinance(app, context) {
     const averageOccupancy = totalCapacity ? (totalNightsSold / totalCapacity) * 100 : 0;
     const totalRevenueCents = months.reduce((acc, m) => acc + (revenueByMonth.get(m.key) || 0), 0);
 
-    const hasRevenueData = revenueSeries.some((item) => item.cents > 0);
+    const hasRevenueData = revenueValues.some((value) => value > 0);
     const hasOccupancyData = totalNightsSold > 0 && unitsCount > 0;
 
     const chartData = {
@@ -174,12 +167,90 @@ function registerFinance(app, context) {
     };
     const chartDataJson = JSON.stringify(chartData).replace(/</g, '\\u003c');
 
+    const monthlyRows = months.map((m, index) => {
+      const cents = revenueByMonth.get(m.key) || 0;
+      const occupancy = Number.isFinite(occupancyValues[index]) ? occupancyValues[index] : 0;
+      return {
+        label: m.label,
+        cents,
+        formatted: `€ ${eur(cents)}`,
+        occupancy,
+        occupancyLabel: `${occupancy.toFixed(1)}%`
+      };
+    });
+
+    return {
+      revenueLabels,
+      revenueValues,
+      occupancyValues,
+      hasRevenueData,
+      hasOccupancyData,
+      averageOccupancy,
+      totalRevenueCents,
+      chartDataJson,
+      monthlyRows
+    };
+  }
+
+  function exportFinanceToCsv(res, rows) {
+    const lines = ['Mês;Receita confirmada;Taxa de ocupação'];
+    rows.forEach((row) => {
+      const revenue = (row.formatted || '').replace(/\s+/g, ' ').trim();
+      const occupancy = row.occupancyLabel || '';
+      lines.push(`${row.label};${revenue};${occupancy}`);
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="financeiro.csv"');
+    res.send(`\ufeff${lines.join('\n')}`);
+  }
+
+  function exportFinanceToXlsx(res, rows) {
+    if (!ExcelJS || typeof ExcelJS.Workbook !== 'function') {
+      exportFinanceToCsv(res, rows);
+      return;
+    }
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Finanças');
+    sheet.columns = [
+      { header: 'Mês', key: 'label', width: 18 },
+      { header: 'Receita confirmada (€)', key: 'revenue', width: 24 },
+      { header: 'Taxa de ocupação (%)', key: 'occupancy', width: 22 }
+    ];
+    rows.forEach((row) => {
+      sheet.addRow({
+        label: row.label,
+        revenue: Number.isFinite(row.cents) ? row.cents / 100 : '',
+        occupancy: Number.isFinite(row.occupancy) ? row.occupancy : ''
+      });
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="financeiro.xlsx"');
+    workbook.xlsx.write(res).then(() => {
+      res.end();
+    });
+  }
+
+  app.get('/admin/finance', requireLogin, requirePermission('dashboard.view'), (req, res) => {
+    const summary = buildFinanceSummary();
+
+    const {
+      revenueLabels,
+      revenueValues,
+      occupancyValues,
+      hasRevenueData,
+      hasOccupancyData,
+      averageOccupancy,
+      totalRevenueCents,
+      chartDataJson,
+      monthlyRows
+    } = summary;
+
     let bodyContent = null;
     if (financeTemplateRenderer) {
       try {
         bodyContent = financeTemplateRenderer({
           esc,
-          revenueSeries,
+          revenueSeries: monthlyRows,
           revenueLabels,
           revenueValues,
           occupancyValues,
@@ -212,6 +283,23 @@ function registerFinance(app, context) {
       pageClass: 'page-backoffice page-finance',
       body: bodyContent
     }));
+  });
+
+  app.get('/admin/finance/export', requireLogin, requirePermission('dashboard.view'), (req, res) => {
+    const summary = buildFinanceSummary();
+    const format = String(req.query.format || 'csv').trim().toLowerCase();
+    const rows = summary.monthlyRows || [];
+
+    try {
+      if (format === 'xlsx') {
+        exportFinanceToXlsx(res, rows);
+      } else {
+        exportFinanceToCsv(res, rows);
+      }
+    } catch (err) {
+      console.error('Falha ao exportar dados financeiros:', err);
+      res.status(500).send('Não foi possível exportar os dados financeiros.');
+    }
   });
 }
 

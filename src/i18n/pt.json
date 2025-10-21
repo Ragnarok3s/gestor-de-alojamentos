@@ -1,0 +1,360 @@
+{
+  "language": {
+    "label": "Idioma",
+    "portuguese": "Português",
+    "english": "Inglês"
+  },
+  "actions": {
+    "apply": "Aplicar",
+    "clear": "Limpar",
+    "confirm": "Confirmar",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "duplicate": "Duplicar",
+    "viewSection": "Ver secção",
+    "changeProperty": "Trocar propriedade",
+    "addExtra": "Adicionar extra",
+    "saveExtras": "Guardar extras",
+    "back": "Voltar"
+  },
+  "table": {
+    "searchPlaceholder": "Procurar…",
+    "status": "Estado",
+    "actions": "Ações",
+    "empty": "Sem resultados para os filtros aplicados.",
+    "modalTitle": "Confirmação",
+    "modalMessage": "Tem a certeza que deseja eliminar este item?",
+    "modalConfirm": "Eliminar",
+    "pagination": "Paginação"
+  },
+  "navigation": {
+    "groups": {
+      "operations": "Operações",
+      "finance": "Finanças",
+      "configuration": "Configuração",
+      "support": "Suporte"
+    },
+    "items": {
+      "dashboard": "Dashboard",
+      "calendar": "Calendário",
+      "bookings": "Reservas",
+      "housekeeping": "Housekeeping",
+      "financeSummary": "Resumo financeiro",
+      "ratePlans": "Planos tarifários",
+      "rateRules": "Regras de tarifa",
+      "extras": "Extras",
+      "reports": "Relatórios",
+      "contentCenters": "Centros de conteúdo",
+      "uxApi": "UX API",
+      "admin": "Administração",
+      "help": "Ajuda & FAQ"
+    },
+    "toggle": {
+      "collapse": "Encolher menu",
+      "expand": "Expandir menu",
+      "close": "Fechar menu",
+      "open": "Abrir menu"
+    }
+  },
+  "auth": {
+    "welcome": "Bem-vindo(a)",
+    "subtitle": "Bem-vindo(a) ao backoffice de {brand}.",
+    "usernameLabel": "Utilizador",
+    "passwordLabel": "Password",
+    "signIn": "Entrar",
+    "forgotPassword": "Esqueci-me da password",
+    "submit": "Entrar",
+    "placeholder": {
+      "username": "Introduza o seu utilizador",
+      "password": "Introduza a sua password",
+      "twoFactor": "Introduza o código de verificação"
+    },
+    "twofactor": {
+      "title": "Confirme a sua entrada",
+      "description": "Introduza o código de verificação enviado para {destination} para concluir a autenticação.",
+      "codeLabel": "Código de verificação",
+      "submit": "Validar código",
+      "resend": "Reenviar código",
+      "resentNotice": "Novo código enviado para o seu email."
+    },
+      "reset": {
+      "title": "Recuperar acesso",
+      "stepEmail": "Introduza o email associado à sua conta para receber o link de recuperação.",
+      "submitEmail": "Enviar link de recuperação",
+      "stepPassword": "Defina a sua nova password para voltar a entrar.",
+      "emailLabel": "Email",
+      "newPassword": "Nova password",
+      "confirmPassword": "Confirmar password",
+      "submitPassword": "Actualizar password",
+      "successTitle": "Password actualizada com sucesso",
+      "successDescription": "Pode agora iniciar sessão com a nova password.",
+      "backToLogin": "Voltar ao login",
+      "emailPlaceholder": "Introduza o email da sua conta",
+      "newPasswordPlaceholder": "Crie uma nova password (mín. 8 caracteres)",
+      "confirmPasswordPlaceholder": "Repita a nova password",
+      "requestLink": "Precisa de um novo link?"
+    }
+  },
+  "errors": {
+    "auth": {
+      "invalidCredentials": "Não foi possível iniciar sessão. Verifique os dados e tente novamente.",
+      "twoFactorInvalid": "O código de verificação não é válido. Volte a tentar.",
+      "twoFactorMissing": "Precisamos de confirmar o código enviado antes de continuar.",
+      "twoFactorSendFailed": "Não foi possível enviar o código de confirmação. Contacte o administrador.",
+      "twoFactorResendFailed": "Não foi possível reenviar o código. Tente novamente mais tarde.",
+      "twoFactorUnavailable": "Serviço de autenticação a dois fatores indisponível. Tente novamente mais tarde.",
+      "challengeMissing": "Sessão de autenticação não encontrada. Faça login novamente.",
+      "twoFactorExpired": "O código expirou. Faça login novamente.",
+      "accountNotFound": "Conta não encontrada.",
+      "recoveryEmailRequired": "Indique um email válido para continuar com a recuperação.",
+      "recoveryNotFound": "Não encontrámos uma conta com esse email. Confirme e tente novamente.",
+      "recoveryEmailSent": "Enviámos instruções de recuperação para o email indicado.",
+      "recoveryCodeInvalid": "O link de recuperação já não é válido. Solicite um novo para continuar.",
+      "recoverySendFailed": "Não foi possível enviar o email de recuperação. Tente novamente mais tarde.",
+      "recoveryPasswordInvalid": "Password inválida (mínimo 8 caracteres).",
+      "recoveryPasswordMismatch": "As passwords não coincidem.",
+      "recoveryCompleted": "A password foi actualizada. Pode iniciar sessão com as novas credenciais."
+    },
+    "extras": {
+      "invalidProperty": "Propriedade inválida.",
+      "propertyNotFound": "Não encontrámos essa propriedade.",
+      "invalidPayload": "Formato de dados inválido.",
+      "saveFailed": "Não foi possível guardar os extras. Tenta novamente.",
+      "nameRequired": "Introduz um nome para o extra #{index}.",
+      "codeInvalid": "O código do extra \"{name}\" é inválido.",
+      "codeDuplicate": "O código \"{code}\" já está a ser utilizado.",
+      "priceInvalid": "O preço do extra \"{name}\" é inválido.",
+      "minNightsInvalid": "As noites mínimas do extra \"{name}\" são inválidas.",
+      "discountInvalid": "O desconto do extra \"{name}\" é inválido."
+    }
+  },
+  "dashboard": {
+    "menu": "Menu",
+    "title": "Dashboard",
+    "subtitle": "Acompanha os indicadores chave do teu negócio.",
+    "kpiSectionLabel": "Indicadores chave do negócio",
+    "shortcuts": {
+      "label": "Atalhos rápidos",
+      "calendar": "Calendário",
+      "bookings": "Reservas",
+      "housekeeping": "Housekeeping"
+    },
+    "kpis": {
+      "occupancy": {
+        "title": "Ocupação atual",
+        "caption": "{occupied} de {total} unidades ocupadas hoje.",
+        "empty": "Sem unidades registadas."
+      },
+      "revenue": {
+        "title": "Receitas do mês",
+        "caption": "Reservas confirmadas com check-in em {month}.",
+        "value": "€ {amount}"
+      },
+      "futureBookings": {
+        "title": "Reservas futuras",
+        "caption": "Chegadas confirmadas a partir de amanhã."
+      },
+      "housekeeping": {
+        "title": "Tarefas de housekeeping",
+        "caption": "Tarefas pendentes por iniciar."
+      }
+    },
+    "emptyTitle": "Sem indicadores disponíveis",
+    "emptyCaption": "Ainda não existem dados suficientes para calcular estes indicadores."
+  },
+  "extras": {
+    "back": "Voltar ao backoffice",
+    "propertyLabel": "Propriedade",
+    "headerTitle": "Extras & serviços",
+    "headerDescription": "Define os extras disponíveis para a reserva do hóspede, incluindo preços, descontos de estadias longas e janelas de disponibilidade.",
+    "summaryTitle": "Resumo dos extras",
+    "summaryCaption": "A mostrar {visible} de {total} extras configurados.",
+    "configuredTitle": "Extras configurados",
+    "configuredDescription": "Itens adicionados aqui ficam disponíveis no portal do hóspede para esta propriedade.",
+    "emptyTitle": "Sem extras configurados.",
+    "emptyDescription": "Utiliza o botão \"Adicionar extra\" para criar o primeiro serviço disponível.",
+    "helpText": "As alterações são aplicadas de imediato no portal do hóspede assim que guardares.",
+    "save": "Guardar extras",
+    "breadcrumb": {
+      "backoffice": "Backoffice",
+      "current": "Extras & serviços"
+    },
+    "alerts": {
+      "noPropertiesDescription": "Para configurar extras é necessário ter pelo menos uma propriedade ativa no sistema.",
+      "noPropertiesCta": "Ir para o painel de propriedades"
+    },
+    "messages": {
+      "updated": "Extras atualizados com sucesso."
+    },
+    "table": {
+      "searchPlaceholder": "Pesquisar extra ou código…",
+      "statusAll": "Todas as regras",
+      "statusStandard": "Preço fixo",
+      "statusLongStay": "Estadias longas",
+      "columnName": "Extra",
+      "columnCode": "Código",
+      "columnPrice": "Preço",
+      "columnRule": "Regra",
+      "columnAvailability": "Disponibilidade",
+      "noName": "Sem nome",
+      "emptyMessage": "Nenhum extra corresponde aos filtros aplicados.",
+      "priceValue": "€ {amount}",
+      "rules": {
+        "standard": "Preço fixo",
+        "longStay": "Estadias longas"
+      }
+    }
+  },
+  "support": {
+    "backofficeLink": "Backoffice",
+    "help": {
+      "title": "Centro de ajuda",
+      "lead": "Encontra respostas rápidas para as dúvidas mais comuns e os contactos da equipa de suporte. Mantemos esta página atualizada com procedimentos recomendados, links para documentação e canais de emergência.",
+      "fallback": "Contacta-nos via {email}.",
+      "sections": {
+        "resources": {
+          "title": "Documentação essencial",
+          "description": "Guia completo para começar e aprofundar os módulos mais usados.",
+          "items": {
+            "onboarding": {
+              "label": "Guia de onboarding do backoffice",
+              "description": "Configuração inicial, branding e permissões em menos de 30 minutos."
+            },
+            "bookings": {
+              "label": "Fluxo completo de reservas",
+              "description": "Da cotação à reconciliação financeira com alertas e automações."
+            },
+            "housekeeping": {
+              "label": "Checklist de housekeeping digital",
+              "description": "Boas práticas para organizar tarefas, fotografias e auditorias."
+            }
+          }
+        },
+        "faq": {
+          "title": "Perguntas frequentes",
+          "items": {
+            "resetPassword": {
+              "question": "Como redefinir a password de um colega?",
+              "answer": "Acede a <a class=\"underline\" href=\"/admin/utilizadores\">Administração &rsaquo; Utilizadores</a>, seleciona a conta e usa o formulário \"Alterar password\"."
+            },
+            "monthlyReports": {
+              "question": "Onde consulto os relatórios mensais?",
+              "answer": "Visita <a class=\"underline\" href=\"/admin/finance\">Finanças &rsaquo; Resumo financeiro</a> para gráficos mensais e exportações."
+            },
+            "shareCalendar": {
+              "question": "Como partilho o calendário com a receção?",
+              "answer": "Concede o escopo adequado em \"Atualizar privilégios\" e partilha o link direto do calendário (<code>/calendar</code>)."
+            }
+          }
+        },
+        "channels": {
+          "title": "Contactos de suporte",
+          "description": "Escolhe o canal adequado à urgência e à equipa envolvida.",
+          "items": {
+            "email": {
+              "label": "Email de suporte",
+              "value": "suporte@gestor.pt",
+              "description": "Tempo médio de resposta inferior a 4 horas úteis."
+            },
+            "phone": {
+              "label": "Linha telefónica",
+              "value": "+351 910 000 000",
+              "description": "Disponível nos dias úteis das 9h às 19h."
+            },
+            "emergencyChat": {
+              "label": "Chat de emergência",
+              "value": "Ícone de balão no canto inferior direito",
+              "description": "Resolução prioritária para quedas de canal ou falhas críticas."
+            }
+          }
+        },
+        "status": {
+          "title": "Quando escalar para suporte",
+          "tips": {
+            "contextDetails": "Inclui ID de reserva, propriedade e passos já executados ao abrir um ticket.",
+            "evidence": "Recolhe capturas de ecrã e timestamps para acelerar a análise técnica.",
+            "escalateCritical": "Escala incidentes críticos assim que afetarem hóspedes ou parceiros externos."
+          }
+        }
+      }
+    },
+    "uxApi": {
+      "title": "UX API e integrações",
+      "lead": "Constrói automações seguras sobre os serviços do backoffice: atualiza tarifas em massa, sincroniza bloqueios e exporta relatórios sem intervenção manual. Explora a <a href=\"{docUrl}\" target=\"_blank\" rel=\"noopener\">documentação oficial</a> ou acompanha o <a href=\"{quickstartUrl}\" target=\"_blank\" rel=\"noopener\">tutorial de arranque</a> para ligar o teu sistema.",
+      "quickLinks": {
+        "endpointMap": "Mapa de endpoints",
+        "sdk": "SDK JavaScript",
+        "status": "Estado da plataforma"
+      },
+      "guides": {
+        "rates": {
+          "title": "Gestão de tarifários",
+          "description": "Atualiza preços em massa através do endpoint PUT /admin/api/rates/bulk com validação e undo imediato."
+        },
+        "blocks": {
+          "title": "Bloqueios de unidades",
+          "description": "Cria indisponibilidades sincronizadas com OTAs usando POST /admin/api/units/:id/blocks."
+        },
+        "reviews": {
+          "title": "Gestão de reviews",
+          "description": "Consulta e responde a avaliações negativas via /admin/api/reviews com telemetria completa."
+        },
+        "reports": {
+          "title": "Relatórios e exportação",
+          "description": "Gera snapshots semanais em JSON, CSV ou PDF com GET /admin/api/reports/weekly."
+        }
+      },
+      "actions": {
+        "viewDocs": "Ver documentação",
+        "viewExamples": "Exemplos de código"
+      },
+      "tokens": {
+        "title": "Tokens de acesso",
+        "description": "Cada token identifica integrações externas e limita o que podem ler ou alterar. Usa chaves distintas por ambiente e renova-as periodicamente para cumprir as políticas de segurança.",
+        "cta": "Guia de gestão de tokens",
+        "table": {
+          "identifier": "Identificador",
+          "scopes": "Escopos",
+          "environment": "Ambiente",
+          "lastUsed": "Último uso",
+          "status": "Estado",
+          "empty": "Sem tokens ativos neste tenant."
+        },
+        "footnote": "Mantém um registo de quem criou cada token. Em caso de compromisso, revoga-o e cria uma nova chave para limitar o impacto.",
+        "status": {
+          "active": "Ativo",
+          "revoked": "Revogado",
+          "expired": "Expirado"
+        }
+      },
+      "guidelines": {
+        "title": "Boas práticas e requisitos",
+        "items": {
+          "format": {
+            "title": "Formato das chaves",
+            "description": "Utiliza tokens hexadecimais com 40 caracteres e guarda-os em cofres secretos.",
+            "tooltip": "Exemplo: 9f4b12c0a9c3… Apenas letras minúsculas e números são aceites."
+          },
+          "scopes": {
+            "title": "Escopos mínimos",
+            "description": "Concede apenas os escopos necessários, como reservations:read ou housekeeping:manage.",
+            "tooltip": "Combina escopos para criar perfis específicos por integração."
+          },
+          "lifecycle": {
+            "title": "Ciclo de vida",
+            "description": "Renova as credenciais a cada 90 dias e revoga-as imediatamente quando trocares de fornecedor.",
+            "tooltip": "Tokens revogados deixam de funcionar de forma instantânea."
+          }
+        }
+      },
+      "integrations": {
+        "title": "Integrações configuradas",
+        "description": "Integra e sincroniza dados com o conector {name}.",
+        "cta": "Detalhes"
+      },
+      "fallback": "Consulta a documentação em {docUrl}."
+    }
+  }
+}

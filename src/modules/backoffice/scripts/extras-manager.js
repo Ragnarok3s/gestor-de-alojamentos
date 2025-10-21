@@ -98,6 +98,7 @@
     state.extras.forEach((extra, index) => {
       const article = document.createElement('article');
       article.className = 'card p-4 space-y-4';
+      article.id = `extra-${index}`;
       article.dataset.extraIndex = String(index);
       article.innerHTML = `
         <div class="flex items-start justify-between gap-4">

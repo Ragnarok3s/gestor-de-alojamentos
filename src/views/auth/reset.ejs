@@ -1,0 +1,129 @@
+<%
+  const brand = branding || {};
+  const brandName = brand.brandName || 'Gestor de Alojamentos';
+  const logoPath = brand.logoPath;
+  const logoAlt = brand.logoAlt || `${brandName} · logótipo`;
+  const initialsSource = brand.brandInitials || brandName;
+  const initials = (initialsSource && initialsSource.replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 2).toUpperCase()) || 'GA';
+  const isConfirm = step === 'confirm';
+  const translator = typeof t === 'function' ? t : (key => key);
+  const subtitleText = isConfirm
+    ? translator('auth.reset.stepPassword')
+    : translator('auth.reset.stepEmail');
+  const emailPlaceholderRaw = translator('auth.reset.emailPlaceholder');
+  const emailPlaceholder = emailPlaceholderRaw && emailPlaceholderRaw !== 'auth.reset.emailPlaceholder'
+    ? emailPlaceholderRaw
+    : translator('auth.reset.stepEmail');
+  const newPasswordPlaceholderRaw = translator('auth.reset.newPasswordPlaceholder');
+  const newPasswordPlaceholder = newPasswordPlaceholderRaw && newPasswordPlaceholderRaw !== 'auth.reset.newPasswordPlaceholder'
+    ? newPasswordPlaceholderRaw
+    : translator('auth.reset.newPassword');
+  const confirmPasswordPlaceholderRaw = translator('auth.reset.confirmPasswordPlaceholder');
+  const confirmPasswordPlaceholder =
+    confirmPasswordPlaceholderRaw && confirmPasswordPlaceholderRaw !== 'auth.reset.confirmPasswordPlaceholder'
+      ? confirmPasswordPlaceholderRaw
+      : translator('auth.reset.confirmPassword');
+  const requestNewLinkRaw = translator('auth.reset.requestLink');
+  const requestNewLinkLabel = requestNewLinkRaw && requestNewLinkRaw !== 'auth.reset.requestLink'
+    ? requestNewLinkRaw
+    : translator('auth.forgotPassword');
+%>
+<div class="auth-wrapper">
+  <div class="auth-card card">
+    <div class="auth-branding">
+      <div class="auth-logo">
+        <% if (logoPath) { %>
+          <img src="<%= esc(logoPath) %>" alt="<%= esc(logoAlt) %>" class="auth-logo__image" />
+        <% } else { %>
+          <span class="auth-logo__initials"><%= esc(initials) %></span>
+        <% } %>
+      </div>
+      <h1 class="auth-title"><%= esc(translator('auth.reset.title')) %></h1>
+      <p class="auth-subtitle"><%= esc(subtitleText) %></p>
+    </div>
+
+    <div class="auth-stepper">
+      <div class="auth-step <%= isConfirm ? '' : 'is-active' %>">
+        <span class="auth-step__number">1</span>
+        <span class="auth-step__label"><%= esc(translator('auth.reset.stepEmail')) %></span>
+      </div>
+      <div class="auth-step <%= isConfirm ? 'is-active' : '' %>">
+        <span class="auth-step__number">2</span>
+        <span class="auth-step__label"><%= esc(translator('auth.reset.stepPassword')) %></span>
+      </div>
+    </div>
+
+    <% if (noticeMessage) { %>
+      <div class="auth-alert auth-alert--success" role="status"><%= esc(noticeMessage) %></div>
+    <% } %>
+    <% if (errorMessage) { %>
+      <div class="auth-alert auth-alert--error" role="alert"><%= esc(errorMessage) %></div>
+    <% } %>
+
+    <% if (!isConfirm) { %>
+      <form class="auth-form" method="post" action="/login/reset">
+        <input type="hidden" name="_csrf" value="<%= esc(csrfToken || '') %>" />
+        <div class="auth-field">
+          <label class="auth-label" for="reset-email">Email</label>
+          <div class="auth-input">
+            <span class="auth-input__icon"><%- include('../partials/icon', { name: 'mail' }) %></span>
+            <input
+              id="reset-email"
+              class="auth-input__field"
+              type="email"
+              name="email"
+              placeholder="<%= esc(emailPlaceholder) %>"
+              autocomplete="email"
+              required
+              autofocus
+            />
+          </div>
+        </div>
+        <button class="btn btn-primary auth-submit" type="submit"><%= esc(translator('auth.reset.submitEmail')) %></button>
+      </form>
+      <div class="auth-links">
+        <a href="/login"><%= esc(translator('auth.reset.backToLogin')) %></a>
+      </div>
+    <% } else { %>
+      <form class="auth-form" method="post" action="/login/reset/confirm">
+        <input type="hidden" name="_csrf" value="<%= esc(csrfToken || '') %>" />
+        <input type="hidden" name="token" value="<%= esc(token || '') %>" />
+        <div class="auth-field">
+          <label class="auth-label" for="reset-password"><%= esc(translator('auth.reset.newPassword')) %></label>
+          <div class="auth-input">
+            <span class="auth-input__icon"><%- include('../partials/icon', { name: 'lock' }) %></span>
+            <input
+              id="reset-password"
+              class="auth-input__field"
+              type="password"
+              name="password"
+              placeholder="<%= esc(newPasswordPlaceholder) %>"
+              autocomplete="new-password"
+              required
+              autofocus
+            />
+          </div>
+        </div>
+        <div class="auth-field">
+          <label class="auth-label" for="reset-confirm"><%= esc(translator('auth.reset.confirmPassword')) %></label>
+          <div class="auth-input">
+            <span class="auth-input__icon"><%- include('../partials/icon', { name: 'check-circle' }) %></span>
+            <input
+              id="reset-confirm"
+              class="auth-input__field"
+              type="password"
+              name="confirm"
+              placeholder="<%= esc(confirmPasswordPlaceholder) %>"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+        </div>
+        <button class="btn btn-primary auth-submit" type="submit"><%= esc(translator('auth.reset.submitPassword')) %></button>
+      </form>
+      <div class="auth-links">
+        <a href="/login/reset"><%= esc(requestNewLinkLabel) %></a>
+      </div>
+    <% } %>
+  </div>
+</div>

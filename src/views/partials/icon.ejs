@@ -1,0 +1,14 @@
+<%
+  const iconName = typeof name === 'string' && name.trim() ? name.trim() : 'circle';
+  const iconClasses = ['app-icon'];
+  if (typeof size === 'string' && size.trim()) {
+    iconClasses.push(`app-icon--${size.trim()}`);
+  }
+  if (typeof className === 'string' && className.trim()) {
+    iconClasses.push(className.trim());
+  }
+  const labelText = typeof title === 'string' && title.trim() ? title.trim() : null;
+%>
+<span class="<%= iconClasses.join(' ') %>" <%= labelText ? `role="img" aria-label="${esc(labelText)}"` : 'aria-hidden="true"' %>>
+  <i data-lucide="<%= esc(iconName) %>"></i>
+</span>

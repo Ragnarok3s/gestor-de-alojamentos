@@ -1,0 +1,265 @@
+<%
+  const translator = typeof t === 'function' ? t : (key => key);
+  const searchPlaceholderText = searchPlaceholder || translator('table.searchPlaceholder');
+  const applyLabel = translator('actions.apply');
+  const clearLabel = translator('actions.clear');
+  const actionsHeading = actionsLabel || translator('table.actions');
+  const emptyStateMessage = emptyMessage || translator('table.empty');
+  const modalTitleFallback = translator('table.modalTitle');
+  const modalMessageFallback = translator('table.modalMessage');
+  const modalConfirmFallback = translator('table.modalConfirm');
+  const cancelLabel = translator('actions.cancel') || 'Cancelar';
+  const statusLabelText = (typeof statusLabel === 'string' && statusLabel) || translator('table.status');
+  const paginationLabel = translator('table.pagination');
+%>
+<div class="table-widget" <%= id ? `id="${id}"` : '' %>>
+  <form method="get" action="<%= formAction || '' %>" class="table-widget__toolbar">
+    <div class="table-widget__search">
+      <span class="table-widget__search-icon"><%- include('icon', { name: 'search' }) %></span>
+      <input
+        class="input"
+        type="search"
+        name="search"
+        value="<%= esc(searchValue || '') %>"
+        placeholder="<%= esc(searchPlaceholderText) %>"
+      />
+    </div>
+    <% if (Array.isArray(statusOptions) && statusOptions.length) { %>
+      <label class="table-widget__filter">
+        <span class="sr-only"><%= esc(statusLabelText) %></span>
+        <select class="input" name="status">
+          <% statusOptions.forEach(option => { %>
+            <option value="<%= esc(option.value) %>" <%= option.value === (statusValue || '') ? 'selected' : '' %>>
+              <%= esc(option.label) %>
+            </option>
+          <% }) %>
+        </select>
+      </label>
+    <% } %>
+    <% if (hiddenInputs && typeof hiddenInputs === 'object') { %>
+      <% Object.entries(hiddenInputs).forEach(([name, value]) => { %>
+        <% if (value != null && value !== '') { %>
+          <input type="hidden" name="<%= esc(name) %>" value="<%= esc(String(value)) %>" />
+        <% } %>
+      <% }); %>
+    <% } %>
+    <% if (sortKey) { %>
+      <input type="hidden" name="sort" value="<%= esc(sortKey) %>" />
+    <% } %>
+    <% if (sortOrder) { %>
+      <input type="hidden" name="order" value="<%= esc(sortOrder) %>" />
+    <% } %>
+    <input type="hidden" name="page" value="1" />
+    <div class="table-widget__actions">
+      <button class="btn btn-primary" type="submit"><%= esc(applyLabel) %></button>
+      <% if (resetUrl) { %>
+        <a class="btn btn-light" href="<%= resetUrl %>"><%= esc(clearLabel) %></a>
+      <% } %>
+    </div>
+  </form>
+
+  <div class="responsive-table">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-500">
+          <% columns.forEach(column => { %>
+            <% const isSorted = sortKey === column.key; %>
+            <% if (column.sortable && typeof buildSortUrl === 'function') { %>
+              <th scope="col" class="sortable <%= isSorted ? `sorted sorted--${sortOrder}` : '' %> <%= column.className || '' %>">
+                <a href="<%= buildSortUrl(column.key) %>" class="sortable-link">
+                  <%= esc(column.label) %>
+                  <% if (isSorted) { %>
+                    <span class="table-widget__sort-icon">
+                      <%- include('icon', { name: sortOrder === 'desc' ? 'arrow-down' : 'arrow-up' }) %>
+                    </span>
+                  <% } %>
+                </a>
+              </th>
+            <% } else { %>
+              <th scope="col" class="<%= column.className || '' %>"><%= esc(column.label) %></th>
+            <% } %>
+          <% }) %>
+          <% if (showActionsColumn) { %>
+            <th scope="col" class="text-right"><%= esc(actionsHeading) %></th>
+          <% } %>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr>
+            <td colspan="<%= columns.length + (showActionsColumn ? 1 : 0) %>" class="p-4 text-center text-slate-500">
+              <%= esc(emptyStateMessage) %>
+            </td>
+          </tr>
+        <% } else { %>
+          <% rows.forEach(row => { %>
+            <tr class="table-widget__row">
+              <% columns.forEach(column => {
+                const cell = (row.cells && row.cells[column.key]) || null;
+                const cellHtml = cell && cell.html != null ? cell.html : null;
+                const cellText = cell && cell.text != null ? cell.text : '';
+                const cellMeta = cell && cell.meta ? cell.meta : '';
+                const cellClass = cell && cell.className ? cell.className : '';
+              %>
+                <td class="<%= cellClass %>" data-label="<%= esc(column.label) %>">
+                  <% if (cellHtml != null) { %>
+                    <%- cellHtml %>
+                  <% } else { %>
+                    <span class="table-cell-value"><%= esc(cellText) %></span>
+                  <% } %>
+                  <% if (cellMeta) { %>
+                    <span class="table-cell-meta"><%= esc(cellMeta) %></span>
+                  <% } %>
+                </td>
+              <% }) %>
+              <% if (showActionsColumn) { %>
+                <td class="text-right">
+                  <div class="table-cell-actions">
+                    <% (row.actions || []).forEach(action => { %>
+                      <% if (action.type === 'link') { %>
+                        <a
+                          href="<%= action.href %>"
+                          class="btn btn-light btn-compact"
+                          title="<%= esc(action.label) %>"
+                        >
+                      <% if (action.icon) { %>
+                        <span class="table-action__icon"><%- include('icon', { name: action.icon }) %></span>
+                      <% } %>
+                      <span><%= esc(action.label) %></span>
+                    </a>
+                  <% } else if (action.type === 'button') { %>
+                    <button
+                      type="button"
+                          class="btn btn-light btn-compact"
+                          data-table-modal-open="<%= action.modalId %>"
+                          data-modal-source="<%= action.modalId %>"
+                        >
+                      <% if (action.icon) { %>
+                        <span class="table-action__icon"><%- include('icon', { name: action.icon }) %></span>
+                      <% } %>
+                      <span><%= esc(action.label) %></span>
+                    </button>
+                  <% } %>
+                <% }) %>
+              </div>
+                </td>
+              <% } %>
+            </tr>
+          <% }) %>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <% if (pagination && pagination.totalPages > 1 && typeof buildPageUrl === 'function') { %>
+    <nav class="table-widget__pagination" aria-label="<%= esc(paginationLabel) %>">
+      <ul>
+        <li>
+          <a
+            href="<%= buildPageUrl(Math.max(1, pagination.page - 1)) %>"
+            class="table-widget__page <%= pagination.page === 1 ? 'is-disabled' : '' %>"
+            aria-disabled="<%= pagination.page === 1 ? 'true' : 'false' %>"
+          >
+            <span>&laquo;</span>
+          </a>
+        </li>
+        <% for (let i = 1; i <= pagination.totalPages; i++) { %>
+          <li>
+            <a
+              href="<%= buildPageUrl(i) %>"
+              class="table-widget__page <%= pagination.page === i ? 'is-active' : '' %>"
+              aria-current="<%= pagination.page === i ? 'page' : 'false' %>"
+            >
+              <%= i %>
+            </a>
+          </li>
+        <% } %>
+        <li>
+          <a
+            href="<%= buildPageUrl(Math.min(pagination.totalPages, pagination.page + 1)) %>"
+            class="table-widget__page <%= pagination.page === pagination.totalPages ? 'is-disabled' : '' %>"
+            aria-disabled="<%= pagination.page === pagination.totalPages ? 'true' : 'false' %>"
+          >
+            <span>&raquo;</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  <% } %>
+</div>
+
+<% if (Array.isArray(modals) && modals.length) { %>
+  <% modals.forEach(modal => { %>
+    <div class="modal" id="<%= modal.id %>" role="dialog" aria-modal="true" aria-labelledby="<%= modal.id %>-title" hidden>
+      <div class="modal__backdrop" data-table-modal-close></div>
+      <div class="modal__dialog">
+        <header class="modal__header">
+          <h2 id="<%= modal.id %>-title"><%= esc(modal.title || modalTitleFallback) %></h2>
+          <button type="button" class="modal__close" data-table-modal-close aria-label="<%= esc(cancelLabel) %>">×</button>
+        </header>
+        <div class="modal__body">
+          <p><%= esc(modal.message || modalMessageFallback) %></p>
+        </div>
+        <footer class="modal__footer">
+          <button type="button" class="btn" data-table-modal-close><%= esc(cancelLabel) %></button>
+          <form method="post" action="<%= modal.action %>">
+            <% if (modal.method && modal.method.toLowerCase() !== 'post') { %>
+              <input type="hidden" name="_method" value="<%= esc(modal.method) %>" />
+            <% } %>
+            <button type="submit" class="btn btn-danger">
+              <% if (modal.confirmIcon) { %>
+                <span class="table-action__icon"><%- include('icon', { name: modal.confirmIcon }) %></span>
+              <% } %>
+              <span><%= esc(modal.confirmLabel || modalConfirmFallback) %></span>
+            </button>
+          </form>
+        </footer>
+      </div>
+    </div>
+  <% }) %>
+<% } %>
+
+<script>
+  (function () {
+    if (window.__tableModalInitialized) return;
+    window.__tableModalInitialized = true;
+
+    function toggleModal(modal, open) {
+      if (!modal) return;
+      if (open) {
+        modal.removeAttribute('hidden');
+        modal.classList.add('is-open');
+        document.body.classList.add('modal-open');
+      } else {
+        modal.setAttribute('hidden', '');
+        modal.classList.remove('is-open');
+        document.body.classList.remove('modal-open');
+      }
+    }
+
+    document.addEventListener('click', function (event) {
+      const openTrigger = event.target.closest('[data-table-modal-open]');
+      if (openTrigger) {
+        const modalId = openTrigger.getAttribute('data-table-modal-open');
+        const modal = modalId ? document.getElementById(modalId) : null;
+        if (modal) {
+          event.preventDefault();
+          toggleModal(modal, true);
+          return;
+        }
+      }
+
+      if (event.target.closest('[data-table-modal-close]')) {
+        const modal = event.target.closest('.modal');
+        toggleModal(modal, false);
+      }
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        const modal = document.querySelector('.modal.is-open');
+        toggleModal(modal, false);
+      }
+    });
+  })();
+</script>

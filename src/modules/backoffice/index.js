@@ -17,30 +17,39 @@ const { aggregatePaymentData, computeOutstandingCents } = require('../../service
 
 const BACKOFFICE_NAV_GROUPS = [
   {
-    title: 'Operações',
+    titleKey: 'navigation.groups.operations',
+    defaultTitle: 'Operações',
     items: [
-      { label: 'Calendário', href: '/admin' },
-      { label: 'Reservas', href: '/admin/bookings' },
-      { label: 'Housekeeping', href: '/admin/limpeza' }
+      { labelKey: 'navigation.items.dashboard', defaultLabel: 'Dashboard', href: '/admin/dashboard' },
+      { labelKey: 'navigation.items.calendar', defaultLabel: 'Calendário', href: '/admin' },
+      { labelKey: 'navigation.items.bookings', defaultLabel: 'Reservas', href: '/admin/bookings' },
+      { labelKey: 'navigation.items.housekeeping', defaultLabel: 'Housekeeping', href: '/admin/limpeza' }
     ]
   },
   {
-    title: 'Finanças',
+    titleKey: 'navigation.groups.finance',
+    defaultTitle: 'Finanças',
     items: [
-      { label: 'Resumo financeiro', href: '/admin/finance' },
-      { label: 'Planos tarifários', href: '/admin/rates/plans' },
-      { label: 'Regras de tarifa', href: '/admin/rates/rules' },
-      { label: 'Extras', href: '/admin/extras' },
-      { label: 'Relatórios', href: '/admin/revenue-calendar' }
+      { labelKey: 'navigation.items.financeSummary', defaultLabel: 'Resumo financeiro', href: '/admin/finance' },
+      { labelKey: 'navigation.items.ratePlans', defaultLabel: 'Planos tarifários', href: '/admin/rates/plans' },
+      { labelKey: 'navigation.items.rateRules', defaultLabel: 'Regras de tarifa', href: '/admin/rates/rules' },
+      { labelKey: 'navigation.items.extras', defaultLabel: 'Extras', href: '/admin/extras' },
+      { labelKey: 'navigation.items.reports', defaultLabel: 'Relatórios', href: '/admin/revenue-calendar' }
     ]
   },
   {
-    title: 'Configuração',
+    titleKey: 'navigation.groups.configuration',
+    defaultTitle: 'Configuração',
     items: [
-      { label: 'Centros de conteúdo', href: '/admin/content-center' },
-      { label: 'UX API', href: '/admin/ux-api' },
-      { label: 'Administração', href: '/admin/utilizadores' }
+      { labelKey: 'navigation.items.contentCenters', defaultLabel: 'Centros de conteúdo', href: '/admin/content-center' },
+      { labelKey: 'navigation.items.uxApi', defaultLabel: 'UX API', href: '/admin/ux-api' },
+      { labelKey: 'navigation.items.admin', defaultLabel: 'Administração', href: '/admin/utilizadores' }
     ]
+  },
+  {
+    titleKey: 'navigation.groups.support',
+    defaultTitle: 'Suporte',
+    items: [{ labelKey: 'navigation.items.help', defaultLabel: 'Ajuda & FAQ', href: '/admin/ajuda' }]
   }
 ];
 
@@ -254,6 +263,86 @@ module.exports = function registerBackoffice(app, context) {
     navigationTemplateRenderer = null;
   }
 
+  const dashboardTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'dashboard.ejs');
+  let dashboardTemplateRenderer = null;
+  try {
+    const dashboardTemplate = fs.readFileSync(dashboardTemplatePath, 'utf8');
+    dashboardTemplateRenderer = compileEjsTemplate(dashboardTemplate);
+  } catch (err) {
+    dashboardTemplateRenderer = null;
+  }
+
+  const tableTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'table.ejs');
+  let tableTemplateRenderer = null;
+  try {
+    const tableTemplate = fs.readFileSync(tableTemplatePath, 'utf8');
+    tableTemplateRenderer = compileEjsTemplate(tableTemplate);
+  } catch (err) {
+    tableTemplateRenderer = null;
+  }
+
+  const propertiesTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'properties.ejs');
+  let propertiesTemplateRenderer = null;
+  try {
+    const propertiesTemplate = fs.readFileSync(propertiesTemplatePath, 'utf8');
+    propertiesTemplateRenderer = compileEjsTemplate(propertiesTemplate);
+  } catch (err) {
+    propertiesTemplateRenderer = null;
+  }
+
+  const unitsTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'units.ejs');
+  let unitsTemplateRenderer = null;
+  try {
+    const unitsTemplate = fs.readFileSync(unitsTemplatePath, 'utf8');
+    unitsTemplateRenderer = compileEjsTemplate(unitsTemplate);
+  } catch (err) {
+    unitsTemplateRenderer = null;
+  }
+
+  const usersTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'users.ejs');
+  let usersTemplateRenderer = null;
+  try {
+    const usersTemplate = fs.readFileSync(usersTemplatePath, 'utf8');
+    usersTemplateRenderer = compileEjsTemplate(usersTemplate);
+  } catch (err) {
+    usersTemplateRenderer = null;
+  }
+
+  const extrasTemplatePath = path.join(
+    __dirname,
+    '..',
+    '..',
+    'views',
+    'backoffice',
+    'finance',
+    'extras.ejs'
+  );
+  let extrasTemplateRenderer = null;
+  try {
+    const extrasTemplate = fs.readFileSync(extrasTemplatePath, 'utf8');
+    extrasTemplateRenderer = compileEjsTemplate(extrasTemplate);
+  } catch (err) {
+    extrasTemplateRenderer = null;
+  }
+
+  const uxApiTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'ux-api.ejs');
+  let uxApiTemplateRenderer = null;
+  try {
+    const uxApiTemplate = fs.readFileSync(uxApiTemplatePath, 'utf8');
+    uxApiTemplateRenderer = compileEjsTemplate(uxApiTemplate);
+  } catch (err) {
+    uxApiTemplateRenderer = null;
+  }
+
+  const helpTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'help.ejs');
+  let helpTemplateRenderer = null;
+  try {
+    const helpTemplate = fs.readFileSync(helpTemplatePath, 'utf8');
+    helpTemplateRenderer = compileEjsTemplate(helpTemplate);
+  } catch (err) {
+    helpTemplateRenderer = null;
+  }
+
   function sanitizeId(value, fallback) {
     const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
     return safe || fallback;
@@ -304,15 +393,259 @@ module.exports = function registerBackoffice(app, context) {
     }
   }
 
-  function renderNavigation(activeNav) {
+  function renderNavigation(activeNav, req, res) {
     if (!navigationTemplateRenderer) return '';
     try {
+      const translator = resolveTranslator(req, res);
+      const groups = BACKOFFICE_NAV_GROUPS.map(group => {
+        const groupTitle = translator(group.titleKey) || group.defaultTitle || group.titleKey;
+        const items = Array.isArray(group.items)
+          ? group.items.map(item => ({
+              ...item,
+              label:
+                translator(item.labelKey) ||
+                item.defaultLabel ||
+                item.label ||
+                item.labelKey,
+            }))
+          : [];
+        return {
+          ...group,
+          title: groupTitle,
+          items,
+        };
+      });
       return navigationTemplateRenderer({
         activeNav: typeof activeNav === 'string' ? activeNav : '',
-        groups: BACKOFFICE_NAV_GROUPS,
-        esc
+        groups,
+        esc,
       });
     } catch (err) {
+      return '';
+    }
+  }
+
+  function escapeSqlLike(value) {
+    return String(value || '').replace(/[\\%_]/g, '\\$&');
+  }
+
+  function computeNotificationKey(item) {
+    if (!item) return '';
+    const parts = [item.title || '', item.message || '', item.meta || '', item.href || ''];
+    const raw = parts.join('|');
+    try {
+      return Buffer.from(raw).toString('base64');
+    } catch (err) {
+      return raw.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 64);
+    }
+  }
+
+  function getNotificationReadSet(req) {
+    if (!req || !req.session) return new Set();
+    const store = req.session;
+    if (!Array.isArray(store.notificationReadKeys)) {
+      store.notificationReadKeys = [];
+    }
+    return new Set(store.notificationReadKeys);
+  }
+
+  function storeNotificationReadSet(req, set) {
+    if (!req || !req.session) return;
+    req.session.notificationReadKeys = Array.from(set || []);
+  }
+
+  function loadNotifications(req, res) {
+    const base = buildUserNotifications({
+      user: req && req.user,
+      db,
+      dayjs,
+      userCan,
+      ensureAutomationFresh,
+      automationCache
+    });
+    const readSet = getNotificationReadSet(req);
+    const list = (Array.isArray(base) ? base : []).map(item => {
+      const key = computeNotificationKey(item);
+      return {
+        ...item,
+        key,
+        read: key ? readSet.has(key) : false
+      };
+    });
+    const unreadCount = list.filter(item => !item.read).length;
+    return { list, unreadCount, readSet };
+  }
+
+  function labelBookingStatus(statusRaw) {
+    const status = String(statusRaw || '').toUpperCase();
+    if (status === 'CONFIRMED') return 'Confirmada';
+    if (status === 'PENDING') return 'Pendente';
+    if (status === 'CANCELLED' || status === 'CANCELED') return 'Cancelada';
+    return status || 'Desconhecido';
+  }
+
+  app.get('/admin/search', requireLogin, requireBackofficeAccess, (req, res) => {
+    const queryRaw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!queryRaw) {
+      return res.json({ ok: true, query: '', groups: [] });
+    }
+    const normalized = queryRaw.slice(0, 120);
+    if (normalized.length < 2) {
+      return res.json({ ok: true, query: normalized, groups: [] });
+    }
+    const escaped = escapeSqlLike(normalized);
+    const likeTerm = `%${escaped}%`;
+    const numericTerm = queryRaw.replace(/[^0-9]/g, '');
+    const likeId = numericTerm ? `%${numericTerm}%` : likeTerm;
+
+    const bookingsStmt = db.prepare(
+      `SELECT b.id, b.guest_name, b.guest_email, b.status, b.checkin, b.checkout,
+              u.name AS unit_name, p.name AS property_name
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE b.guest_name LIKE ? ESCAPE '\\'
+           OR b.guest_email LIKE ? ESCAPE '\\'
+           OR p.name LIKE ? ESCAPE '\\'
+           OR u.name LIKE ? ESCAPE '\\'
+           OR CAST(b.id AS TEXT) LIKE ?
+        ORDER BY b.created_at DESC
+        LIMIT 6`
+    );
+    const bookingRows = bookingsStmt.all(likeTerm, likeTerm, likeTerm, likeTerm, likeId);
+    const bookingItems = bookingRows.map(row => {
+      const checkin = row.checkin ? dayjs(row.checkin).format('DD/MM') : '';
+      const checkout = row.checkout ? dayjs(row.checkout).format('DD/MM') : '';
+      const meta = checkin && checkout ? `${checkin} – ${checkout}` : '';
+      return {
+        title: `Reserva #${row.id} · ${row.guest_name || 'Sem hóspede'}`,
+        subtitle: [row.property_name, row.unit_name].filter(Boolean).join(' · '),
+        meta,
+        badge: labelBookingStatus(row.status),
+        href: `/admin/bookings/${row.id}`,
+        icon: 'calendar'
+      };
+    });
+
+    const unitStmt = db.prepare(
+      `SELECT u.id, u.name, u.capacity, p.name AS property_name
+         FROM units u
+         JOIN properties p ON p.id = u.property_id
+        WHERE u.name LIKE ? ESCAPE '\\'
+           OR p.name LIKE ? ESCAPE '\\'
+        ORDER BY p.name, u.name
+        LIMIT 5`
+    );
+    const unitRows = unitStmt.all(likeTerm, likeTerm);
+    const unitItems = unitRows.map(row => ({
+      title: row.name,
+      subtitle: row.property_name || '',
+      meta: Number.isFinite(row.capacity) ? `Capacidade ${row.capacity}` : '',
+      href: `/admin/units?search=${encodeURIComponent(row.name)}`,
+      icon: 'bed-double'
+    }));
+
+    const guestStmt = db.prepare(
+      `SELECT guest_name, guest_email, MAX(created_at) AS last_created_at, MAX(id) AS booking_id
+         FROM bookings
+        WHERE guest_name LIKE ? ESCAPE '\\'
+           OR guest_email LIKE ? ESCAPE '\\'
+        GROUP BY guest_email, guest_name
+        ORDER BY last_created_at DESC
+        LIMIT 5`
+    );
+    const guestRows = guestStmt.all(likeTerm, likeTerm);
+    const guestItems = guestRows.map(row => ({
+      title: row.guest_name || row.guest_email || 'Hóspede',
+      subtitle: row.guest_email || '',
+      meta: row.last_created_at ? dayjs(row.last_created_at).format('DD/MM/YYYY HH:mm') : '',
+      href: `/admin/bookings?search=${encodeURIComponent(row.guest_email || row.guest_name || '')}`,
+      icon: 'user'
+    }));
+
+    const contentStmt = db.prepare(
+      `SELECT id, title, locale, updated_at
+         FROM kb_articles
+        WHERE title LIKE ? ESCAPE '\\'
+           OR body LIKE ? ESCAPE '\\'
+        ORDER BY updated_at DESC
+        LIMIT 5`
+    );
+    const contentRows = contentStmt.all(likeTerm, likeTerm);
+    const contentItems = contentRows.map(row => ({
+      title: row.title,
+      subtitle: row.locale ? `Idioma ${row.locale.toUpperCase()}` : '',
+      meta: row.updated_at ? dayjs(row.updated_at).format('DD/MM/YYYY HH:mm') : '',
+      href: `/admin/content-center?search=${encodeURIComponent(row.title)}`,
+      icon: 'book-open'
+    }));
+
+    const groups = [];
+    if (bookingItems.length) groups.push({ type: 'bookings', label: 'Reservas', items: bookingItems });
+    if (unitItems.length) groups.push({ type: 'units', label: 'Unidades', items: unitItems });
+    if (guestItems.length) groups.push({ type: 'guests', label: 'Hóspedes', items: guestItems });
+    if (contentItems.length) groups.push({ type: 'content', label: 'Conteúdos', items: contentItems });
+
+    const total = groups.reduce((sum, group) => sum + (Array.isArray(group.items) ? group.items.length : 0), 0);
+    res.json({ ok: true, query: normalized, groups, total });
+  });
+
+  app.get('/admin/notifications', requireLogin, requireBackofficeAccess, (req, res) => {
+    const { list, unreadCount } = loadNotifications(req, res);
+    res.json({ ok: true, notifications: list, unreadCount });
+  });
+
+  app.post('/admin/notifications/read', requireLogin, requireBackofficeAccess, (req, res) => {
+    const body = req.body || {};
+    const keys = Array.isArray(body.keys) ? body.keys : [];
+    if (keys.length) {
+      const readSet = getNotificationReadSet(req);
+      keys.forEach(key => {
+        if (typeof key === 'string' && key.trim()) {
+          readSet.add(key.trim());
+        }
+      });
+      storeNotificationReadSet(req, readSet);
+    }
+    const { unreadCount } = loadNotifications(req, res);
+    res.json({ ok: true, unread: unreadCount });
+  });
+
+  function resolveTranslator(req, res, fallback) {
+    if (res && res.locals && typeof res.locals.t === 'function') {
+      return res.locals.t;
+    }
+    if (req && typeof req.t === 'function') {
+      return req.t;
+    }
+    if (i18n && typeof i18n.createTranslator === 'function') {
+      const language =
+        (res && res.locals && res.locals.language) ||
+        (req && req.language) ||
+        (typeof i18n.defaultLanguage === 'string' ? i18n.defaultLanguage : 'pt');
+      return i18n.createTranslator(language);
+    }
+    if (typeof fallback === 'function') {
+      return fallback;
+    }
+    return (key) => key;
+  }
+
+  function renderTable(config = {}, req, res) {
+    if (!tableTemplateRenderer) return '';
+    try {
+      const tableConfig = { ...config };
+      tableConfig.esc = esc;
+      if (!tableConfig.t) {
+        tableConfig.t = resolveTranslator(req, res, tableConfig.t);
+      }
+      if (typeof tableConfig.showActionsColumn !== 'boolean') {
+        const rows = Array.isArray(tableConfig.rows) ? tableConfig.rows : [];
+        tableConfig.showActionsColumn = rows.some(row => Array.isArray(row.actions) && row.actions.length);
+      }
+      return tableTemplateRenderer(tableConfig);
+    } catch (err) {
+      console.warn('Falha ao renderizar tabela:', err.message);
       return '';
     }
   }
@@ -450,6 +783,8 @@ module.exports = function registerBackoffice(app, context) {
     renderBreadcrumbs,
     serverRender,
     extrasManagerScript,
+    renderTable,
+    extrasTemplateRenderer,
   });
 
   // Registar rotas de reservas no backoffice.
@@ -752,1248 +1087,546 @@ module.exports = function registerBackoffice(app, context) {
     }
   );
 
-  app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
-    res.locals.activeNav = '/admin';
-    const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
-    const unitsRaw = db
-      .prepare(
-        `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
-         FROM units u
-         JOIN properties p ON p.id = u.property_id
-        ORDER BY p.name, u.name`
-      )
-      .all();
-    const units = unitsRaw.map(u => {
-      const lat = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
-      const lon = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
-      return {
-        ...u,
-        unit_type: deriveUnitType(u),
-        latitude: Number.isFinite(lat) ? lat : null,
-        longitude: Number.isFinite(lon) ? lon : null
-      };
-    });
-    const activeUnitBlocks = db
-      .prepare(
-        `SELECT unit_id, start_date, end_date, reason
-           FROM unit_blocks
-          WHERE end_date > ?
-            AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')
-          ORDER BY start_date`
-      )
-      .all(dayjs().format('YYYY-MM-DD'));
-    const unitBlockIndex = new Map();
-    activeUnitBlocks.forEach(block => {
-      if (!unitBlockIndex.has(block.unit_id)) unitBlockIndex.set(block.unit_id, []);
-      unitBlockIndex.get(block.unit_id).push(block);
-    });
-    const propertyUnitMap = new Map();
-    props.forEach(p => propertyUnitMap.set(p.id, []));
-    units.forEach(u => {
-      if (!propertyUnitMap.has(u.property_id)) propertyUnitMap.set(u.property_id, []);
-      propertyUnitMap.get(u.property_id).push(u);
+  app.get('/admin/dashboard', requireLogin, requireScope('dashboard.view'), (req, res) => {
+    res.locals.activeNav = '/admin/dashboard';
+
+    const translator = resolveTranslator(req, res);
+    const languageInput =
+      (res.locals && res.locals.language) ||
+      req.language ||
+      'pt';
+    const normalizedLanguage = typeof languageInput === 'string' ? languageInput.toLowerCase() : 'pt';
+    const locale = normalizedLanguage.startsWith('en') ? 'en-US' : 'pt-PT';
+
+    const today = dayjs().format('YYYY-MM-DD');
+    const monthStart = dayjs().startOf('month').format('YYYY-MM-DD');
+    const monthEnd = dayjs().endOf('month').format('YYYY-MM-DD');
+    const numberFormatter = new Intl.NumberFormat(locale);
+    const percentFormatter = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1
     });
 
-    const propertyRevenueRows = db
-      .prepare(
-        `SELECT p.id,
-                p.name,
-                p.locality,
-                p.district,
-                SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END) AS confirmed_revenue_cents,
-                SUM(CASE WHEN b.status = 'PENDING' THEN b.total_cents ELSE 0 END) AS pending_revenue_cents,
-                COUNT(DISTINCT u.id) AS unit_count
-           FROM properties p
-           LEFT JOIN units u ON u.property_id = p.id
-           LEFT JOIN bookings b ON b.unit_id = u.id
-          GROUP BY p.id
-          ORDER BY p.name`
-      )
-      .all();
+    const totalUnitsRow = db.prepare('SELECT COUNT(*) AS count FROM units').get() || {};
+    const totalUnits = Number(totalUnitsRow.count || 0);
 
-    const recentBookings = db
-      .prepare(
-        `SELECT b.*, u.name as unit_name, p.name as property_name
-           FROM bookings b
-           JOIN units u ON u.id = b.unit_id
-           JOIN properties p ON p.id = u.property_id
-          ORDER BY b.created_at DESC
-          LIMIT 12`
-      )
-      .all();
-
-    const automationData = ensureAutomationFresh(5) || automationCache;
-    const automationMetrics = automationData.metrics || {};
-    const automationNotifications = automationData.notifications || [];
-    const automationSuggestions = automationData.tariffSuggestions || [];
-    const automationBlocks = automationData.generatedBlocks || [];
-    const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
-    const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
-    const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
-    const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
-    const automationRevenue30 = automationData.revenue ? automationData.revenue.next30 || 0 : 0;
-    const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
-
-    const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b, 'pt', { sensitivity: 'base' })
-    );
-    const monthOptions = [];
-    const monthBase = dayjs().startOf('month');
-    for (let i = 0; i < 12; i++) {
-      const m = monthBase.subtract(i, 'month');
-      monthOptions.push({ value: m.format('YYYY-MM'), label: capitalizeMonth(m.format('MMMM YYYY')) });
-    }
-    const defaultMonthValue = monthOptions.length ? monthOptions[0].value : dayjs().format('YYYY-MM');
-    const operationalDefault = computeOperationalDashboard({ month: defaultMonthValue });
-    const operationalConfig = {
-      filters: {
-        months: monthOptions,
-        properties: props.map(p => ({ id: p.id, name: p.name })),
-        unitTypes: unitTypeOptions
-      },
-      defaults: {
-        month: operationalDefault.month,
-        propertyId: operationalDefault.filters.propertyId ? String(operationalDefault.filters.propertyId) : '',
-        unitType: operationalDefault.filters.unitType || ''
-      },
-      initialData: operationalDefault
-    };
-    const operationalConfigJson = jsonScriptPayload(operationalConfig);
-
-    const financialTotals =
+    const occupiedRow =
       db
         .prepare(
-          `SELECT
-              SUM(CASE WHEN status = 'CONFIRMED' THEN total_cents ELSE 0 END) AS confirmed_cents,
-              SUM(CASE WHEN status = 'PENDING' THEN total_cents ELSE 0 END) AS pending_cents,
-              SUM(CASE WHEN status = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed_count,
-              SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count
-           FROM bookings`
+          `SELECT COUNT(DISTINCT b.unit_id) AS count
+             FROM bookings b
+            WHERE b.status = 'CONFIRMED'
+              AND b.checkin <= ?
+              AND b.checkout > ?`
         )
-        .get() || {};
-    const confirmedRevenueCents = financialTotals.confirmed_cents || 0;
-    const pendingRevenueCents = financialTotals.pending_cents || 0;
-    const confirmedBookingsCount = financialTotals.confirmed_count || 0;
-    const pendingBookingsCount = financialTotals.pending_count || 0;
-    const averageTicketCents = confirmedBookingsCount ? Math.round(confirmedRevenueCents / confirmedBookingsCount) : 0;
+        .get(today, today) || {};
+    const occupiedUnits = Number(occupiedRow.count || 0);
+    const occupancyPercent = totalUnits > 0 ? (occupiedUnits / Math.max(1, totalUnits)) * 100 : 0;
+    const occupancyLabel = `${percentFormatter.format(occupancyPercent)}%`;
+    const occupancyCaption = totalUnits
+      ? translator('dashboard.kpis.occupancy.caption', {
+          occupied: numberFormatter.format(occupiedUnits),
+          total: numberFormatter.format(totalUnits),
+        })
+      : translator('dashboard.kpis.occupancy.empty');
 
-    const canManageProperties = userCan(req.user, 'properties.manage');
-    const canViewAutomation = userCan(req.user, 'automation.view');
-    const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
-    const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
-    const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
-    const canManageUsers = userCan(req.user, 'users.manage');
-    const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
-    const canManageIntegrations = canManageEmailTemplates;
+    const revenueRow =
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(total_cents), 0) AS cents
+             FROM bookings
+            WHERE status = 'CONFIRMED'
+              AND checkin BETWEEN ? AND ?`
+        )
+        .get(monthStart, monthEnd) || {};
+    const revenueCents = Number(revenueRow.cents || 0);
+    const monthLabel = capitalizeMonth(
+      dayjs(monthStart)
+        .locale(normalizedLanguage.startsWith('en') ? 'en' : 'pt')
+        .format('MMMM YYYY')
+    );
+
+    const futureBookingsRow =
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM bookings
+            WHERE status = 'CONFIRMED'
+              AND checkin > ?`
+        )
+        .get(today) || {};
+    const futureBookingsCount = Number(futureBookingsRow.count || 0);
+
+    const housekeepingRow =
+      db.prepare("SELECT COUNT(*) AS count FROM housekeeping_tasks WHERE status = 'pending'").get() || {};
+    const housekeepingPending = Number(housekeepingRow.count || 0);
+
     const canViewCalendar = userCan(req.user, 'calendar.view');
-    const canViewRevenueCalendar = userCan(req.user, 'dashboard.view');
-    const isDevOperator = req.user && req.user.role === MASTER_ROLE;
-    const isDirectorOperator = req.user && req.user.role === 'direcao';
-    const canViewHistory = !!(isDevOperator || isDirectorOperator);
-
-    let housekeepingSummary = null;
-    let housekeepingCounts = null;
-    let housekeepingPending = [];
-    let housekeepingInProgress = [];
-    let housekeepingCompleted = [];
-    if (canSeeHousekeeping) {
-      housekeepingSummary = computeHousekeepingBoard({ horizonDays: 3, futureWindowDays: 21 });
-      const tasks = Array.isArray(housekeepingSummary.tasks) ? housekeepingSummary.tasks : [];
-      housekeepingCounts = {
-        pending: tasks.filter(task => task.status === 'pending').length,
-        inProgress: tasks.filter(task => task.status === 'in_progress').length,
-        highPriority: tasks.filter(task => task.priority === 'alta' && task.status !== 'completed').length,
-        completedRecent: 0
-      };
-      housekeepingPending = tasks.filter(task => task.status === 'pending').slice(0, 6);
-      housekeepingInProgress = tasks.filter(task => task.status === 'in_progress').slice(0, 6);
-      housekeepingCompleted = getHousekeepingTasks({
-        statuses: ['completed'],
-        includeCompleted: true,
-        limit: 40,
-        order: 'completed_desc'
-      })
-        .filter(task => task.completed_at && dayjs(task.completed_at).isAfter(dayjs().subtract(7, 'day')))
-        .slice(0, 6);
-      housekeepingCounts.completedRecent = housekeepingCompleted.length;
-    }
-
-    const userRows = canManageUsers
-      ? db
-          .prepare('SELECT id, username, role FROM users WHERE tenant_id = ? ORDER BY username')
-          .all(req.tenant && req.tenant.id ? Number(req.tenant.id) : 1)
-      : [];
-
-    const calendarPreview = canViewCalendar
-      ? db
-          .prepare(
-            `SELECT b.id, b.guest_name, b.checkin, b.checkout, b.status, u.name AS unit_name, p.name AS property_name
-               FROM bookings b
-               JOIN units u ON u.id = b.unit_id
-               JOIN properties p ON p.id = u.property_id
-              WHERE b.status IN ('CONFIRMED','PENDING')
-                AND b.checkout >= date('now')
-              ORDER BY b.checkin
-              LIMIT 12`
-          )
-          .all()
-      : [];
-
-    const historyLimit = 60;
-    let historyBookingLogs = [];
-    let historyTaskLogs = [];
-    if (canViewHistory) {
-      const historyStmt = db.prepare(
-        `SELECT cl.id,
-                cl.entity_type,
-                cl.entity_id,
-                cl.action,
-                cl.before_json,
-                cl.after_json,
-                cl.created_at,
-                u.username AS actor_username
-           FROM change_logs cl
-           LEFT JOIN users u ON u.id = cl.actor_id
-          WHERE cl.entity_type = ?
-          ORDER BY cl.created_at DESC
-          LIMIT ?`
-      );
-      historyBookingLogs = historyStmt.all('booking', historyLimit);
-      historyTaskLogs = historyStmt.all('housekeeping_task', historyLimit);
-    }
-
-    let historyBookingHtml = '';
-    let historyTaskHtml = '';
-    if (canViewHistory) {
-      const renderHistoryEntry = (log, label) => html`
-        <article class="bo-card p-4 space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <span class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</span>
-            <span class="text-xs uppercase tracking-wide text-amber-700">${esc(log.action)}</span>
-          </div>
-          <div class="flex flex-wrap gap-2 text-sm text-slate-700">
-            <span class="pill-indicator">${esc(label)}</span>
-            <span class="text-slate-500">por ${esc(log.actor_username || 'Utilizador removido')}</span>
-          </div>
-          <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
-        </article>
-      `;
-      historyBookingHtml = historyBookingLogs.length
-        ? historyBookingLogs.map(log => renderHistoryEntry(log, `Reserva #${log.entity_id}`)).join('')
-        : '<p class="bo-empty">Sem alterações recentes às reservas.</p>';
-      historyTaskHtml = historyTaskLogs.length
-        ? historyTaskLogs.map(log => renderHistoryEntry(log, `Tarefa #${log.entity_id}`)).join('')
-        : '<p class="bo-empty">Sem alterações recentes às tarefas de limpeza.</p>';
-    }
-
-    const notifications = buildUserNotifications({
-      user: req.user,
-      db,
-      dayjs,
-      userCan,
-      automationData,
-      automationCache,
-      ensureAutomationFresh
-    });
-
-    const enableExportShortcuts = isFlagEnabled('FEATURE_NAV_EXPORT_SHORTCUTS');
-    const canExportBookings = enableExportShortcuts && userCan(req.user, 'bookings.export');
-    const canManageRates = userCan(req.user, 'rates.manage');
-    const canAccessAudit = userCan(req.user, 'audit.view') || userCan(req.user, 'logs.view');
-
     const canViewBookings = userCan(req.user, 'bookings.view');
-    const quickLinks = [];
-    if (canManageHousekeeping) {
-      quickLinks.push({
-        title: 'Limpezas',
-        description: 'Planeia e acompanha tarefas de housekeeping avançadas.',
-        href: '/admin/limpeza',
-        cta: 'Abrir limpezas'
-      });
-    }
-    if (canExportBookings) {
-      quickLinks.push({
-        title: 'Exportar calendário',
-        description: 'Gera ficheiros Excel com reservas confirmadas.',
-        href: '/admin/export',
-        cta: 'Exportar reservas'
-      });
-    }
-    if (canManageRates) {
-      quickLinks.push({
-        title: 'Regras de tarifas',
-        description: 'Configura regras automáticas e ajustes dinâmicos de preço.',
-        href: '/admin/rates/rules',
-        cta: 'Gerir tarifas'
-      });
-    }
-    if (canManageProperties) {
-      const managedProperty =
-        props.find(p => userHasScope(req.user, 'properties.manage', p.id)) || props[0] || null;
-      if (managedProperty) {
-        quickLinks.push({
-          title: 'Propriedades',
-          description: `Abrir ${managedProperty.name}`,
-          href: `/admin/properties/${managedProperty.id}`,
-          cta: 'Abrir propriedade'
-        });
-      } else {
-        quickLinks.push({
-          title: 'Propriedades',
-          description: 'Sem propriedades atribuídas. Adicione uma para começar.',
-          href: null,
-          locked: true
-        });
-      }
-    }
-    if (canManageUsers) {
-      quickLinks.push({
-        title: 'Utilizadores',
-        description: 'Gerir contas internas, perfis e permissões.',
-        href: '/admin/utilizadores',
-        cta: 'Gerir utilizadores'
-      });
-    }
-    if (userCan(req.user, 'bookings.view')) {
-      quickLinks.push({
-        title: 'Pagamentos',
-        description: 'Consulta cobranças registadas e estado de reconciliação.',
-        href: '/admin/pagamentos',
-        cta: 'Ver pagamentos'
-      });
-    }
-    if (isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit) {
-      quickLinks.push({
-        title: 'Auditoria',
-        description: 'Consulta logs de alterações, sessões e acessos sensíveis.',
-        href: '/admin/auditoria',
-        cta: 'Abrir auditoria'
-      });
-    }
-    let quickAccessHtml = '';
+    const canViewHousekeeping = userCan(req.user, 'housekeeping.view') || userCan(req.user, 'housekeeping.manage');
+    const canViewFinance = userCan(req.user, 'dashboard.view');
 
-    const channelRecords = channelIntegrations.listIntegrations();
-    const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
-    const channelRecentImports = channelIntegrations.listRecentImports(12);
-    const manualChannelOptions = channelRecords
-      .filter(record => record.supportsManual)
-      .map(record => `<option value="${record.key}">${esc(record.name)}</option>`)
-      .join('');
-    const manualFormatsLegend = channelRecords
-      .filter(record => record.supportsManual && record.manualFormats && record.manualFormats.length)
-      .map(
-        record => `
-          <li class="flex items-center justify-between gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-3 py-2 text-xs">
-            <span class="font-medium text-slate-700">${esc(record.name)}</span>
-            <span class="text-[11px] uppercase tracking-wide text-slate-500">${esc(record.manualFormats.join(', '))}</span>
-          </li>`
-      )
-      .join('');
-    const channelNoticeRaw = typeof req.query.channel_notice === 'string' ? req.query.channel_notice : '';
-    const buildChannelNotice = (tone, text) => {
-      const toneClass =
-        tone === 'success'
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : tone === 'warning'
-          ? 'border-amber-200 bg-amber-50 text-amber-700'
-          : 'border-rose-200 bg-rose-50 text-rose-700';
-      return `<div class="rounded-2xl border px-4 py-3 text-sm leading-relaxed ${toneClass}">${esc(text)}</div>`;
-    };
-    let channelNoticeHtml = '';
-    if (channelNoticeRaw) {
-      if (channelNoticeRaw.startsWith('imported:')) {
-        const parts = channelNoticeRaw.split(':');
-        const inserted = Number(parts[1] || 0);
-        const unmatched = Number(parts[2] || 0);
-        const duplicates = Number(parts[3] || 0);
-        const conflicts = Number(parts[4] || 0);
-        const errorsCount = Number(parts[5] || 0);
-        const fragments = [`${inserted} reserva${inserted === 1 ? '' : 's'} adicionada${inserted === 1 ? '' : 's'}`];
-        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
-        if (conflicts) fragments.push(`${conflicts} em conflito`);
-        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
-        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
-        channelNoticeHtml = buildChannelNotice(
-          errorsCount || conflicts ? 'warning' : 'success',
-          `Importação concluída: ${fragments.join(' · ')}.`
-        );
-      } else if (channelNoticeRaw.startsWith('sync:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const inserted = Number(parts[2] || 0);
-        const unmatched = Number(parts[3] || 0);
-        const duplicates = Number(parts[4] || 0);
-        const conflicts = Number(parts[5] || 0);
-        const errorsCount = Number(parts[6] || 0);
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        const fragments = [`${inserted} nova${inserted === 1 ? '' : 's'}`];
-        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
-        if (conflicts) fragments.push(`${conflicts} em conflito`);
-        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
-        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
-        channelNoticeHtml = buildChannelNotice(
-          errorsCount || conflicts ? 'warning' : 'success',
-          `Sincronização de ${channelName}: ${fragments.join(' · ')}.`
-        );
-      } else if (channelNoticeRaw.startsWith('settings:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        channelNoticeHtml = buildChannelNotice('success', `Definições de ${channelName} guardadas com sucesso.`);
-      } else if (channelNoticeRaw.startsWith('skipped:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        channelNoticeHtml = buildChannelNotice(
-          'warning',
-          `Sincronização ignorada. Verifique a configuração automática de ${channelName}.`
-        );
-      } else if (channelNoticeRaw.startsWith('error:')) {
-        const message = channelNoticeRaw.slice(6).trim() || 'Erro inesperado ao processar a integração.';
-        channelNoticeHtml = buildChannelNotice('danger', `Erro na integração: ${message}.`);
-      }
-    }
-
-    const totalChannels = channelRecords.length;
-    const autoActiveCount = channelRecords.filter(record => {
-      const settings = record.settings || {};
-      return record.supportsAuto && settings.autoEnabled && settings.autoUrl;
-    }).length;
-    const manualEnabledCount = channelRecords.filter(record => record.supportsManual).length;
-    const channelsNeedingAttention = channelRecords.filter(record => {
-      const settings = record.settings || {};
-      const autoEnabled = record.supportsAuto && settings.autoEnabled;
-      return (autoEnabled && !settings.autoUrl) || record.last_status === 'failed' || record.last_error;
-    }).length;
-
-    let lastSyncMoment = null;
-    channelRecords.forEach(record => {
-      if (record.last_synced_at) {
-        const candidate = dayjs(record.last_synced_at);
-        if (candidate.isValid() && (!lastSyncMoment || candidate.isAfter(lastSyncMoment))) {
-          lastSyncMoment = candidate;
-        }
-      }
-    });
-    const lastSyncLabel = lastSyncMoment ? lastSyncMoment.format('DD/MM/YYYY HH:mm') : 'Sem registos';
-    const recentImportCount = channelRecentImports.length;
-
-    const channelAlerts = channelRecords
-      .map(record => {
-        const settings = record.settings || {};
-        const issues = [];
-        if (record.supportsAuto && settings.autoEnabled && !settings.autoUrl) {
-          issues.push('Auto-sync ativo sem URL configurado');
-        }
-        if (record.last_status === 'failed') {
-          issues.push('Última sincronização falhou');
-        }
-        if (record.last_error) {
-          issues.push(record.last_error);
-        }
-        return issues.length ? { name: record.name, issues } : null;
-      })
-      .filter(Boolean);
-    const channelAlertsHtml = channelAlerts.length
-      ? channelAlerts
-          .map(alert => {
-            const issuesList = alert.issues.map(issue => `<li>${esc(issue)}</li>`).join('');
-            return `
-              <li class="rounded-xl border border-rose-200/70 bg-rose-50/70 p-3 space-y-1">
-                <p class="text-sm font-semibold text-rose-700">${esc(alert.name)}</p>
-                <ul class="list-disc pl-4 text-xs text-rose-600 space-y-1">${issuesList}</ul>
-              </li>`;
-          })
-          .join('')
-      : '<p class="bo-empty text-sm">Sem alertas pendentes.</p>';
-
-    const channelCardsHtml = channelRecords.length
-      ? channelRecords
-          .map(channel => {
-            const autoSettings = channel.settings || {};
-            const autoEnabled = channel.supportsAuto && !!autoSettings.autoEnabled;
-            const autoConfigured = autoEnabled && !!autoSettings.autoUrl;
-            const autoBadgeLabel = autoConfigured
-              ? 'Auto-sync ativo'
-              : autoEnabled
-              ? 'Auto-sync incompleto'
-              : 'Auto-sync desligado';
-            const autoBadgeClass = autoConfigured
-              ? 'bg-emerald-100 text-emerald-700'
-              : autoEnabled
-              ? 'bg-amber-100 text-amber-700'
-              : 'bg-slate-100 text-slate-600';
-            const manualBadge = channel.supportsManual
-              ? '<span class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">Upload manual</span>'
-              : '';
-            const needsAttention =
-              (autoEnabled && !autoSettings.autoUrl) || channel.last_status === 'failed' || !!channel.last_error;
-            const attentionBadge = needsAttention
-              ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700">Rever configuração</span>'
-              : '';
-            const lastSyncLabel = channel.last_synced_at
-              ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm')
-              : 'Nunca sincronizado';
-            const statusLabel = channel.last_status
-              ? channel.last_status === 'processed'
-                ? 'Sincronização concluída'
-                : channel.last_status === 'partial'
-                ? 'Processada com avisos'
-                : channel.last_status === 'failed'
-                ? 'Falhou'
-                : channel.last_status
-              : autoConfigured
-              ? 'Aguardando próxima execução'
-              : '';
-            const statusClass =
-              channel.last_status === 'failed'
-                ? 'text-rose-600'
-                : channel.last_status === 'partial'
-                ? 'text-amber-600'
-                : channel.last_status === 'processed'
-                ? 'text-emerald-600'
-                : 'text-slate-500';
-            const summary = channel.last_summary || null;
-            const summaryBadges = summary
-              ? `
-                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
-                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
-                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
-                  ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
-                  ${summary.conflictCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.conflictCount} conflitos</span>` : ''}
-                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">${summary.errorCount} erros</span>` : ''}
-                </div>`
-              : '';
-            const manualInfo = channel.supportsManual
-              ? `<p class="text-xs text-slate-500">Ficheiros suportados: ${esc(
-                  (channel.manualFormats || []).map(format => format.toUpperCase()).join(', ') || '—'
-                )}. Utilize a área de upload manual para carregar exportações do canal.</p>`
-              : '<p class="text-xs text-slate-500">Este canal é gerido apenas através da sincronização automática.</p>';
-            const defaultStatusLabel = autoSettings.defaultStatus === 'PENDING' ? 'Pendente' : 'Confirmada';
-            const summaryDetails = summary
-              ? `<div class="border-t border-slate-200/70 pt-2">
-                  <p class="text-xs font-medium text-slate-600">Última execução</p>
-                  <p class="text-xs text-slate-500">${summary.insertedCount || 0} novas · ${summary.duplicateCount || 0} duplicadas · ${summary.conflictCount || 0} conflitos · ${summary.unmatchedCount || 0} sem correspondência · ${summary.errorCount || 0} erros</p>
-                </div>`
-              : '';
-            const infoPanel = `
-              <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
-                <p class="text-xs text-slate-500">Reservas importadas com estado <span class="font-semibold text-slate-700">${esc(
-                  defaultStatusLabel
-                )}</span>.</p>
-                ${manualInfo}
-                ${summaryDetails}
-              </div>`;
-            const autoForm = channel.supportsAuto
-              ? `<div class="rounded-xl border border-slate-200 bg-white/70 p-3">
-                  <h4 class="text-sm font-semibold text-slate-700">Configuração automática</h4>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="bo-channel-form grid gap-3 mt-3">
-                    <label class="form-field">
-                      <span class="form-label">Ligação automática</span>
-                      <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
-                    </label>
-                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-3 bo-channel-form__row--thirds">
-                      <label class="form-field">
-                        <span class="form-label">Formato</span>
-                        <select name="autoFormat" class="input">
-                          <option value="">Deteção automática</option>
-                          ${
-                            channel.autoFormats && channel.autoFormats.length
-                              ? channel.autoFormats
-                                  .map(
-                                    format =>
-                                      `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(
-                                        format.toUpperCase()
-                                      )}</option>`
-                                  )
-                                  .join('')
-                              : ''
-                          }
-                        </select>
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Estado das reservas</span>
-                        <select name="defaultStatus" class="input">
-                          <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
-                          <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
-                        </select>
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Fuso horário</span>
-                        <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
-                      </label>
-                    </div>
-                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
-                      <label class="form-field">
-                        <span class="form-label">Utilizador (opcional)</span>
-                        <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Palavra-passe (opcional)</span>
-                        <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
-                      </label>
-                    </div>
-                    <label class="form-field">
-                      <span class="form-label">Notas internas</span>
-                      <textarea name="notes" class="input" rows="3" placeholder="Instruções, contactos ou credenciais adicionais.">${esc(autoSettings.notes || '')}</textarea>
-                    </label>
-                    <label class="inline-flex items-center gap-2 text-sm">
-                      <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
-                      <span>Ativar sincronização automática</span>
-                    </label>
-                    <div class="bo-channel-form__actions flex flex-wrap gap-2">
-                      <button class="btn btn-primary">Guardar integração</button>
-                    </div>
-                  </form>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="bo-channel-sync mt-2 inline-flex">
-                    <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
-                  </form>
-                </div>`
-              : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
-            return `
-              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
-                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
-                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
-                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
-                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
-                    ${summaryBadges}
-                  </div>
-                  <div class="flex flex-wrap gap-2">
-                    <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
-                    ${manualBadge}
-                    ${attentionBadge}
-                  </div>
-                </header>
-                <div class="bo-channel-card-grid grid gap-4 lg:grid-cols-2">
-                  ${autoForm}
-                  ${infoPanel}
-                </div>
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Nenhuma integração configurada.</p>';
-    const channelImportsRows = channelRecentImports.length
-      ? channelRecentImports
-          .map(batch => {
-            const createdLabel = batch.created_at ? dayjs(batch.created_at).format('DD/MM/YYYY HH:mm') : '—';
-            const sourceLabel =
-              batch.source === 'manual-upload'
-                ? 'Upload manual'
-                : batch.source === 'auto-fetch'
-                ? 'Sincronização automática'
-                : batch.source || '—';
-            const status = batch.status || '—';
-            const statusClass =
-              status === 'failed'
-                ? 'text-rose-600'
-                : status === 'partial'
-                ? 'text-amber-600'
-                : status === 'processed'
-                ? 'text-emerald-600'
-                : 'text-slate-500';
-            const summary = batch.summary || {};
-            const parts = [];
-            if (summary.insertedCount != null) parts.push(`${summary.insertedCount} novas`);
-            if (summary.duplicateCount) parts.push(`${summary.duplicateCount} duplicadas`);
-            if (summary.conflictCount) parts.push(`${summary.conflictCount} conflitos`);
-            if (summary.unmatchedCount) parts.push(`${summary.unmatchedCount} sem correspondência`);
-            if (summary.errorCount) parts.push(`${summary.errorCount} erros`);
-            const statsLabel = parts.length ? parts.join(' · ') : 'Sem detalhes';
-            const channelName = channelNameMap.get(batch.channel_key) || batch.channel_key;
-            return `
-              <tr>
-                <td data-label="Data"><span class="table-cell-value">${esc(createdLabel)}</span></td>
-                <td data-label="Canal"><span class="table-cell-value">${esc(channelName)}</span></td>
-                <td data-label="Origem"><span class="table-cell-value">${esc(sourceLabel)}</span></td>
-                <td data-label="Estado"><span class="table-cell-value ${statusClass}">${esc(status)}</span></td>
-                <td data-label="Resumo"><span class="table-cell-value">${esc(statsLabel)}</span></td>
-                <td data-label="Autor"><span class="table-cell-value">${esc(batch.username || '—')}</span></td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="6" class="py-6 text-center text-sm text-slate-500">Sem importações registadas.</td></tr>';
-
-    const manualUploadSection = manualChannelOptions
-      ? `
-        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="bo-channel-form grid gap-3">
-          <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
-            <label class="form-field">
-              <span class="form-label">Canal</span>
-              <select name="channel_key" class="input" required>
-                <option value="" disabled selected hidden>Seleciona um canal</option>
-                ${manualChannelOptions}
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="form-label">Estado das reservas</span>
-              <select name="target_status" class="input">
-                <option value="CONFIRMED">Confirmada</option>
-                <option value="PENDING">Pendente</option>
-              </select>
-            </label>
-          </div>
-          <label class="form-field">
-            <span class="form-label">Ficheiro de reservas</span>
-            <input type="file" name="file" class="input" required accept=".csv,.tsv,.xlsx,.xls,.ics,.ical,.json" />
-          </label>
-          <div class="bo-channel-form__actions">
-            <button class="btn btn-primary">Importar reservas</button>
-          </div>
-        </form>`
-      : '<p class="bo-empty">Nenhum canal com importação manual disponível.</p>';
-
-    const emailTemplateRecords = emailTemplates.listTemplates();
-    const emailTemplateCards = emailTemplateRecords.length
-      ? emailTemplateRecords
-          .map(t => {
-            const updatedLabel = t.updated_at ? dayjs(t.updated_at).format('DD/MM/YYYY HH:mm') : '';
-            const updatedMeta = updatedLabel
-              ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${t.updated_by ? ` por ${esc(t.updated_by)}` : ''}</p>`
-              : '';
-            const placeholderList = t.placeholders && t.placeholders.length
-              ? `
-                <div class="text-xs text-slate-500 space-y-1">
-                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
-                  <ul class="flex flex-wrap gap-2">
-                    ${t.placeholders
-                      .map(
-                        p => `
-                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
-                            <code>${esc(`{{${p.key}}}`)}</code>
-                            <span>${esc(p.label)}</span>
-                          </li>`
-                      )
-                      .join('')}
-                  </ul>
-                </div>
-              `
-              : '';
-            return `
-              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-3">
-                <header>
-                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
-                  ${t.description ? `<p class="text-sm text-slate-500 mt-1">${esc(t.description)}</p>` : ''}
-                  ${updatedMeta}
-                </header>
-                <form method="post" action="/admin/emails/templates/${t.key}" class="grid gap-3">
-                  <label class="form-field">
-                    <span class="form-label">Assunto</span>
-                    <input name="subject" class="input" value="${esc(t.subject)}" required maxlength="160"/>
-                  </label>
-                  <label class="form-field">
-                    <span class="form-label">Mensagem</span>
-                    <textarea name="body" class="input" rows="6" required>${esc(t.body)}</textarea>
-                  </label>
-                  ${placeholderList}
-                  <div>
-                    <button class="btn btn-primary">Guardar modelo</button>
-                  </div>
-                </form>
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Sem modelos de email configurados.</p>';
-
-    const messageTemplateRecords = messageTemplates.listTemplates();
-    const messageTemplateCards = messageTemplateRecords.length
-      ? messageTemplateRecords
-          .map(t => {
-            const placeholderList = t.placeholders && t.placeholders.length
-              ? `
-                <div class="text-xs text-slate-500 space-y-1">
-                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
-                  <ul class="flex flex-wrap gap-2">
-                    ${t.placeholders
-                      .map(
-                        p => `
-                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
-                            <code>${esc(`{{${p.key}}}`)}</code>
-                            <span>${esc(p.label)}</span>
-                          </li>`
-                      )
-                      .join('')}
-                  </ul>
-                </div>
-              `
-              : '';
-
-            const languagesHtml = t.languages && t.languages.length
-              ? t.languages
-                  .map(lang => {
-                    const updatedLabel = lang.updated_at ? dayjs(lang.updated_at).format('DD/MM/YYYY HH:mm') : '';
-                    const updatedMeta = lang.updated_at
-                      ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${lang.updated_by ? ` por ${esc(lang.updated_by)}` : ''}</p>`
-                      : '<p class="text-xs text-slate-400 mt-1">A usar texto padrão</p>';
-                    const statusTag = lang.is_default
-                      ? '<span class="text-xs font-semibold text-amber-600">Padrão</span>'
-                      : '<span class="text-xs font-semibold text-emerald-600">Personalizado</span>';
-                    const sampleVariables = lang.sampleVariables && Object.keys(lang.sampleVariables).length
-                      ? lang.sampleVariables
-                      : t.sampleVariables || {};
-                    const sampleJson = JSON.stringify(sampleVariables, null, 2);
-                    const guestPlaceholder = lang.language === 'pt'
-                      ? 'Ex.: Olá, podemos chegar mais cedo?'
-                      : 'Ex.: Hello, can we arrive earlier?';
-                    return `
-                      <form method="post" action="/admin/messages/templates/${t.key}/${lang.language}" class="grid gap-3 rounded-xl border border-amber-200 bg-white/80 p-4" data-message-template data-template-key="${esc(t.key)}" data-template-language="${esc(lang.language)}" data-template-language-label="${esc(lang.label)}">
-                        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <h4 class="font-semibold text-slate-800">${esc(lang.label)}</h4>
-                            ${updatedMeta}
-                          </div>
-                          ${statusTag}
-                        </div>
-                        <label class="form-field">
-                          <span class="form-label">Mensagem</span>
-                          <textarea name="body" class="input" rows="6" required>${esc(lang.body)}</textarea>
-                        </label>
-                        <label class="form-field">
-                          <span class="form-label">Mensagem recente do hóspede (opcional)</span>
-                          <textarea class="input" rows="2" data-template-sample placeholder="${esc(guestPlaceholder)}"></textarea>
-                        </label>
-                        <div class="grid gap-3 md:grid-cols-2">
-                          <label class="form-field">
-                            <span class="form-label">Idioma preferido (opcional)</span>
-                            <input class="input" data-template-guest-language placeholder="Ex.: pt, en" />
-                          </label>
-                          <label class="form-field">
-                            <span class="form-label">Modo de pré-visualização</span>
-                            <select class="input" data-template-mode>
-                              <option value="auto" selected>Detetar automaticamente</option>
-                              <option value="language">Forçar ${esc(lang.label)}</option>
-                            </select>
-                          </label>
-                        </div>
-                        <label class="form-field">
-                          <span class="form-label">Dados de exemplo (JSON)</span>
-                          <textarea class="input font-mono text-xs" rows="4" data-template-vars>${esc(sampleJson)}</textarea>
-                          <p class="text-xs text-slate-500">Edite os dados para testar substituições diferentes.</p>
-                        </label>
-                        <div class="flex flex-wrap items-center gap-3">
-                          <button class="btn btn-primary">Guardar ${esc(lang.label)}</button>
-                          <button type="button" class="btn btn-light" data-template-test>Testar modelo</button>
-                          <span class="text-xs text-slate-500" data-template-status hidden></span>
-                        </div>
-                        <pre class="text-xs text-slate-700 bg-slate-100/80 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap" data-template-preview hidden></pre>
-                      </form>`;
-                  })
-                  .join('')
-              : '<p class="text-sm text-slate-500">Sem idiomas configurados.</p>';
-
-            return `
-              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-4">
-                <header class="space-y-1">
-                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
-                  ${t.description ? `<p class="text-sm text-slate-500">${esc(t.description)}</p>` : ''}
-                </header>
-                <div class="space-y-4" data-message-templates>${languagesHtml}</div>
-                ${placeholderList}
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
-
-    const broomIconSvg = `
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="M3 21h4l7-7"></path>
-        <path d="M14 14l5-5a3 3 0 0 0-4.24-4.24l-5 5"></path>
-        <path d="M11 11l2 2"></path>
-        <path d="M5 21l-1-4 4 1"></path>
-      </svg>
-    `.trim();
-
-    const navSections = [
+    const kpis = [
       {
-        id: 'operations',
-        title: 'Operações diárias',
-        items: [
-          { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
-          { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
-          { id: 'bookings-link', label: 'Reservas', icon: 'notebook-text', allowed: canViewBookings, href: '/admin/bookings' },
-          { id: 'housekeeping', label: 'Painel de limpezas', iconSvg: broomIconSvg, icon: 'broom', allowed: canSeeHousekeeping },
-          {
-            id: 'housekeeping-manage',
-            label: 'Gestão de limpezas',
-            icon: 'clipboard-check',
-            allowed: canManageHousekeeping,
-            href: '/admin/limpeza'
-          },
-          {
-            id: 'extras-link',
-            label: 'Extras & serviços',
-            icon: 'gift',
-            allowed: canManageProperties,
-            href: '/admin/extras'
-          },
-          { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-          { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' }
-        ]
+        key: 'occupancy',
+        icon: 'bed-double',
+        title: translator('dashboard.kpis.occupancy.title'),
+        value: occupancyLabel,
+        caption: occupancyCaption,
+        href: canViewCalendar ? '/calendar' : null
       },
       {
-        id: 'finance',
-        title: 'Finanças e rendimento',
-        items: [
-          { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
-          {
-            id: 'revenue-calendar-link',
-            label: 'Calendário de receita',
-            icon: 'calendar-range',
-            allowed: canViewRevenueCalendar,
-            href: '/admin/revenue-calendar'
-          },
-          { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
-          { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
-        ]
+        key: 'revenue',
+        icon: 'euro',
+        title: translator('dashboard.kpis.revenue.title'),
+        value: translator('dashboard.kpis.revenue.value', { amount: eur(revenueCents) }),
+        caption: translator('dashboard.kpis.revenue.caption', { month: monthLabel }),
+        href: canViewFinance ? '/admin/finance' : null
       },
       {
-        id: 'communication',
-        title: 'Comunicação',
-        items: [
-          { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-          { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
-          { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
-          { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates }
-        ]
+        key: 'future-bookings',
+        icon: 'calendar-clock',
+        title: translator('dashboard.kpis.futureBookings.title'),
+        value: numberFormatter.format(futureBookingsCount),
+        caption: translator('dashboard.kpis.futureBookings.caption'),
+        href: canViewBookings ? '/admin/bookings?status=confirmada' : null
       },
       {
-        id: 'administration',
-        title: 'Administração',
-        items: [
-          ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
-          { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-          { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
-          {
-            id: 'audit-link',
-            label: 'Auditoria',
-            icon: 'clipboard-list',
-            allowed: isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit,
-            href: '/admin/auditoria'
-          }
-        ]
+        key: 'housekeeping',
+        icon: 'broom',
+        title: translator('dashboard.kpis.housekeeping.title'),
+        value: numberFormatter.format(housekeepingPending),
+        caption: translator('dashboard.kpis.housekeeping.caption'),
+        href: canViewHousekeeping ? '/admin/limpeza' : null
       }
     ];
-    const allNavItems = navSections.flatMap(section => section.items);
-    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
-    const navButtonsHtml = navSections
-      .map(section => {
-        const itemsHtml = section.items
-          .map(item => {
-            const classes = ['bo-tab'];
-            if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-            if (!item.href && item.id === defaultPane) classes.push('is-active');
-            if (item.href) classes.push('bo-tab--link');
-            const iconMarkup = item.iconSvg
-              ? item.iconSvg
-              : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
 
-            if (!item.allowed) {
-              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
-            }
-
-            if (item.href) {
-              return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
-            }
-
-            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
-          })
-          .join('');
-
-        if (!itemsHtml.trim()) {
-          return '';
-        }
-
-        const sectionItemsId = `bo-nav-items-${section.id}`;
-
-        return `
-          <div class="bo-nav__section is-collapsed" data-nav-section data-nav-start-collapsed="true">
-            <button
-              type="button"
-              class="bo-nav__section-toggle"
-              data-nav-toggle
-              aria-expanded="false"
-              aria-controls="${sectionItemsId}"
-            >
-              <span>${esc(section.title)}</span>
-              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
-            </button>
-            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
-          </div>
-        `;
-      })
-      .filter(Boolean)
-      .join('');
-
-    const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
-    const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
-    quickAccessHtml = filteredQuickLinks.length
-      ? html`<section class="bo-card space-y-4">
-          <div>
-            <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
-            <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
-          </div>
-          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            ${filteredQuickLinks
-              .map(link => {
-                if (!link.href) {
-                  const desc = link.description ? `<p class="text-sm text-slate-500">${esc(link.description)}</p>` : '';
-                  return `<article class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-                    <h3 class="font-semibold text-slate-700">${esc(link.title)}</h3>
-                    ${desc}
-                    <p class="text-xs text-slate-400">Atualize permissões ou dados para ativar este atalho.</p>
-                  </article>`;
-                }
-                return `<article class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(link.title)}</h3>
-                    <p class="text-sm text-slate-600">${esc(link.description)}</p>
-                  </div>
-                  <a class="btn btn-light" href="${esc(link.href)}">${esc(link.cta || 'Abrir')}</a>
-                </article>`;
-              })
-              .join('')}
-          </div>
-        </section>`
-      : '';
-
-    const propertiesListHtml = props.length
-      ? `<ul class="space-y-3">${props
-          .map(p => {
-            const location = propertyLocationLabel(p);
-            const propertyUnits = propertyUnitMap.get(p.id) || [];
-            const revenueRow = propertyRevenueRows.find(row => row.id === p.id);
-            const revenueLabel = revenueRow ? eur(revenueRow.confirmed_revenue_cents || 0) : '0,00';
-            return `
-              <li class="bo-property-card rounded-xl border border-amber-200 bg-white/80 p-3">
-                <div class="bo-property-card__header">
-                  <div class="bo-property-card__title">
-                    <div class="bo-property-card__name">${esc(p.name)}</div>
-                    ${location ? `<div class="bo-property-card__location">${esc(location)}</div>` : ''}
-                  </div>
-                  <a class="btn btn-light bo-property-card__cta" href="/admin/properties/${p.id}">Abrir</a>
-                </div>
-                <div class="bo-property-card__meta">
-                  <span class="bo-property-card__meta-item">Unidades: ${propertyUnits.length}</span>
-                  <span class="bo-property-card__meta-item">Receita: € ${revenueLabel}</span>
-                </div>
-              </li>`;
-          })
-          .join('')}</ul>`
-      : '<p class="bo-empty">Sem propriedades registadas.</p>';
-
-    const unitsTableRows = units.length
-      ? units
-          .map(u => {
-            const blocks = unitBlockIndex.get(u.id) || [];
-            const blockSummaries = blocks
-              .map(block => {
-                const endLabel = dayjs(block.end_date).subtract(1, 'day');
-                const endDisplay = endLabel.isValid() ? endLabel.format('DD/MM') : dayjs(block.end_date).format('DD/MM');
-                return `${dayjs(block.start_date).format('DD/MM')}–${endDisplay}`;
-              })
-              .join(', ');
-            const blockTitle = blocks.length
-              ? esc(`Bloqueado ${blockSummaries}${blocks[0].reason ? ` · ${blocks[0].reason}` : ''}`)
-              : '';
-            const blockBadge = blocks.length
-              ? `<span class="bo-status-badge bo-status-badge--warning" data-block-badge="${u.id}" title="${blockTitle}">Bloqueado</span>`
-              : `<span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
-            return `
-              <tr data-unit-row="${u.id}">
-                <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
-                <td data-label="Unidade">
-                  <div class="table-cell-content">
-                    <span class="table-cell-value">${esc(u.name)}</span>
-                    ${blockBadge}
-                  </div>
-                </td>
-                <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
-                <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
-                <td data-label="Ações">
-                  <div class="table-cell-actions" data-unit-actions>
-                    <button type="button" class="btn btn-light btn-compact" data-block-unit="${u.id}" data-unit-name="${esc(
-              u.property_name + ' · ' + u.name
-            )}">Bloquear unidade</button>
-                    <a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a>
-                  </div>
-                </td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
-
-    const propertiesRevenueTable = propertyRevenueRows.length
-      ? propertyRevenueRows
-          .map(row => {
-            const propertyUnits = propertyUnitMap.get(row.id) || [];
-            const unitList = propertyUnits.length
-              ? `<ul class="bo-property-units">${propertyUnits
-                  .map(
-                    unit => `
-                      <li class="bo-property-units__item">
-                        <span class="bo-property-unit-name">${esc(unit.name)}</span>
-                        <span class="bo-property-unit-price">€ ${eur(unit.base_price_cents)}</span>
-                      </li>`
-                  )
-                  .join('')}</ul>`
-              : '<div class="bo-empty bo-property-revenue__empty">Sem unidades associadas.</div>';
-            const locationLabel = row.locality || row.district ? `<span class="table-cell-muted bo-property-revenue__location">${esc(propertyLocationLabel(row))}</span>` : '';
-            return `
-              <tr>
-                <td data-label="Propriedade">
-                  <div class="bo-property-revenue">
-                    <span class="table-cell-value bo-property-revenue__name">${esc(row.name)}</span>
-                    ${locationLabel}
-                    ${unitList}
-                  </div>
-                </td>
-                <td data-label="Receita total"><span class="table-cell-value">€ ${eur(row.confirmed_revenue_cents || 0)}</span></td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem dados de receita.</td></tr>';
-
-    function normalizeChannelLabel(rawValue) {
-      const value = (rawValue || '').trim();
-      if (!value) return 'Direto';
-      const lower = value.toLowerCase();
-      if (lower === 'booking' || lower === 'booking.com') return 'Booking.com';
-      if (lower === 'airbnb') return 'Airbnb';
-      if (lower === 'expedia') return 'Expedia';
-      if (lower === 'vrbo') return 'Vrbo';
-      return value
-        .split(' ')
-        .map(part => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
-        .join(' ');
+    const shortcuts = [];
+    if (canViewCalendar) {
+      shortcuts.push({ href: '/calendar', label: translator('dashboard.shortcuts.calendar'), icon: 'calendar' });
+    }
+    if (canViewBookings) {
+      shortcuts.push({ href: '/admin/bookings', label: translator('dashboard.shortcuts.bookings'), icon: 'clipboard-list' });
+    }
+    if (canViewHousekeeping) {
+      shortcuts.push({ href: '/admin/limpeza', label: translator('dashboard.shortcuts.housekeeping'), icon: 'broom' });
     }
 
-    const revenueRangeDays = 30;
-    const revenueRangeEnd = dayjs().endOf('day');
-    const revenueRangeStart = revenueRangeEnd.subtract(revenueRangeDays - 1, 'day').startOf('day');
-    const revenueRangeEndExclusive = revenueRangeEnd.add(1, 'day');
-    const revenueDayCount = revenueRangeEnd.diff(revenueRangeStart, 'day') + 1;
+    const navigationHtml = renderNavigation(res.locals.activeNav, req, res);
+    const { list: notifications } = loadNotifications(req, res);
 
-    const revenueBookings = db
-      .prepare(
-        `SELECT b.id,
-                b.checkin,
-                b.checkout,
-                b.total_cents,
-                b.agency,
-                b.created_at
-           FROM bookings b
-          WHERE b.status = 'CONFIRMED'
-            AND b.checkout > ?
-            AND b.checkin < ?`
-      )
-      .all(revenueRangeStart.format('YYYY-MM-DD'), revenueRangeEndExclusive.format('YYYY-MM-DD'));
+    const searchTerm = typeof query.search === 'string' ? query.search.trim() : '';
+  const statusValue = typeof query.status === 'string' && query.status ? query.status : 'all';
+  const allowedSortKeys = ['username', 'role'];
+  const sortKey = allowedSortKeys.includes(query.sort) ? query.sort : 'username';
+  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const deletedMessage = query.deleted ? 'Utilizador eliminado com sucesso.' : null;
 
-    const revenueDailyIndex = new Map();
-    const revenueDailyRaw = [];
-    for (let i = 0; i < revenueDayCount; i++) {
-      const day = revenueRangeStart.add(i, 'day');
-      const key = day.format('YYYY-MM-DD');
-      revenueDailyIndex.set(key, {
-        date: key,
-        label: day.format('DD/MM'),
-        display: day.format('DD MMM'),
-        revenueCents: 0,
-        nightsSold: 0,
-        bookingIds: new Set(),
-        createdCount: 0
-      });
-      revenueDailyRaw.push(revenueDailyIndex.get(key));
+  if (query.error === 'delete_invalid') {
+    errorMessage = 'Utilizador inválido. Tenta novamente.';
+  } else if (query.error === 'delete_self') {
+    errorMessage = 'Não é possível eliminar a tua própria conta.';
+  } else if (query.error === 'delete_missing') {
+    errorMessage = 'Utilizador indicado não foi encontrado.';
+  }
+
+  const statusOptions = [{ value: 'all', label: 'Todos os perfis' }].concat(
+    roleOptions.map(opt => ({ value: opt.key, label: opt.label }))
+  );
+
+  const filteredUsers = users.filter(user => {
+    if (statusValue !== 'all' && user.role_key !== statusValue) {
+      return false;
     }
+    if (!searchTerm) return true;
+    const haystack = `${user.username} ${user.email || ''}`.toLowerCase();
+    return haystack.includes(searchTerm.toLowerCase());
+  });
 
-    const bookingStayNights = new Map();
-    const channelRevenueCents = new Map();
+  const sortedUsers = filteredUsers.sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'role':
+        result = (ROLE_LABELS[a.role_key] || a.role_key).localeCompare(
+          ROLE_LABELS[b.role_key] || b.role_key,
+          'pt',
+          { sensitivity: 'base' }
+        );
+        break;
+      case 'username':
+      default:
+        result = a.username.localeCompare(b.username, 'pt', { sensitivity: 'base' });
+        break;
+    }
+    return sortOrder === 'desc' ? -result : result;
+  });
 
-    revenueBookings.forEach(booking => {
-      const stayStart = dayjs(booking.checkin);
-      const stayEnd = dayjs(booking.checkout);
-      if (!stayStart.isValid() || !stayEnd.isValid()) return;
-      const totalNights = Math.max(1, dateRangeNights(booking.checkin, booking.checkout));
-      bookingStayNights.set(booking.id, totalNights);
-      const nightlyRate = totalNights ? (booking.total_cents || 0) / totalNights : booking.total_cents || 0;
-      const channelLabel = normalizeChannelLabel(booking.agency);
+  const modals = [];
+  const tableRows = sortedUsers.map(user => {
+    const modalId = `user-${user.id}-delete`;
+    const roleLabel = ROLE_LABELS[user.role_key] || user.role_key;
+    const scopeCount = scopeCountByUser[user.id] || 0;
+    const overrideCount = Array.isArray(overridesByUser[user.id]) ? overridesByUser[user.id].length : 0;
+    const detailPieces = [];
+    if (scopeCount > 0) {
+      const scopeLabel = scopeCount === 1 ? 'escopo adicional' : 'escopos adicionais';
+      detailPieces.push(`${scopeCount} ${scopeLabel}`);
+    }
+    if (overrideCount > 0) {
+      const overrideLabel = overrideCount === 1 ? 'permissão personalizada' : 'permissões personalizadas';
+      detailPieces.push(`${overrideCount} ${overrideLabel}`);
+    }
+    const modalMessageParts = [
+      `Eliminar ${user.username} remove o perfil ${roleLabel} e termina todas as sessões ativas.`
+    ];
+    if (detailPieces.length) {
+      modalMessageParts.push(`Também serão revogados ${detailPieces.join(' e ')}.`);
+    }
+    modalMessageParts.push('Esta ação é irreversível.');
+    const modalMessage = modalMessageParts.join(' ');
 
-      if (booking.created_at) {
-        const createdAt = dayjs(booking.created_at);
-        if (createdAt.isValid()) {
-          const createdKey = createdAt.format('YYYY-MM-DD');
-          const createdRecord = revenueDailyIndex.get(createdKey);
-          if (createdRecord) {
-            createdRecord.createdCount = (createdRecord.createdCount || 0) + 1;
-          }
-        }
-      }
-
-      let cursor = stayStart.isAfter(revenueRangeStart) ? stayStart : revenueRangeStart;
-      const cursorEnd = stayEnd.isBefore(revenueRangeEndExclusive) ? stayEnd : revenueRangeEndExclusive;
-      while (cursor.isBefore(cursorEnd)) {
-        const key = cursor.format('YYYY-MM-DD');
-        const record = revenueDailyIndex.get(key);
-        if (record) {
-          record.revenueCents += nightlyRate;
-          record.nightsSold += 1;
-          record.bookingIds.add(booking.id);
-          channelRevenueCents.set(channelLabel, (channelRevenueCents.get(channelLabel) || 0) + nightlyRate);
-        }
-        cursor = cursor.add(1, 'day');
-      }
+    modals.push({
+      id: modalId,
+      title: `Eliminar ${user.username}`,
+      message: modalMessage,
+      action: `/admin/users/${user.id}/delete`,
+      confirmLabel: 'Eliminar',
+      confirmIcon: 'trash-2'
     });
 
-    const totalUnitsNights = totalUnitsCount * revenueDayCount;
+    const metaSummary = detailPieces.join(' · ');
 
-    const revenueDaily = revenueDailyRaw.map(record => {
-      const bookingIds = Array.from(record.bookingIds.values());
-      const revenueCents = Math.round(record.revenueCents || 0);
-      const nightsSold = Math.round(record.nightsSold || 0);
-      const bookingsCount = bookingIds.length;
-      const staysTotal = bookingIds.reduce((sum, id) => sum + (bookingStayNights.get(id) || 0), 0);
-      const averageStay = bookingsCount ? staysTotal / bookingsCount : 0;
-      const adrCents = nightsSold ? Math.round(revenueCents / nightsSold) : 0;
-      const revparCents = totalUnitsCount ? Math.round(revenueCents / Math.max(totalUnitsCount, 1)) : 0;
-      const occupancyRate = totalUnitsCount ? Math.min(1, nightsSold / Math.max(totalUnitsCount, 1)) : 0;
-      const bookingPaceCount = record.createdCount || 0;
-      return {
-        date: record.date,
-        label: record.label,
-        display: record.display,
-        revenueCents,
-        nightsSold,
-        bookingsCount,
-        createdCount: bookingPaceCount,
-        adrCents,
-        revparCents,
-        occupancyRate,
-        averageStay,
-        bookingPace: bookingPaceCount
-      };
-    });
-
-    const totalRevenueCents = revenueDaily.reduce((sum, row) => sum + (row.revenueCents || 0), 0);
-    const totalNightsSold = revenueDaily.reduce((sum, row) => sum + (row.nightsSold || 0), 0);
-    const totalReservations = revenueBookings.length;
-    const totalBookingCreations = revenueDaily.reduce((sum, row) => sum + (row.createdCount || 0), 0);
-
-    const revenueSummary = {
-      revenueCents: totalRevenueCents,
-      adrCents: totalNightsSold ? Math.round(totalRevenueCents / totalNightsSold) : 0,
-      revparCents: totalUnitsNights ? Math.round(totalRevenueCents / Math.max(totalUnitsNights, 1)) : 0,
-      occupancyRate: totalUnitsNights ? totalNightsSold / Math.max(totalUnitsNights, 1) : 0,
-      nights: totalNightsSold,
-      reservations: totalReservations,
-      averageStay: totalReservations ? totalNightsSold / Math.max(totalReservations, 1) : 0,
-      bookingPace: revenueDayCount ? totalBookingCreations / Math.max(revenueDayCount, 1) : 0,
-      createdTotal: totalBookingCreations
+    return {
+      id: user.id,
+      cells: {
+        username: { text: user.username },
+        email: { text: user.email ? esc(user.email) : '—' },
+        role: { text: roleLabel, meta: metaSummary }
+      },
+      actions: [
+        { type: 'link', href: `/admin/utilizadores?userId=${user.id}`, label: 'Editar', icon: 'pencil' },
+        { type: 'button', modalId, label: 'Eliminar', icon: 'trash-2' }
+      ]
     };
+  });
 
-    const channelTotals = Array.from(channelRevenueCents.entries()).map(([name, cents]) => ({
-      name,
-      revenueCents: Math.round(cents || 0)
-    }));
+  const table = {
+    id: 'users-table',
+    formAction: '/admin/utilizadores',
+    searchValue: searchTerm,
+    searchPlaceholder: 'Pesquisar utilizador ou email…',
+    statusOptions,
+    statusValue,
+    columns: [
+      { key: 'username', label: 'Utilizador', sortable: true },
+      { key: 'email', label: 'Email' },
+      { key: 'role', label: 'Perfil', sortable: true }
+    ],
+    rows: tableRows,
+    actionsLabel: 'Ações',
+    sortKey,
+    sortOrder,
+    resetUrl: '/admin/utilizadores',
+    buildSortUrl: key => {
+      const params = new URLSearchParams();
+      if (searchTerm) params.set('search', searchTerm);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', key);
+      params.set('order', sortKey === key && sortOrder === 'asc' ? 'desc' : 'asc');
+      return `/admin/utilizadores?${params.toString()}`;
+    },
+    modals
+  };
+
+  const formsHtml = html`
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <section class="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <h2 class="text-base font-semibold text-amber-900">Atenção aos impactos</h2>
+        <p>
+          Eliminar ou desativar acessos termina todas as sessões do colaborador e remove automaticamente os escopos atribuídos.
+        </p>
+        <p class="mt-2">
+          Consulta o resumo de escopos e permissões na tabela antes de confirmar operações irreversíveis.
+        </p>
+      </section>
+      <section class="card p-4" id="create-user">
+        <h2 class="font-semibold mb-3">Criar novo utilizador</h2>
+        <form method="post" action="/admin/users/create" class="grid gap-2">
+          <input required name="username" class="input" placeholder="Utilizador" />
+          <input required type="email" name="email" class="input" placeholder="Email" />
+          <input required type="password" name="password" class="input" placeholder="Password (min 8)" />
+          <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
+          <select name="role" id="create-user-role" class="input">
+            ${roleOptions
+              .filter(opt => opt.key !== MASTER_ROLE)
+              .map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`)
+              .join('')}
+          </select>
+          <div id="owner-property-select" class="rounded-lg border border-slate-200 bg-slate-50 p-3 hidden" aria-hidden="true" style="display:none;">
+            <p class="text-sm text-slate-600 mb-2">Selecione as propriedades a que este owner terá acesso.</p>
+            ${propertyChoices.length
+              ? `<div class="grid max-h-48 gap-2 overflow-y-auto pr-1">
+                  ${propertyChoices
+                    .map(
+                      prop => `
+                        <label class="flex items-center gap-2 text-sm">
+                          <input type="checkbox" name="property_ids" value="${prop.id}" class="accent-slate-700" />
+                          <span>${esc(prop.name)}</span>
+                        </label>
+                      `
+                    )
+                    .join('')}
+                </div>`
+              : '<p class="text-sm text-slate-500">Ainda não existem propriedades registadas para atribuir.</p>'}
+            <p class="mt-3 text-xs text-slate-500">Este passo é obrigatório para contas Owners.</p>
+          </div>
+          <button class="btn btn-primary">Criar</button>
+        </form>
+      </section>
+
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Alterar password</h2>
+        <form method="post" action="/admin/users/password" class="grid gap-2">
+          <label class="text-sm">Selecionar utilizador</label>
+          <select required name="user_id" class="input">
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`
+              )
+              .join('')}
+          </select>
+          <input required type="password" name="new_password" class="input" placeholder="Nova password (min 8)" />
+          <input required type="password" name="confirm" class="input" placeholder="Confirmar password" />
+          <button class="btn btn-primary">Alterar</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">Ao alterar, as sessões desse utilizador são terminadas.</p>
+      </section>
+
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Atualizar email</h2>
+        <form method="post" action="/admin/users/email" class="grid gap-2">
+          <label class="text-sm">Selecionar utilizador</label>
+          <select required name="user_id" class="input">
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`
+              )
+              .join('')}
+          </select>
+          <input required type="email" name="email" class="input" placeholder="novo email" />
+          <button class="btn btn-primary">Guardar email</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">O email é usado para 2FA e recuperação de password.</p>
+      </section>
+
+      <section class="card p-4">
+        <h2 class="font-semibold mb-3">Atualizar privilégios</h2>
+        <form method="post" action="/admin/users/role" class="grid gap-2">
+          <label class="text-sm" for="user-role-user">Selecionar utilizador</label>
+          <select id="user-role-user" required name="user_id" class="input">
+            ${users
+              .map(
+                u =>
+                  `<option value="${u.id}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''} (${esc(ROLE_LABELS[u.role_key] || u.role_key)})</option>`
+              )
+              .join('')}
+          </select>
+          <label class="text-sm" for="user-role-role">Novo perfil</label>
+          <select id="user-role-role" name="role" class="input">
+            ${roleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary">Atualizar privilégios</button>
+        </form>
+        <p class="text-sm text-slate-500 mt-2">As sessões ativas serão terminadas ao atualizar as permissões.</p>
+      </section>
+
+      ${isDevOperator
+        ? html`
+            <section class="card p-4 md:col-span-2">
+              <h2 class="font-semibold mb-3">Permissões personalizadas</h2>
+              <form id="user-permissions-form" method="post" action="/admin/users/permissions" class="grid gap-3">
+                <label class="grid gap-1 text-sm">
+                  <span>Selecionar utilizador</span>
+                  <select id="user-permissions-user" name="user_id" class="input" required>
+                    <option value="">— Escolher —</option>
+                    ${users
+                      .map(
+                        user =>
+                          `<option value="${user.id}">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ''} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`
+                      )
+                      .join('')}
+                  </select>
+                </label>
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 max-h-72 overflow-y-auto" data-permission-checkboxes>
+                  ${permissionGroupEntries
+                    .map(
+                      group => `
+                        <fieldset class="mb-3 last:mb-0">
+                          <legend class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">${esc(group.groupKey.replace(/_/g, ' '))}</legend>
+                          <div class="grid gap-2 md:grid-cols-2">
+                            ${group.permissions
+                              .map(
+                                perm => `
+                                  <label class="flex items-start gap-2 text-sm leading-snug">
+                                    <input type="checkbox" class="mt-1 accent-slate-700" name="permissions" value="${esc(perm.key)}" />
+                                    <span>${esc(perm.label)}</span>
+                                  </label>
+                                `
+                              )
+                              .join('')}
+                          </div>
+                        </fieldset>
+                      `
+                    )
+                    .join('')}
+                </div>
+                <div class="rounded border border-slate-200 bg-white/60 p-3 text-xs text-slate-600" data-permission-summary>
+                  <p><strong>Perfil base:</strong> <span data-summary-role>—</span> · <span data-summary-base-count>0</span> permissões base</p>
+                  <p><strong>Ajustes personalizados:</strong> <span data-summary-added>0 adicionadas</span>, <span data-summary-removed>0 removidas</span></p>
+                </div>
+                <p class="text-xs text-amber-600 hidden" data-permission-guard>As permissões da conta de desenvolvimento não podem ser alteradas.</p>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+                  <button class="btn btn-primary" data-permission-submit>Guardar permissões</button>
+                </div>
+              </form>
+            </section>
+          `
+        : ''}
+
+      <section class="card p-4 md:col-span-2">
+        <h2 class="font-semibold mb-3">Escopos por propriedade</h2>
+        <form method="post" action="/admin/user-roles" class="grid gap-3 md:grid-cols-4">
+          <label class="grid gap-1 text-sm">
+            <span>Utilizador</span>
+            <select name="user_id" class="input" required>
+              <option value="">— Selecionar —</option>
+              ${users
+                .map(
+                  user =>
+                    `<option value="${user.id}">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ''} (${esc(ROLE_LABELS[user.role_key] || user.role_key)})</option>`
+                )
+                .join('')}
+            </select>
+          </label>
+          <label class="grid gap-1 text-sm">
+            <span>Perfil</span>
+            <select name="role_key" class="input" required>
+              <option value="">— Selecionar —</option>
+              ${scopeRoleOptions.map(opt => `<option value="${esc(opt.key)}">${esc(opt.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="grid gap-1 text-sm md:col-span-2">
+            <span>Propriedade</span>
+            <select name="property_id" class="input">
+              <option value="">Todas as propriedades</option>
+              ${propertyChoices.map(prop => `<option value="${prop.id}">${esc(prop.name)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="md:col-span-4 flex flex-wrap items-center justify-between gap-3">
+            <p class="text-xs text-slate-500">Ao guardar, todas as sessões do utilizador selecionado serão terminadas.</p>
+            <button class="btn btn-primary">Adicionar escopo</button>
+          </div>
+        </form>
+        <div class="responsive-table mt-4">
+          <table class="w-full text-sm">
+            <thead>
+              <tr>
+                <th class="text-left px-4 py-2">Utilizador</th>
+                <th class="text-left px-4 py-2">Perfil</th>
+                <th class="text-left px-4 py-2">Propriedade</th>
+                <th class="text-left px-4 py-2">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${scopeAssignments.length
+                ? scopeAssignments
+                    .map(scope => {
+                      const roleLabel = ROLE_LABELS[scope.role_key] || scope.role_name || scope.role_key;
+                      const propertyLabel = scope.property_id == null
+                        ? 'Todas as propriedades'
+                        : scope.property_name
+                        ? scope.property_name
+                        : `Propriedade #${scope.property_id}`;
+                      const confirmMessage = JSON.stringify(
+                        `Revogar o escopo ${roleLabel} em ${propertyLabel}? O utilizador perderá o acesso imediato.`
+                      );
+                      return `
+                        <tr>
+                          <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(scope.username)}</span></td>
+                          <td class="px-4 py-2" data-label="Perfil"><span class="table-cell-value">${esc(roleLabel)}</span></td>
+                          <td class="px-4 py-2" data-label="Propriedade"><span class="table-cell-value">${esc(propertyLabel)}</span></td>
+                          <td class="px-4 py-2" data-label="Ações">
+                            <form method="post" action="/admin/user-roles/${scope.id}/delete" class="inline">
+                              <button class="btn btn-light btn-xs" onclick="return confirm(${confirmMessage});">Remover</button>
+                            </form>
+                          </td>
+                        </tr>`;
+                    })
+                    .join('')
+                : '<tr><td class="px-4 py-3 text-slate-500" colspan="4">Ainda não existem escopos atribuídos.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function(){
+        const roleSelect = document.getElementById('create-user-role');
+        const ownerSection = document.getElementById('owner-property-select');
+        if(!roleSelect || !ownerSection) return;
+        const checkboxes = ownerSection.querySelectorAll('input[type="checkbox"]');
+        function syncOwnerSection(){
+          const isOwner = roleSelect.value === 'owner';
+          ownerSection.classList.toggle('hidden', !isOwner);
+          ownerSection.style.display = isOwner ? 'block' : 'none';
+          ownerSection.setAttribute('aria-hidden', isOwner ? 'false' : 'true');
+          checkboxes.forEach(box => {
+            box.disabled = !isOwner;
+            if(!isOwner) box.checked = false;
+          });
+        }
+        roleSelect.addEventListener('change', syncOwnerSection);
+        syncOwnerSection();
+      })();
+    </script>
+  `;
+
+  const tableHtml = renderTable(table, req, res);
+  const theme = resolveBrandingForRequest(req);
+  res.locals.activeNav = '/admin/utilizadores';
+
+  const bodyContent = usersTemplateRenderer
+    ? usersTemplateRenderer({
+        renderTable: (config) => renderTable(config, req, res),
+        tableHtml,
+        formsHtml,
+        totalCount: filteredUsers.length,
+        errorMessage,
+        successMessage,
+        deletedMessage,
+        permissionPayload
+      })
+    : html`
+        <div class="bo-page bo-page--wide">
+          <h1 class="text-2xl font-semibold mb-4">Utilizadores</h1>
+          ${tableHtml}
+          ${formsHtml}
+        </div>`;
+
+  res.send(
+    layout({
+      title: 'Utilizadores',
+      user: req.user,
+      activeNav: 'users',
+      branding: theme,
+      pageClass: 'page-backoffice page-users',
+      body: bodyContent
+    })
+  );
     channelTotals.sort((a, b) => (b.revenueCents || 0) - (a.revenueCents || 0));
     const channelTotalCents = channelTotals.reduce((sum, item) => sum + (item.revenueCents || 0), 0);
     const revenueChannels = (channelTotals.length ? channelTotals : [{ name: 'Direto', revenueCents: 0 }]).map(item => ({
@@ -3306,6 +2939,221 @@ module.exports = function registerBackoffice(app, context) {
     );
   });
 
+  app.get('/admin/ux-api', requireLogin, requireBackofficeAccess, (req, res) => {
+    ensureNoIndex(res);
+    res.locals.activeNav = '/admin/ux-api';
+    const theme = resolveBrandingForRequest(req);
+    const translator = resolveTranslator(req, res);
+    const docsBase = 'https://docs.gestor.pt';
+    const academyBase = 'https://academy.gestor.pt';
+    const mainDocUrl = `${docsBase}/ux-api`;
+    const quickstartUrl = `${academyBase}/workshops/ux-api`;
+    const tokenDocUrl = `${docsBase}/ux-api/tokens`;
+    const quickLinks = [
+      {
+        label: translator('support.uxApi.quickLinks.endpointMap'),
+        href: `${docsBase}/ux-api/endpoints`,
+        icon: 'sitemap'
+      },
+      {
+        label: translator('support.uxApi.quickLinks.sdk'),
+        href: `${docsBase}/ux-api/sdk-js`,
+        icon: 'code'
+      },
+      {
+        label: translator('support.uxApi.quickLinks.status'),
+        href: 'https://status.gestor.pt',
+        icon: 'signal'
+      }
+    ];
+    const guides = [
+      {
+        icon: 'tags',
+        title: translator('support.uxApi.guides.rates.title'),
+        description: translator('support.uxApi.guides.rates.description'),
+        docUrl: `${docsBase}/ux-api/rates-bulk`,
+        exampleUrl: `${docsBase}/ux-api/exemplos/rates`
+      },
+      {
+        icon: 'calendar-minus',
+        title: translator('support.uxApi.guides.blocks.title'),
+        description: translator('support.uxApi.guides.blocks.description'),
+        docUrl: `${docsBase}/ux-api/unit-blocks`
+      },
+      {
+        icon: 'messages-square',
+        title: translator('support.uxApi.guides.reviews.title'),
+        description: translator('support.uxApi.guides.reviews.description'),
+        docUrl: `${docsBase}/ux-api/reviews`
+      },
+      {
+        icon: 'line-chart',
+        title: translator('support.uxApi.guides.reports.title'),
+        description: translator('support.uxApi.guides.reports.description'),
+        docUrl: `${docsBase}/ux-api/reports`
+      }
+    ];
+    const tokenGuidelines = [
+      {
+        label: translator('support.uxApi.guidelines.items.format.title'),
+        description: translator('support.uxApi.guidelines.items.format.description'),
+        tooltip: translator('support.uxApi.guidelines.items.format.tooltip')
+      },
+      {
+        label: translator('support.uxApi.guidelines.items.scopes.title'),
+        description: translator('support.uxApi.guidelines.items.scopes.description'),
+        tooltip: translator('support.uxApi.guidelines.items.scopes.tooltip')
+      },
+      {
+        label: translator('support.uxApi.guidelines.items.lifecycle.title'),
+        description: translator('support.uxApi.guidelines.items.lifecycle.description'),
+        tooltip: translator('support.uxApi.guidelines.items.lifecycle.tooltip')
+      }
+    ];
+    const tokens = [];
+    let integrationTips = [];
+    if (channelIntegrations && typeof channelIntegrations.listIntegrations === 'function') {
+      integrationTips = channelIntegrations.listIntegrations().map(item => ({
+        name: item.name || item.key,
+        description: translator('support.uxApi.integrations.description', { name: item.name || item.key }),
+        href: `${docsBase}/integracoes/${item.key}`
+      }));
+    }
+    const normalizedTokens = tokens.map(token => {
+      const status = typeof token.status === 'string' ? token.status.toLowerCase() : '';
+      let statusTone = token.statusTone || 'neutral';
+      if (statusTone === 'neutral') {
+        if (status === 'active' || status === 'ativo') {
+          statusTone = 'positive';
+        } else if (status === 'revoked' || status === 'revogado' || status === 'inativo') {
+          statusTone = 'warning';
+        }
+      }
+      let statusLabel = token.statusLabel;
+      if (!statusLabel) {
+        if (status === 'active' || status === 'ativo') {
+          statusLabel = translator('support.uxApi.tokens.status.active');
+        } else if (status === 'revoked' || status === 'revogado') {
+          statusLabel = translator('support.uxApi.tokens.status.revoked');
+        } else if (status === 'expired' || status === 'expirado') {
+          statusLabel = translator('support.uxApi.tokens.status.expired');
+        }
+      }
+      return {
+        ...token,
+        statusTone,
+        statusLabel: statusLabel || token.status || ''
+      };
+    });
+    const bodyContent = uxApiTemplateRenderer
+      ? uxApiTemplateRenderer({
+          guides,
+          tokens: normalizedTokens,
+          tokenGuidelines,
+          integrationTips,
+          quickLinks,
+          mainDocUrl,
+          quickstartUrl,
+          tokenDocUrl,
+          t: translator,
+          esc
+        })
+      : html`<div class="bo-page"><h1>${esc(translator('support.uxApi.title'))}</h1><p>${esc(
+            translator('support.uxApi.fallback', { docUrl: mainDocUrl })
+          )}</p></div>`;
+    res.send(
+      layout({
+        title: translator('support.uxApi.title'),
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        pageClass: 'page-backoffice page-ux-api',
+        body: bodyContent
+      })
+    );
+  });
+
+  app.get('/admin/ajuda', requireLogin, requireBackofficeAccess, (req, res) => {
+    ensureNoIndex(res);
+    res.locals.activeNav = '/admin/ajuda';
+    const theme = resolveBrandingForRequest(req);
+    const docsBase = 'https://docs.gestor.pt';
+    const translator = resolveTranslator(req, res);
+    const resources = [
+      {
+        label: translator('support.help.sections.resources.items.onboarding.label'),
+        description: translator('support.help.sections.resources.items.onboarding.description'),
+        href: `${docsBase}/guia/backoffice`
+      },
+      {
+        label: translator('support.help.sections.resources.items.bookings.label'),
+        description: translator('support.help.sections.resources.items.bookings.description'),
+        href: `${docsBase}/operacoes/reservas`
+      },
+      {
+        label: translator('support.help.sections.resources.items.housekeeping.label'),
+        description: translator('support.help.sections.resources.items.housekeeping.description'),
+        href: `${docsBase}/operacoes/housekeeping`
+      }
+    ];
+    const faqs = [
+      {
+        question: translator('support.help.sections.faq.items.resetPassword.question'),
+        answer: translator('support.help.sections.faq.items.resetPassword.answer')
+      },
+      {
+        question: translator('support.help.sections.faq.items.monthlyReports.question'),
+        answer: translator('support.help.sections.faq.items.monthlyReports.answer')
+      },
+      {
+        question: translator('support.help.sections.faq.items.shareCalendar.question'),
+        answer: translator('support.help.sections.faq.items.shareCalendar.answer')
+      }
+    ];
+    const channels = [
+      {
+        label: translator('support.help.sections.channels.items.email.label'),
+        value: translator('support.help.sections.channels.items.email.value'),
+        description: translator('support.help.sections.channels.items.email.description'),
+        icon: 'mail'
+      },
+      {
+        label: translator('support.help.sections.channels.items.phone.label'),
+        value: translator('support.help.sections.channels.items.phone.value'),
+        description: translator('support.help.sections.channels.items.phone.description'),
+        icon: 'phone'
+      },
+      {
+        label: translator('support.help.sections.channels.items.emergencyChat.label'),
+        value: translator('support.help.sections.channels.items.emergencyChat.value'),
+        description: translator('support.help.sections.channels.items.emergencyChat.description'),
+        icon: 'message-circle'
+      }
+    ];
+    const statusTips = [
+      translator('support.help.sections.status.tips.contextDetails'),
+      translator('support.help.sections.status.tips.evidence'),
+      translator('support.help.sections.status.tips.escalateCritical')
+    ];
+    const bodyContent = helpTemplateRenderer
+      ? helpTemplateRenderer({ resources, faqs, channels, statusTips, t: translator, esc })
+      : html`<div class="bo-page"><h1>${esc(translator('support.help.title'))}</h1><p>${esc(
+            translator('support.help.fallback', {
+              email: translator('support.help.sections.channels.items.email.value')
+            })
+          )}</p></div>`;
+    res.send(
+      layout({
+        title: translator('support.help.title'),
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        pageClass: 'page-backoffice page-help',
+        body: bodyContent
+      })
+    );
+  });
+
   app.get('/admin/revenue-calendar', requireLogin, requirePermission('dashboard.view'), (req, res) => {
     res.locals.activeNav = '/admin/revenue-calendar';
     setNoIndex(res);
@@ -3687,6 +3535,220 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
     }
   });
 
+app.get('/admin/properties', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  const query = req.query || {};
+  const search = typeof query.search === 'string' ? query.search.trim() : '';
+  const allowedStatus = ['active', 'no_units'];
+  const statusValue = typeof query.status === 'string' && allowedStatus.includes(query.status)
+    ? query.status
+    : 'all';
+  const allowedSort = ['name', 'units', 'revenue', 'occupancy'];
+  const sortKey = typeof query.sort === 'string' && allowedSort.includes(query.sort) ? query.sort : 'name';
+  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const requestedPage = Number.parseInt(query.page, 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = 20;
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const properties = db.prepare('SELECT id, name, locality, district FROM properties ORDER BY name').all();
+  const unitCounts = db.prepare('SELECT property_id, COUNT(*) AS unit_count FROM units GROUP BY property_id').all();
+  const revenueByProperty = db
+    .prepare(
+      `SELECT u.property_id AS property_id,
+              SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END) AS revenue_cents
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+        GROUP BY u.property_id`
+    )
+    .all();
+  const occupancyToday = db
+    .prepare(
+      `SELECT u.property_id AS property_id,
+              COUNT(DISTINCT u.id) AS occupied_units
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+        WHERE b.status = 'CONFIRMED'
+          AND b.checkin <= ?
+          AND b.checkout > ?
+        GROUP BY u.property_id`
+    )
+    .all(today, today);
+
+  const unitCountMap = new Map(unitCounts.map(row => [row.property_id, Number(row.unit_count) || 0]));
+  const revenueMap = new Map(revenueByProperty.map(row => [row.property_id, Number(row.revenue_cents) || 0]));
+  const occupancyMap = new Map(occupancyToday.map(row => [row.property_id, Number(row.occupied_units) || 0]));
+
+  const list = properties.map(property => {
+    const unitCount = unitCountMap.get(property.id) || 0;
+    const revenueCents = revenueMap.get(property.id) || 0;
+    const occupiedUnits = occupancyMap.get(property.id) || 0;
+    const occupancyRate = unitCount > 0 ? Math.round((occupiedUnits / unitCount) * 100) : 0;
+    const statusKey = unitCount > 0 ? 'active' : 'no_units';
+    return {
+      id: property.id,
+      name: property.name,
+      location: propertyLocationLabel(property),
+      unitCount,
+      revenueCents,
+      occupiedUnits,
+      occupancyRate,
+      statusKey,
+      statusLabel: statusKey === 'active' ? 'Ativa' : 'Sem unidades'
+    };
+  });
+
+  const filtered = list.filter(row => {
+    if (statusValue !== 'all' && row.statusKey !== statusValue) {
+      return false;
+    }
+    if (!search) return true;
+    const haystack = `${row.name} ${row.location || ''}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+
+  const sorted = filtered.sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'units':
+        result = a.unitCount - b.unitCount;
+        break;
+      case 'revenue':
+        result = a.revenueCents - b.revenueCents;
+        break;
+      case 'occupancy':
+        result = a.occupancyRate - b.occupancyRate;
+        break;
+      case 'name':
+      default:
+        result = a.name.localeCompare(b.name, 'pt', { sensitivity: 'base' });
+        break;
+    }
+    return sortOrder === 'desc' ? -result : result;
+  });
+
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageRows = sorted.slice(startIndex, startIndex + pageSize);
+
+  const modals = [];
+
+  const tableRows = pageRows.map(row => {
+    const modalId = `property-${row.id}-delete`;
+    modals.push({
+      id: modalId,
+      title: `Eliminar ${row.name}`,
+      message: 'Tem a certeza que deseja eliminar este item? Esta ação não pode ser anulada.',
+      action: `/admin/properties/${row.id}/delete`,
+      confirmLabel: 'Eliminar',
+      confirmIcon: 'trash-2'
+    });
+
+    const occupancyLabel = row.unitCount
+      ? `<span class="table-cell-value">${row.occupiedUnits}/${row.unitCount}</span><span class="table-cell-meta">${row.occupancyRate}% ocupação</span>`
+      : '<span class="table-cell-value">—</span><span class="table-cell-meta">Sem unidades</span>';
+
+    const statusBadge = row.statusKey === 'active'
+      ? '<span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Ativa</span>'
+      : '<span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Sem unidades</span>';
+
+    const locationHtml = row.location
+      ? `<span class="table-cell-meta">${esc(row.location)}</span>`
+      : '';
+
+    return {
+      id: row.id,
+      cells: {
+        name: { html: `<span class="table-cell-value">${esc(row.name)}</span>${locationHtml}` },
+        units: { text: String(row.unitCount) },
+        occupancy: { html: occupancyLabel },
+        revenue: { className: 'text-right', html: `<span class="table-cell-value">€ ${eur(row.revenueCents)}</span>` },
+        status: { html: statusBadge }
+      },
+      actions: [
+        { type: 'link', href: `/admin/properties/${row.id}`, label: 'Editar', icon: 'pencil' },
+        { type: 'button', modalId, label: 'Eliminar', icon: 'trash-2' }
+      ]
+    };
+  });
+
+  const statusOptions = [
+    { value: 'all', label: 'Todos os estados' },
+    { value: 'active', label: 'Ativas' },
+    { value: 'no_units', label: 'Sem unidades' }
+  ];
+
+  const table = {
+    id: 'properties-table',
+    formAction: '/admin/properties',
+    searchValue: search,
+    searchPlaceholder: 'Pesquisar propriedades ou localidade…',
+    statusOptions,
+    statusValue,
+    columns: [
+      { key: 'name', label: 'Propriedade', sortable: true },
+      { key: 'units', label: 'Unidades', sortable: true, className: 'text-center' },
+      { key: 'occupancy', label: 'Ocupação hoje', sortable: true, className: 'text-center' },
+      { key: 'revenue', label: 'Receita confirmada', sortable: true, className: 'text-right' },
+      { key: 'status', label: 'Estado' }
+    ],
+    rows: tableRows,
+    actionsLabel: 'Ações',
+    sortKey,
+    sortOrder,
+    resetUrl: '/admin/properties',
+    buildSortUrl: key => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', key);
+      params.set('order', sortKey === key && sortOrder === 'asc' ? 'desc' : 'asc');
+      params.set('page', '1');
+      return `/admin/properties?${params.toString()}`;
+    },
+    buildPageUrl: targetPage => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
+      params.set('page', String(targetPage));
+      return `/admin/properties?${params.toString()}`;
+    },
+    pagination: {
+      page: currentPage,
+      totalPages
+    },
+    emptyMessage: 'Nenhuma propriedade corresponde aos filtros aplicados.',
+    modals
+  };
+
+  const theme = resolveBrandingForRequest(req);
+  res.locals.activeNav = '/admin/properties';
+
+  const renderTableWithContext = (config) => renderTable(config, req, res);
+  const bodyContent = propertiesTemplateRenderer
+    ? propertiesTemplateRenderer({ renderTable: renderTableWithContext, table, totalCount })
+    : html`
+        <div class="bo-page">
+          <h1>Propriedades</h1>
+          ${renderTable(table, req, res)}
+        </div>
+      `;
+
+  res.send(
+    layout({
+      title: 'Propriedades',
+      user: req.user,
+      activeNav: 'backoffice',
+      branding: theme,
+      pageClass: 'page-backoffice page-properties',
+      body: bodyContent
+    })
+  );
+});
+
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
   const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
@@ -3722,7 +3784,7 @@ app.post('/admin/properties/create', requireLogin, requirePermission('properties
     latitude,
     longitude
   );
-  res.redirect('/admin');
+  res.redirect('/admin/properties');
 });
 
 app.post(
@@ -3734,7 +3796,7 @@ app.post(
     const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
     if (!property) return res.status(404).send('Propriedade não encontrada');
     db.prepare('DELETE FROM properties WHERE id = ?').run(id);
-    res.redirect('/admin');
+    res.redirect('/admin/properties');
   }
 );
 
@@ -3925,6 +3987,208 @@ app.post(
   }
 );
 
+app.get('/admin/units', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  const query = req.query || {};
+  const search = typeof query.search === 'string' ? query.search.trim() : '';
+  const allowedStatus = ['available', 'blocked'];
+  const statusValue = typeof query.status === 'string' && allowedStatus.includes(query.status)
+    ? query.status
+    : 'all';
+  const allowedSort = ['name', 'property', 'capacity', 'price', 'status'];
+  const sortKey = typeof query.sort === 'string' && allowedSort.includes(query.sort) ? query.sort : 'property';
+  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const requestedPage = Number.parseInt(query.page, 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = 25;
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const units = db
+    .prepare(
+      `SELECT u.id,
+              u.name,
+              u.capacity,
+              u.base_price_cents,
+              u.property_id,
+              p.name AS property_name
+         FROM units u
+         JOIN properties p ON p.id = u.property_id`
+    )
+    .all();
+
+  const blockedModern = db
+    .prepare(
+      `SELECT unit_id
+         FROM unit_blocks
+        WHERE end_date > ?
+          AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')`
+    )
+    .all(today);
+
+  const blockedLegacy = db.prepare('SELECT unit_id FROM blocks WHERE end_date > ?').all(today);
+  const blockedSet = new Set([
+    ...blockedModern.map(entry => entry.unit_id),
+    ...blockedLegacy.map(entry => entry.unit_id)
+  ]);
+
+  const rows = units.map(unit => {
+    const blocked = blockedSet.has(unit.id);
+    return {
+      id: unit.id,
+      name: unit.name,
+      propertyName: unit.property_name,
+      capacity: Number(unit.capacity) || 0,
+      priceCents: Number(unit.base_price_cents) || 0,
+      statusKey: blocked ? 'blocked' : 'available',
+      statusLabel: blocked ? 'Bloqueado' : 'Disponível'
+    };
+  });
+
+  const filtered = rows.filter(row => {
+    if (statusValue !== 'all' && row.statusKey !== statusValue) {
+      return false;
+    }
+    if (!search) return true;
+    const haystack = `${row.name} ${row.propertyName}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+
+  const sorted = filtered.sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'name':
+        result = a.name.localeCompare(b.name, 'pt', { sensitivity: 'base' });
+        break;
+      case 'capacity':
+        result = a.capacity - b.capacity;
+        break;
+      case 'price':
+        result = a.priceCents - b.priceCents;
+        break;
+      case 'status':
+        result = a.statusLabel.localeCompare(b.statusLabel, 'pt', { sensitivity: 'base' });
+        break;
+      case 'property':
+      default:
+        result = a.propertyName.localeCompare(b.propertyName, 'pt', { sensitivity: 'base' });
+        break;
+    }
+    return sortOrder === 'desc' ? -result : result;
+  });
+
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageRows = sorted.slice(startIndex, startIndex + pageSize);
+
+  const modals = [];
+
+  const tableRows = pageRows.map(row => {
+    const modalId = `unit-${row.id}-delete`;
+    modals.push({
+      id: modalId,
+      title: `Eliminar ${row.name}`,
+      message: 'Tem a certeza que deseja eliminar este item? Esta ação não pode ser anulada.',
+      action: `/admin/units/${row.id}/delete`,
+      confirmLabel: 'Eliminar',
+      confirmIcon: 'trash-2'
+    });
+
+    const statusBadge = row.statusKey === 'blocked'
+      ? '<span class="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Bloqueado</span>'
+      : '<span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Disponível</span>';
+
+    return {
+      id: row.id,
+      cells: {
+        property: { text: row.propertyName },
+        name: { text: row.name },
+        capacity: { text: `${row.capacity} hóspedes`, className: 'text-center' },
+        price: { className: 'text-right', html: `<span class="table-cell-value">€ ${eur(row.priceCents)}</span>` },
+        status: { html: statusBadge }
+      },
+      actions: [
+        { type: 'link', href: `/admin/units/${row.id}`, label: 'Editar', icon: 'pencil' },
+        { type: 'button', modalId, label: 'Eliminar', icon: 'trash-2' }
+      ]
+    };
+  });
+
+  const statusOptions = [
+    { value: 'all', label: 'Todos os estados' },
+    { value: 'available', label: 'Disponíveis' },
+    { value: 'blocked', label: 'Bloqueados' }
+  ];
+
+  const table = {
+    id: 'units-table',
+    formAction: '/admin/units',
+    searchValue: search,
+    searchPlaceholder: 'Pesquisar unidade ou propriedade…',
+    statusOptions,
+    statusValue,
+    columns: [
+      { key: 'property', label: 'Propriedade', sortable: true },
+      { key: 'name', label: 'Unidade', sortable: true },
+      { key: 'capacity', label: 'Capacidade', sortable: true, className: 'text-center' },
+      { key: 'price', label: 'Preço base', sortable: true, className: 'text-right' },
+      { key: 'status', label: 'Estado', sortable: true }
+    ],
+    rows: tableRows,
+    actionsLabel: 'Ações',
+    sortKey,
+    sortOrder,
+    resetUrl: '/admin/units',
+    buildSortUrl: key => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', key);
+      params.set('order', sortKey === key && sortOrder === 'asc' ? 'desc' : 'asc');
+      params.set('page', '1');
+      return `/admin/units?${params.toString()}`;
+    },
+    buildPageUrl: targetPage => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
+      params.set('page', String(targetPage));
+      return `/admin/units?${params.toString()}`;
+    },
+    pagination: {
+      page: currentPage,
+      totalPages
+    },
+    emptyMessage: 'Nenhuma unidade corresponde aos filtros aplicados.',
+    modals
+  };
+
+  const theme = resolveBrandingForRequest(req);
+  res.locals.activeNav = '/admin/units';
+
+  const unitsRenderTable = (config) => renderTable(config, req, res);
+  const bodyContent = unitsTemplateRenderer
+    ? unitsTemplateRenderer({ renderTable: unitsRenderTable, table, totalCount })
+    : html`
+        <div class="bo-page">
+          <h1>Unidades</h1>
+          ${renderTable(table, req, res)}
+        </div>`;
+
+  res.send(
+    layout({
+      title: 'Unidades',
+      user: req.user,
+      activeNav: 'backoffice',
+      branding: theme,
+      pageClass: 'page-backoffice page-units',
+      body: bodyContent
+    })
+  );
+});
+
 app.post(
   '/admin/units/create',
   requireLogin,
@@ -3953,7 +4217,7 @@ app.post(
     null,
     null
   );
-  res.redirect('/admin');
+  res.redirect('/admin/units');
 }
 );
 
@@ -4309,7 +4573,7 @@ app.post(
   }),
   (req, res) => {
     db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
-    res.redirect('/admin');
+    res.redirect('/admin/units');
   }
 );
 
@@ -5659,6 +5923,13 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                  COALESCE(p.name, '') COLLATE NOCASE`
     )
     .all(tenantId);
+  const scopeCountByUser = {};
+  scopeAssignments.forEach(scope => {
+    if (!scope || !scope.user_id) return;
+    const userId = Number(scope.user_id);
+    if (!Number.isInteger(userId)) return;
+    scopeCountByUser[userId] = (scopeCountByUser[userId] || 0) + 1;
+  });
   const query = req.query || {};
   let successMessage = null;
   if (query.updated === 'permissions') {
@@ -5690,6 +5961,15 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
       break;
   }
 
+  const overridesByUser = {};
+  selectAllPermissionOverridesStmt.all().forEach(row => {
+    if (!row || !row.user_id || !row.permission) return;
+    if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+    overridesByUser[row.user_id].push({
+      permission: row.permission,
+      is_granted: row.is_granted ? 1 : 0
+    });
+  });
   let permissionGroupEntries = [];
   let permissionPayload = null;
   if (isDevOperator) {
@@ -5708,16 +5988,6 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     permissionGroupEntries = Object.entries(grouped)
       .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
       .map(([groupKey, permissions]) => ({ groupKey, permissions }));
-
-    const overridesByUser = {};
-    selectAllPermissionOverridesStmt.all().forEach(row => {
-      if (!row || !row.user_id || !row.permission) return;
-      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
-      overridesByUser[row.user_id].push({
-        permission: row.permission,
-        is_granted: row.is_granted ? 1 : 0
-      });
-    });
 
     const baseByUser = {};
     const effectiveByUser = {};
@@ -5981,6 +6251,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                         : scope.property_name
                         ? scope.property_name
                         : `Propriedade #${scope.property_id}`;
+                      const confirmMessage = JSON.stringify(
+                        `Revogar o escopo ${roleLabel} em ${propertyLabel}? O utilizador perderá o acesso imediato.`
+                      );
                       return `
                         <tr>
                           <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(scope.username)}</span></td>
@@ -5988,7 +6261,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                           <td class="px-4 py-2" data-label="Propriedade"><span class="table-cell-value">${esc(propertyLabel)}</span></td>
                           <td class="px-4 py-2" data-label="Ações">
                             <form method="post" action="/admin/user-roles/${scope.id}/delete" class="inline">
-                              <button class="btn btn-light btn-xs" onclick="return confirm('Remover este escopo?');">Remover</button>
+                              <button class="btn btn-light btn-xs" onclick="return confirm(${confirmMessage});">Remover</button>
                             </form>
                           </td>
                         </tr>
@@ -6555,6 +6828,39 @@ app.post('/admin/users/permissions', requireDev, (req, res) => {
   }
 
   res.redirect('/admin/utilizadores?updated=permissions');
+});
+
+app.post('/admin/users/:id/delete', requireAdmin, (req, res) => {
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const userId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(userId)) {
+    return res.redirect('/admin/utilizadores?error=delete_invalid');
+  }
+  if (req.user && Number(req.user.id) === userId) {
+    return res.redirect('/admin/utilizadores?error=delete_self');
+  }
+  const target = db
+    .prepare('SELECT id, username, role FROM users WHERE id = ? AND tenant_id = ?')
+    .get(userId, tenantId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=delete_missing');
+  }
+  const targetRole = normalizeRole(target.role);
+  if (targetRole === MASTER_ROLE && req.user && normalizeRole(req.user.role) !== MASTER_ROLE) {
+    return res.redirect('/admin/utilizadores?error=delete_missing');
+  }
+  const removeRoles = db.prepare('DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ?');
+  const removeOwners = db.prepare('DELETE FROM property_owners WHERE user_id = ? AND tenant_id = ?');
+  const deleteUser = db.prepare('DELETE FROM users WHERE id = ? AND tenant_id = ?');
+  db.transaction(() => {
+    removeRoles.run(userId, tenantId);
+    removeOwners.run(userId, tenantId);
+    deletePermissionOverridesForUserStmt.run(userId);
+    deleteUser.run(userId, tenantId);
+  })();
+  revokeUserSessions(userId, req);
+  logActivity(req.user.id, 'user:delete', 'user', userId, { username: target.username });
+  res.redirect('/admin/utilizadores?deleted=1');
 });
 
 app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{
