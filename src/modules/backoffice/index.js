@@ -1215,26 +1215,173 @@ module.exports = function registerBackoffice(app, context) {
     const navigationHtml = renderNavigation(res.locals.activeNav, req, res);
     const { list: notifications } = loadNotifications(req, res);
 
+    const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+    const users = db
+      .prepare('SELECT id, username, email, role FROM users WHERE tenant_id = ? ORDER BY username')
+      .all(tenantId)
+      .map(user => ({
+        ...user,
+        role_key: normalizeRole(user.role)
+      }));
+    const isDevOperator = req.user && req.user.role === MASTER_ROLE;
+    const roleOptions = [
+      { key: 'rececao', label: ROLE_LABELS.rececao },
+      { key: 'gestao', label: ROLE_LABELS.gestao },
+      { key: 'direcao', label: ROLE_LABELS.direcao },
+      { key: 'limpeza', label: ROLE_LABELS.limpeza },
+      { key: 'owner', label: ROLE_LABELS.owner }
+    ];
+    if (isDevOperator) {
+      roleOptions.unshift({ key: MASTER_ROLE, label: ROLE_LABELS[MASTER_ROLE] });
+    }
+    const propertyChoices = db
+      .prepare('SELECT id, name FROM properties WHERE tenant_id = ? ORDER BY name')
+      .all(tenantId);
+    const scopeRoleOptions = db
+      .prepare('SELECT key, name FROM roles WHERE key != ? ORDER BY name COLLATE NOCASE')
+      .all(MASTER_ROLE)
+      .map(row => ({
+        key: row.key,
+        label: row.name || ROLE_LABELS[row.key] || row.key
+      }));
+    const scopeAssignments = db
+      .prepare(
+        `SELECT ur.id,
+                ur.user_id,
+                ur.property_id,
+                u.username,
+                r.key AS role_key,
+                COALESCE(r.name, r.key) AS role_name,
+                p.name AS property_name
+           FROM user_roles ur
+           JOIN users u ON u.id = ur.user_id
+           JOIN roles r ON r.id = ur.role_id
+      LEFT JOIN properties p ON p.id = ur.property_id
+          WHERE u.tenant_id = ?
+            AND (p.id IS NULL OR p.tenant_id = u.tenant_id)
+          ORDER BY u.username COLLATE NOCASE,
+                   r.name COLLATE NOCASE,
+                   COALESCE(p.name, '') COLLATE NOCASE`
+      )
+      .all(tenantId);
+    const scopeCountByUser = {};
+    scopeAssignments.forEach(scope => {
+      if (!scope || !scope.user_id) return;
+      const userId = Number(scope.user_id);
+      if (!Number.isInteger(userId)) return;
+      scopeCountByUser[userId] = (scopeCountByUser[userId] || 0) + 1;
+    });
+
+    const overridesByUser = {};
+    selectAllPermissionOverridesStmt.all().forEach(row => {
+      if (!row || !row.user_id || !row.permission) return;
+      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+      overridesByUser[row.user_id].push({
+        permission: row.permission,
+        is_granted: row.is_granted ? 1 : 0
+      });
+    });
+
+    let permissionGroupEntries = [];
+    let permissionPayload = null;
+    if (isDevOperator) {
+      const grouped = {};
+      Array.from(ALL_PERMISSIONS)
+        .sort((a, b) => a.localeCompare(b, 'pt'))
+        .forEach(permission => {
+          const [groupKey] = permission.split('.');
+          const key = groupKey || 'outros';
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push({
+            key: permission,
+            label: permission.replace(/\./g, ' → ')
+          });
+        });
+      permissionGroupEntries = Object.entries(grouped)
+        .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
+        .map(([groupKey, permissions]) => ({ groupKey, permissions }));
+
+      const baseByUser = {};
+      const effectiveByUser = {};
+      users.forEach(user => {
+        const baseSet = new Set(ROLE_PERMISSIONS[user.role_key] || []);
+        baseByUser[user.id] = Array.from(baseSet);
+        const effectiveSet = new Set(baseSet);
+        (overridesByUser[user.id] || []).forEach(entry => {
+          if (!entry || !entry.permission || !ALL_PERMISSIONS.has(entry.permission)) return;
+          if (entry.is_granted) {
+            effectiveSet.add(entry.permission);
+          } else {
+            effectiveSet.delete(entry.permission);
+          }
+        });
+        effectiveByUser[user.id] = Array.from(effectiveSet);
+      });
+
+      const roleLabelsByUser = Object.fromEntries(
+        users.map(user => [user.id, ROLE_LABELS[user.role_key] || user.role_key])
+      );
+      const devUser = users.find(u => u.role_key === MASTER_ROLE) || null;
+      const payload = {
+        base: baseByUser,
+        effective: effectiveByUser,
+        overrides: overridesByUser,
+        roleLabels: roleLabelsByUser,
+        devUserId: devUser ? devUser.id : null
+      };
+      permissionPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
+    }
+
     const query = req.query || {};
+    let successMessage = null;
+    if (query.updated === 'permissions') {
+      successMessage = 'Permissões personalizadas atualizadas com sucesso.';
+    } else if (query.updated === 'scopes') {
+      successMessage = 'Escopos atualizados com sucesso.';
+    }
+    const deletedMessage = query.deleted ? 'Utilizador eliminado com sucesso.' : null;
     let errorMessage = null;
+    switch (query.error) {
+      case 'permissions_forbidden':
+        errorMessage = 'Não é possível alterar as permissões desse utilizador.';
+        break;
+      case 'permissions_invalid':
+        errorMessage = 'Seleção de permissões inválida. Tente novamente.';
+        break;
+      case 'scopes_invalid':
+        errorMessage = 'Selecione utilizador, perfil e propriedade válidos antes de guardar.';
+        break;
+      case 'scopes_exists':
+        errorMessage = 'O escopo selecionado já está atribuído a esse utilizador.';
+        break;
+      case 'scopes_not_found':
+        errorMessage = 'Escopo indicado não foi encontrado.';
+        break;
+      case 'scopes_forbidden':
+        errorMessage = 'Sem permissão para gerir escopos desse utilizador.';
+        break;
+      case 'delete_invalid':
+        errorMessage = 'Utilizador inválido. Tenta novamente.';
+        break;
+      case 'delete_self':
+        errorMessage = 'Não é possível eliminar a tua própria conta.';
+        break;
+      case 'delete_missing':
+        errorMessage = 'Utilizador indicado não foi encontrado.';
+        break;
+      default:
+        break;
+    }
+
     const searchTerm = typeof query.search === 'string' ? query.search.trim() : '';
-  const statusValue = typeof query.status === 'string' && query.status ? query.status : 'all';
-  const allowedSortKeys = ['username', 'role'];
-  const sortKey = allowedSortKeys.includes(query.sort) ? query.sort : 'username';
-  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
-  const deletedMessage = query.deleted ? 'Utilizador eliminado com sucesso.' : null;
+    const statusValue = typeof query.status === 'string' && query.status ? query.status : 'all';
+    const allowedSortKeys = ['username', 'role'];
+    const sortKey = allowedSortKeys.includes(query.sort) ? query.sort : 'username';
+    const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
 
-  if (query.error === 'delete_invalid') {
-    errorMessage = 'Utilizador inválido. Tenta novamente.';
-  } else if (query.error === 'delete_self') {
-    errorMessage = 'Não é possível eliminar a tua própria conta.';
-  } else if (query.error === 'delete_missing') {
-    errorMessage = 'Utilizador indicado não foi encontrado.';
-  }
-
-  const statusOptions = [{ value: 'all', label: 'Todos os perfis' }].concat(
-    roleOptions.map(opt => ({ value: opt.key, label: opt.label }))
-  );
+    const statusOptions = [{ value: 'all', label: 'Todos os perfis' }].concat(
+      roleOptions.map(opt => ({ value: opt.key, label: opt.label }))
+    );
 
   const filteredUsers = users.filter(user => {
     if (statusValue !== 'all' && user.role_key !== statusValue) {
