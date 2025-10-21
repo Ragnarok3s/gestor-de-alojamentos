@@ -51,12 +51,26 @@ function registerRoutes({
     });
   }
 
+  app.get('/locales/:lang.json', (req, res) => {
+    const { i18n } = context;
+    const normalized = i18n.normalizeLanguage(req.params.lang);
+    if (!normalized) {
+      return res.status(404).json({ error: 'Idioma não suportado.' });
+    }
+    res.json(i18n.getTranslations(normalized));
+  });
+
   app.use((req, res) => {
     res
       .status(404)
       .send(
         context.layout({
-          body: '<h1 class="text-xl font-semibold">404</h1><p>Página não encontrada.</p>'
+          body: `<h1 class="text-xl font-semibold">${req.t('page.notFound.title', { defaultValue: '404' })}</h1><p>${req.t(
+            'page.notFound.body',
+            { defaultValue: 'Página não encontrada.' }
+          )}</p>`,
+          language: req.language,
+          t: req.t
         })
       );
   });

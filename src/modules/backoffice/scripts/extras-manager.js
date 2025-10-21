@@ -9,6 +9,52 @@
     initialState = {};
   }
 
+  const translations = initialState && typeof initialState.translations === 'object' ? initialState.translations : {};
+
+  function resolveTranslation(path) {
+    if (!path) return undefined;
+    return String(path)
+      .split('.')
+      .reduce((acc, segment) => {
+        if (acc && typeof acc === 'object' && Object.prototype.hasOwnProperty.call(acc, segment)) {
+          return acc[segment];
+        }
+        return undefined;
+      }, translations);
+  }
+
+  function formatTemplate(template, values) {
+    if (typeof template !== 'string' || !values) {
+      return template;
+    }
+    return template.replace(/\{(\w+)\}/g, (match, key) => {
+      if (Object.prototype.hasOwnProperty.call(values, key)) {
+        const value = values[key];
+        return value == null ? '' : String(value);
+      }
+      return match;
+    });
+  }
+
+  function translate(key, fallback, values) {
+    const template = resolveTranslation(key);
+    const base = template === undefined ? fallback : template;
+    if (typeof base === 'string') {
+      return formatTemplate(base, values);
+    }
+    return base !== undefined ? base : fallback;
+  }
+
+  function escapeHtml(value) {
+    if (value == null) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   const listEl = document.querySelector('[data-extras-list]');
   const emptyEl = document.querySelector('[data-extras-empty]');
   const addBtn = document.querySelector('[data-add-extra]');
@@ -98,64 +144,113 @@
     state.extras.forEach((extra, index) => {
       const article = document.createElement('article');
       article.className = 'card p-4 space-y-4';
+      const anchorId = slugify(extra.code || extra.name || 'extra-' + (index + 1));
+      if (anchorId) {
+        article.id = 'extra-' + anchorId;
+      }
       article.dataset.extraIndex = String(index);
+      const fallbackTitle = translate('form.itemFallback', 'Extra {number}', { number: index + 1 });
+      const titleText = extra.name || fallbackTitle;
+      const detailsHint = translate(
+        'form.detailsHint',
+        'Set the information visible to guests and choose pricing rules.'
+      );
+      const removeLabel = translate('actions.remove', 'Remove');
+      const nameLabel = translate('fields.name.label', 'Name');
+      const namePlaceholder = translate('fields.name.placeholder', 'Ex.: Airport transfer');
+      const codeLabel = translate('fields.code.label', 'Internal code');
+      const codePlaceholder = translate('fields.code.placeholder', 'Ex.: transfer');
+      const codeHelp = translate(
+        'fields.code.help',
+        'No spaces; used to identify the extra in bookings.'
+      );
+      const descriptionLabel = translate('fields.description.label', 'Description (optional)');
+      const descriptionPlaceholder = translate(
+        'fields.description.placeholder',
+        'Notes or limits for the service'
+      );
+      const priceLabel = translate('fields.price.label', 'Price (€)');
+      const pricePlaceholder = translate('fields.price.placeholder', 'Ex.: 30');
+      const priceHelp = translate('fields.price.help', 'Use 0 to include it without additional cost.');
+      const ruleLabel = translate('fields.rule.label', 'Pricing rule');
+      const ruleStandardLabel = translate('fields.rule.options.standard', 'Fixed price per booking');
+      const ruleLongStayLabel = translate('fields.rule.options.long_stay', 'Long-stay discount');
+      const minNightsLabel = translate('fields.minNights.label', 'Minimum nights');
+      const minNightsPlaceholder = translate('fields.minNights.placeholder', 'Ex.: 7');
+      const discountLabel = translate('fields.discountPercent.label', 'Discount (%)');
+      const discountPlaceholder = translate('fields.discountPercent.placeholder', 'Ex.: 15');
+      const availabilityFromLabel = translate('fields.availabilityFrom.label', 'Available from (optional)');
+      const availabilityToLabel = translate('fields.availabilityTo.label', 'Available until (optional)');
+
       article.innerHTML = `
         <div class="flex items-start justify-between gap-4">
           <div>
-            <h3 class="text-lg font-semibold text-slate-800" data-extra-title>${extra.name || `Extra ${index + 1}`}</h3>
-            <p class="text-xs text-slate-500">Defina os detalhes visíveis para o hóspede e regras de preço.</p>
+            <h3 class="text-lg font-semibold text-slate-800" data-extra-title>${escapeHtml(titleText)}</h3>
+            <p class="text-xs text-slate-500">${escapeHtml(detailsHint)}</p>
           </div>
           <button type="button" class="bo-button bo-button--ghost" data-remove-extra>
-            <i data-lucide="trash-2" aria-hidden="true"></i>
-            <span>Remover</span>
+            <i data-lucide="trash-2" class="app-icon" aria-hidden="true"></i>
+            <span>${escapeHtml(removeLabel)}</span>
           </button>
         </div>
         <div class="grid gap-4 md:grid-cols-2">
           <label class="grid gap-1 text-sm">
-            <span>Nome</span>
-            <input type="text" class="input" data-field="name" maxlength="120" placeholder="Ex.: Transfer aeroporto" />
+            <span>${escapeHtml(nameLabel)}</span>
+            <input type="text" class="input" data-field="name" maxlength="120" placeholder="${escapeHtml(
+              namePlaceholder
+            )}" />
           </label>
           <label class="grid gap-1 text-sm">
-            <span>Código interno</span>
-            <input type="text" class="input font-mono text-sm" data-field="code" maxlength="80" placeholder="Ex.: transfer" />
-            <span class="text-xs text-slate-500">Sem espaços; usado para identificar o extra nas reservas.</span>
+            <span>${escapeHtml(codeLabel)}</span>
+            <input type="text" class="input font-mono text-sm" data-field="code" maxlength="80" placeholder="${escapeHtml(
+              codePlaceholder
+            )}" />
+            <span class="text-xs text-slate-500">${escapeHtml(codeHelp)}</span>
           </label>
         </div>
         <label class="grid gap-1 text-sm">
-          <span>Descrição (opcional)</span>
-          <textarea class="input" rows="2" data-field="description" placeholder="Notas ou limites do serviço"></textarea>
+          <span>${escapeHtml(descriptionLabel)}</span>
+          <textarea class="input" rows="2" data-field="description" placeholder="${escapeHtml(
+            descriptionPlaceholder
+          )}"></textarea>
         </label>
         <div class="grid gap-4 md:grid-cols-3">
           <label class="grid gap-1 text-sm">
-            <span>Preço (€)</span>
-            <input type="number" class="input" data-field="priceEuros" min="0" step="0.01" placeholder="Ex.: 30" />
-            <span class="text-xs text-slate-500">Use 0 para incluir sem custo adicional.</span>
+            <span>${escapeHtml(priceLabel)}</span>
+            <input type="number" class="input" data-field="priceEuros" min="0" step="0.01" placeholder="${escapeHtml(
+              pricePlaceholder
+            )}" />
+            <span class="text-xs text-slate-500">${escapeHtml(priceHelp)}</span>
           </label>
           <label class="grid gap-1 text-sm">
-            <span>Regra de preço</span>
+            <span>${escapeHtml(ruleLabel)}</span>
             <select class="input" data-field="pricingRule">
-              <option value="standard">Preço fixo por reserva</option>
-              <option value="long_stay">Desconto estadias longas</option>
+              <option value="standard">${escapeHtml(ruleStandardLabel)}</option>
+              <option value="long_stay">${escapeHtml(ruleLongStayLabel)}</option>
             </select>
           </label>
           <div class="grid gap-2" data-long-stay>
             <label class="grid gap-1 text-sm">
-              <span>Noites mínimas</span>
-              <input type="number" class="input" data-field="minNights" min="1" step="1" placeholder="Ex.: 7" />
+              <span>${escapeHtml(minNightsLabel)}</span>
+              <input type="number" class="input" data-field="minNights" min="1" step="1" placeholder="${escapeHtml(
+                minNightsPlaceholder
+              )}" />
             </label>
             <label class="grid gap-1 text-sm">
-              <span>Desconto (%)</span>
-              <input type="number" class="input" data-field="discountPercent" min="0" max="100" step="1" placeholder="Ex.: 15" />
+              <span>${escapeHtml(discountLabel)}</span>
+              <input type="number" class="input" data-field="discountPercent" min="0" max="100" step="1" placeholder="${escapeHtml(
+                discountPlaceholder
+              )}" />
             </label>
           </div>
         </div>
         <div class="grid gap-4 md:grid-cols-2">
           <label class="grid gap-1 text-sm">
-            <span>Disponível a partir das (opcional)</span>
+            <span>${escapeHtml(availabilityFromLabel)}</span>
             <input type="time" class="input" data-field="availabilityFrom" />
           </label>
           <label class="grid gap-1 text-sm">
-            <span>Disponível até às (opcional)</span>
+            <span>${escapeHtml(availabilityToLabel)}</span>
             <input type="time" class="input" data-field="availabilityTo" />
           </label>
         </div>

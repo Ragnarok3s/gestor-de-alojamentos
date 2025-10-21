@@ -4,6 +4,7 @@ const { registerCalendar } = require('./calendar');
 const { registerBookings } = require('./bookings');
 const { registerHousekeeping } = require('./housekeeping');
 const { registerFinance } = require('./finance');
+const { createTableRenderer } = require('./tableRenderer');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
 const {
@@ -84,6 +85,7 @@ module.exports = function registerBackoffice(app, context) {
     dayjs,
     html,
     layout,
+    renderIcon,
     esc,
     eur,
     bcrypt,
@@ -91,6 +93,7 @@ module.exports = function registerBackoffice(app, context) {
     fs,
     fsp,
     path,
+    ExcelJS,
     sharp,
     upload,
     uploadBrandingAsset,
@@ -110,6 +113,8 @@ module.exports = function registerBackoffice(app, context) {
     ensureAutomationFresh,
     automationCache,
     buildUserNotifications,
+    getUserNotificationSummary,
+    markNotificationsRead,
     automationSeverityStyle,
     formatDateRangeShort,
     formatMonthYear,
@@ -181,6 +186,38 @@ module.exports = function registerBackoffice(app, context) {
     isFeatureEnabled
   } = context;
 
+  const dashboardTemplatePath = path.join(__dirname, '../../views/backoffice/dashboard.ejs');
+  let dashboardTemplateCache = null;
+
+  function loadDashboardTemplate() {
+    if (dashboardTemplateCache) return dashboardTemplateCache;
+    try {
+      dashboardTemplateCache = fs.readFileSync(dashboardTemplatePath, 'utf8');
+    } catch (err) {
+      console.error('Falha ao carregar template do dashboard:', err);
+      dashboardTemplateCache = '<section class="dashboard-shell"><p class="text-sm text-rose-700">Não foi possível carregar o painel.</p></section>';
+    }
+    return dashboardTemplateCache;
+  }
+
+  function renderDashboardTemplate(variables = {}) {
+    const template = loadDashboardTemplate();
+    return template.replace(/<%=\s*([a-zA-Z0-9_]+)\s*%>/g, (_, key) => {
+      if (Object.prototype.hasOwnProperty.call(variables, key)) {
+        return variables[key];
+      }
+      return '';
+    });
+  }
+
+  function requireScopeKey(scopeKey) {
+    const parts = typeof scopeKey === 'string' ? scopeKey.split('.', 2) : [];
+    if (parts.length < 2 || !parts[0] || !parts[1]) {
+      throw new Error('requireScopeKey: chave de scope inválida.');
+    }
+    return requireScope(parts[0], parts[1]);
+  }
+
   const selectUnitPropertyIdStmt = db.prepare('SELECT property_id FROM units WHERE id = ?');
   const selectRoleByKeyStmt = db.prepare('SELECT id, key, name FROM roles WHERE key = ?');
   const insertUserRoleAssignmentStmt = db.prepare(
@@ -236,6 +273,10 @@ module.exports = function registerBackoffice(app, context) {
     return replacements.reduce((output, [token, value]) => output.split(token).join(value), modalTemplate);
   }
 
+  const renderDataTable = createTableRenderer({ fs, esc, renderModalShell, html, renderIcon });
+  context.renderModalShell = renderModalShell;
+  context.renderDataTable = renderDataTable;
+
   function isFlagEnabled(flagName) {
     if (typeof isFeatureEnabled === 'function') {
       return isFeatureEnabled(flagName);
@@ -278,7 +319,7 @@ module.exports = function registerBackoffice(app, context) {
   const FEATURE_PICKER_OPTIONS_HTML = FEATURE_PRESETS.map(
     item => `
               <button type="button" class="feature-builder__icon-option" data-icon-option data-icon="${item.icon}" data-label="${esc(item.label)}" role="option" aria-selected="false">
-                <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+                <span class="feature-builder__icon" aria-hidden="true">${renderIcon(item.icon)}</span>
                 <span>${esc(item.label)}</span>
               </button>`
   ).join('');
@@ -286,7 +327,7 @@ module.exports = function registerBackoffice(app, context) {
     <details class="feature-builder__legend">
       <summary>
         <span class="feature-builder__legend-summary">
-          <i aria-hidden="true" data-lucide="list"></i>
+          ${renderIcon('list')}
           <span>Ver ícones disponíveis</span>
         </span>
       </summary>
@@ -294,7 +335,7 @@ module.exports = function registerBackoffice(app, context) {
         ${FEATURE_PRESETS.map(
           item => `
             <li class="feature-builder__legend-item">
-              <span class="feature-builder__icon" aria-hidden="true"><i data-lucide="${item.icon}"></i></span>
+              <span class="feature-builder__icon" aria-hidden="true">${renderIcon(item.icon)}</span>
               <span>
                 <strong>${esc(item.label)}</strong>
                 <small>${esc(item.singular)}${item.plural ? ' · ' + esc(item.plural) : ''}</small>
@@ -331,6 +372,138 @@ module.exports = function registerBackoffice(app, context) {
   const sidebarControlsScript = inlineScript(sidebarControlsSource);
   const extrasManagerScript = inlineScript(extrasManagerSource);
 
+  const euroFormatter = new Intl.NumberFormat('pt-PT', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
+  function escapeCsvValue(value) {
+    if (value == null) return '';
+    const stringValue = String(value);
+    if (stringValue.includes('"') || stringValue.includes(';') || stringValue.includes('\n')) {
+      return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+  }
+
+  function buildBookingExportRow(row) {
+    const totalValue = Number(row.total_cents || 0) / 100;
+    return {
+      id: row.id,
+      checkin: dayjs(row.checkin).format('DD/MM/YYYY'),
+      checkout: dayjs(row.checkout).format('DD/MM/YYYY'),
+      property: row.property_name,
+      unit: row.unit_name,
+      agency: row.agency || '',
+      guest: row.guest_name,
+      email: row.guest_email,
+      adults: row.adults,
+      children: row.children,
+      total: totalValue,
+      totalLabel: euroFormatter.format(totalValue),
+      status: row.status
+    };
+  }
+
+  async function sendBookingsExport(res, format, rows) {
+    const timestamp = dayjs().format('YYYYMMDD-HHmm');
+    if (format === 'csv') {
+      const header = ['ID', 'Check-in', 'Check-out', 'Propriedade', 'Unidade', 'Agência', 'Hóspede', 'Email', 'Adultos', 'Crianças', 'Total (€)', 'Status'];
+      const lines = [header.map(escapeCsvValue).join(';')];
+      rows.forEach(row => {
+        lines.push(
+          [
+            row.id,
+            row.checkin,
+            row.checkout,
+            row.property,
+            row.unit,
+            row.agency,
+            row.guest,
+            row.email,
+            row.adults,
+            row.children,
+            row.totalLabel,
+            row.status
+          ]
+            .map(escapeCsvValue)
+            .join(';')
+        );
+      });
+      const payload = `\ufeff${lines.join('\n')}`;
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="reservas-${timestamp}.csv"`);
+      res.send(payload);
+      return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Reservas');
+    sheet.columns = [
+      { header: 'ID', key: 'id', width: 10 },
+      { header: 'Check-in', key: 'checkin', width: 14 },
+      { header: 'Check-out', key: 'checkout', width: 14 },
+      { header: 'Propriedade', key: 'property', width: 28 },
+      { header: 'Unidade', key: 'unit', width: 24 },
+      { header: 'Agência', key: 'agency', width: 16 },
+      { header: 'Hóspede', key: 'guest', width: 24 },
+      { header: 'Email', key: 'email', width: 26 },
+      { header: 'Adultos', key: 'adults', width: 10 },
+      { header: 'Crianças', key: 'children', width: 10 },
+      { header: 'Total (€)', key: 'total', width: 14 },
+      { header: 'Status', key: 'status', width: 14 }
+    ];
+    rows.forEach(row => {
+      sheet.addRow({
+        id: row.id,
+        checkin: row.checkin,
+        checkout: row.checkout,
+        property: row.property,
+        unit: row.unit,
+        agency: row.agency,
+        guest: row.guest,
+        email: row.email,
+        adults: row.adults,
+        children: row.children,
+        total: row.total,
+        status: row.status
+      });
+    });
+    sheet.getColumn('total').numFmt = '#,##0.00';
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="reservas-${timestamp}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  }
+
+  function validateCsrfToken(req) {
+    const stored = req.cookies && req.cookies.csrf_token ? String(req.cookies.csrf_token) : '';
+    const providedHeader = (req.get && req.get('x-csrf-token')) || req.headers['x-csrf-token'];
+    const providedBody = req.body && req.body._csrf;
+    const provided = providedHeader || providedBody;
+    if (!stored || !provided) return false;
+    try {
+      const expected = Buffer.from(stored, 'hex');
+      const incoming = Buffer.from(String(provided), 'hex');
+      return expected.length === incoming.length && crypto.timingSafeEqual(expected, incoming);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function serializeNotification(item) {
+    if (!item) return null;
+    return {
+      id: item.id,
+      title: item.title || '',
+      message: item.message || '',
+      meta: item.meta || '',
+      href: item.href || '',
+      severity: item.severity || '',
+      read: !!item.read
+    };
+  }
+
   // Registar API de suporte à experiência do utilizador no backoffice.
   registerUxApi(app, context);
 
@@ -357,12 +530,211 @@ module.exports = function registerBackoffice(app, context) {
   });
 
   // Registar rotas de reservas no backoffice.
-  registerBookings(app, context);
+  registerBookings(app, {
+    ...context,
+    buildBookingExportRow,
+    sendBookingsExport
+  });
 
   // Registar rotas de housekeeping no backoffice.
   const { getHousekeepingTasks, computeHousekeepingBoard } = registerHousekeeping(app, {
     ...context,
     renderBreadcrumbs,
+  });
+
+  app.get('/admin/search', requireLogin, requireBackofficeAccess, (req, res) => {
+    const translate = req.t
+      ? (key, options = {}) => req.t(key, options)
+      : (key, options = {}) => options.defaultValue || key;
+    const rawQuery = typeof req.query.q === 'string' ? req.query.q : '';
+    const query = rawQuery.trim();
+    if (!query) {
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, query: '', groups: [] });
+    }
+
+    const wildcard = `%${query.replace(/\s+/g, '%')}%`;
+    const numericId = Number.parseInt(query, 10);
+    const limit = 5;
+
+    const bookingConditions = [];
+    const bookingParams = [];
+    if (Number.isInteger(numericId)) {
+      bookingConditions.push('b.id = ?');
+      bookingParams.push(numericId);
+    }
+    bookingConditions.push('(b.guest_name LIKE ? OR b.guest_email LIKE ? OR p.name LIKE ? OR u.name LIKE ?)');
+    bookingParams.push(wildcard, wildcard, wildcard, wildcard);
+    const bookingsSql = `
+      SELECT b.id, b.checkin, b.checkout, b.status, b.guest_name, b.guest_email, b.agency,
+             u.name AS unit_name, p.name AS property_name
+        FROM bookings b
+        JOIN units u ON u.id = b.unit_id
+        JOIN properties p ON p.id = u.property_id
+       WHERE ${bookingConditions.join(' OR ')}
+       ORDER BY b.checkin DESC, b.created_at DESC
+       LIMIT ?
+    `;
+    bookingParams.push(limit);
+    const bookingRows = db.prepare(bookingsSql).all(...bookingParams);
+
+    const unitRows = db
+      .prepare(
+        `SELECT u.id, u.name, p.name AS property_name
+           FROM units u
+           JOIN properties p ON p.id = u.property_id
+          WHERE u.name LIKE ? OR p.name LIKE ?
+          ORDER BY p.name, u.name
+          LIMIT ?`
+      )
+      .all(wildcard, wildcard, limit);
+
+    const guestRows = db
+      .prepare(
+        `SELECT guest_email, guest_name, COUNT(*) AS total_bookings, MAX(checkin) AS last_checkin, MAX(created_at) AS last_created
+           FROM bookings
+          WHERE guest_name LIKE ? OR guest_email LIKE ?
+          GROUP BY guest_email, guest_name
+          ORDER BY MAX(created_at) DESC
+          LIMIT ?`
+      )
+      .all(wildcard, wildcard, limit);
+
+    const contentRows = db
+      .prepare(
+        `SELECT uc.unit_id, uc.content_json, uc.status, uc.updated_at, u.name AS unit_name, p.name AS property_name
+           FROM unit_content uc
+           JOIN units u ON u.id = uc.unit_id
+           JOIN properties p ON p.id = u.property_id
+          WHERE uc.content_json LIKE ?
+          ORDER BY uc.updated_at DESC
+          LIMIT ?`
+      )
+      .all(wildcard, limit);
+
+    const groups = [];
+
+    if (bookingRows.length) {
+      const label = translate('nav.searchGroupBookings', { defaultValue: 'Reservas' });
+      groups.push({
+        key: 'bookings',
+        icon: 'calendar-check',
+        label,
+        results: bookingRows.map(row => ({
+          id: `booking-${row.id}`,
+          title: `#${row.id} · ${row.guest_name || translate('nav.searchUnknownGuest', { defaultValue: 'Sem hóspede' })}`,
+          description: `${dayjs(row.checkin).format('DD/MM/YYYY')} → ${dayjs(row.checkout).format('DD/MM/YYYY')} · ${row.property_name} · ${row.unit_name}`,
+          href: `/admin/bookings/${row.id}`,
+          meta: row.status
+        }))
+      });
+    }
+
+    if (unitRows.length) {
+      const label = translate('nav.searchGroupUnits', { defaultValue: 'Unidades' });
+      groups.push({
+        key: 'units',
+        icon: 'building-2',
+        label,
+        results: unitRows.map(row => ({
+          id: `unit-${row.id}`,
+          title: row.name,
+          description: row.property_name || '',
+          href: `/admin/units/${row.id}`
+        }))
+      });
+    }
+
+    if (guestRows.length) {
+      const label = translate('nav.searchGroupGuests', { defaultValue: 'Hóspedes' });
+      groups.push({
+        key: 'guests',
+        icon: 'user-round',
+        label,
+        results: guestRows.map(row => {
+          const stays = Number(row.total_bookings || 0);
+          const metaParts = [];
+          if (row.guest_email) metaParts.push(row.guest_email);
+          if (stays > 0) {
+            metaParts.push(`${stays} ${stays === 1 ? 'reserva' : 'reservas'}`);
+          }
+          if (row.last_checkin) {
+            metaParts.push(`${translate('nav.searchLastCheckin', { defaultValue: 'Último check-in' })} ${dayjs(row.last_checkin).format('DD/MM/YYYY')}`);
+          }
+          const hrefQuery = row.guest_email || row.guest_name || query;
+          return {
+            id: `guest-${row.guest_email || row.guest_name || row.last_created || Math.random().toString(16).slice(2)}`,
+            title: row.guest_name || row.guest_email || translate('nav.searchUnknownGuest', { defaultValue: 'Hóspede' }),
+            description: metaParts.join(' · '),
+            href: `/admin/bookings?q=${encodeURIComponent(hrefQuery)}`
+          };
+        })
+      });
+    }
+
+    if (contentRows.length) {
+      const label = translate('nav.searchGroupContent', { defaultValue: 'Conteúdos' });
+      groups.push({
+        key: 'content',
+        icon: 'file-text',
+        label,
+        results: contentRows.map(row => {
+          const contentData = safeJsonParse(row.content_json, {});
+          const title = contentData.title || row.unit_name || label;
+          const metaParts = [];
+          if (row.property_name) metaParts.push(row.property_name);
+          if (row.unit_name) metaParts.push(row.unit_name);
+          if (contentData.subtitle) metaParts.push(contentData.subtitle);
+          return {
+            id: `content-${row.unit_id}`,
+            title,
+            description: metaParts.join(' · '),
+            href: `/admin/content-center?unit=${row.unit_id}`,
+            meta: row.status || ''
+          };
+        })
+      });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, query, groups });
+  });
+
+  app.get('/admin/notifications', requireLogin, requireBackofficeAccess, (req, res) => {
+    const summary = getUserNotificationSummary(req.user, { pendingLimit: 12 });
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      unreadCount: summary.unreadCount,
+      notifications: summary.notifications.map(serializeNotification).filter(Boolean)
+    });
+  });
+
+  app.post('/admin/notifications/read', requireLogin, requireBackofficeAccess, (req, res) => {
+    if (!validateCsrfToken(req)) {
+      return res.status(403).json({ ok: false, message: 'Token CSRF inválido' });
+    }
+
+    let ids = [];
+    if (Array.isArray(req.body && req.body.ids)) {
+      ids = req.body.ids.map(id => String(id)).filter(Boolean);
+    } else if (req.body && req.body.id) {
+      ids = [String(req.body.id)];
+    }
+
+    let summary = getUserNotificationSummary(req.user, { pendingLimit: 12 });
+    if (!ids.length) {
+      ids = summary.notifications.map(item => item.id);
+    }
+
+    markNotificationsRead(req.user, ids);
+    summary = getUserNotificationSummary(req.user, { pendingLimit: 12 });
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      unreadCount: summary.unreadCount,
+      notifications: summary.notifications.map(serializeNotification).filter(Boolean)
+    });
   });
 
   function jsonScriptPayload(value) {
@@ -408,11 +780,11 @@ module.exports = function registerBackoffice(app, context) {
             <span class="feature-builder__control-label">Característica</span>
             <div class="feature-builder__icon-picker" data-feature-picker>
               <button type="button" class="feature-builder__icon-toggle" data-feature-picker-toggle aria-haspopup="true" aria-expanded="false" aria-label="Selecionar característica">
-                <span class="feature-builder__icon-preview is-empty" data-feature-picker-preview aria-hidden="true"><i data-lucide="plus"></i></span>
+                <span class="feature-builder__icon-preview is-empty" data-feature-picker-preview aria-hidden="true">${renderIcon('plus')}</span>
                 <span class="feature-builder__icon-text">
                   <span class="feature-builder__icon-placeholder" data-feature-picker-label data-placeholder="Selecionar característica">Selecionar característica</span>
                 </span>
-                <span class="feature-builder__icon-caret" aria-hidden="true"><i data-lucide="chevron-down"></i></span>
+                <span class="feature-builder__icon-caret" aria-hidden="true">${renderIcon('chevron-down')}</span>
               </button>
               <div class="feature-builder__icon-options" data-feature-picker-options hidden role="listbox" aria-label="Selecionar característica">
                 ${FEATURE_PICKER_OPTIONS_HTML}
@@ -655,6 +1027,218 @@ module.exports = function registerBackoffice(app, context) {
       }
     }
   );
+
+  const percentFormatter = new Intl.NumberFormat('pt-PT', {
+    style: 'percent',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  });
+  const currencyFormatter = new Intl.NumberFormat('pt-PT', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const numberFormatter = new Intl.NumberFormat('pt-PT');
+  const requireDashboardView = requireScopeKey('dashboard.view');
+
+  app.get('/admin/dashboard', requireLogin, requireDashboardView, (req, res) => {
+    const today = dayjs().format('YYYY-MM-DD');
+    const tomorrow = dayjs().add(1, 'day').format('YYYY-MM-DD');
+    const monthStart = dayjs().startOf('month');
+    const nextMonthStart = monthStart.add(1, 'month');
+
+    const totalUnitsRow = db.prepare('SELECT COUNT(*) AS total FROM units').get();
+    const occupiedUnitsRow = db
+      .prepare(
+        `SELECT COUNT(DISTINCT unit_id) AS occupied
+           FROM bookings
+          WHERE status IN ('CONFIRMED','PENDING')
+            AND checkin <= ?
+            AND checkout > ?`
+      )
+      .get(today, today);
+    const monthRevenueRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(total_cents), 0) AS total
+           FROM bookings
+          WHERE status = 'CONFIRMED'
+            AND checkin >= ?
+            AND checkin < ?`
+      )
+      .get(monthStart.format('YYYY-MM-DD'), nextMonthStart.format('YYYY-MM-DD'));
+    const futureBookingsRow = db
+      .prepare(
+        `SELECT COUNT(*) AS total
+           FROM bookings
+          WHERE status IN ('CONFIRMED','PENDING')
+            AND checkin >= ?`
+      )
+      .get(tomorrow);
+    const pendingTasksRow = db
+      .prepare(
+        `SELECT COUNT(*) AS total
+           FROM housekeeping_tasks
+          WHERE status = 'pending'`
+      )
+      .get();
+
+    const totalUnits = totalUnitsRow ? Number(totalUnitsRow.total || 0) : 0;
+    const occupiedUnits = occupiedUnitsRow ? Number(occupiedUnitsRow.occupied || 0) : 0;
+    const occupancyRate = totalUnits > 0 ? Math.min(1, occupiedUnits / Math.max(totalUnits, 1)) : 0;
+    const monthRevenueCents = monthRevenueRow ? Number(monthRevenueRow.total || 0) : 0;
+    const futureBookings = futureBookingsRow ? Number(futureBookingsRow.total || 0) : 0;
+    const pendingTasks = pendingTasksRow ? Number(pendingTasksRow.total || 0) : 0;
+
+    function formatTemplate(template, values) {
+      if (typeof template !== 'string' || !values) {
+        return template;
+      }
+      return template.replace(/\{(\w+)\}/g, (match, key) => {
+        if (Object.prototype.hasOwnProperty.call(values, key)) {
+          const value = values[key];
+          return value == null ? '' : String(value);
+        }
+        return match;
+      });
+    }
+
+    function translate(key, defaultValue, values) {
+      if (typeof req.t === 'function') {
+        return req.t(key, { defaultValue, values });
+      }
+      if (defaultValue === undefined) {
+        return key;
+      }
+      if (typeof defaultValue === 'string') {
+        return formatTemplate(defaultValue, values);
+      }
+      return defaultValue;
+    }
+
+    const occupancyLabel = percentFormatter.format(occupancyRate || 0);
+    const occupancyMeta = totalUnits
+      ? translate(
+          'backoffice.dashboard.metrics.occupancy.meta',
+          '{occupied} de {total} unidades ocupadas hoje.',
+          {
+            occupied: numberFormatter.format(occupiedUnits),
+            total: numberFormatter.format(totalUnits)
+          }
+        )
+      : translate('backoffice.dashboard.metrics.occupancy.empty', 'Nenhuma unidade registada.');
+    const revenueLabel = currencyFormatter.format(monthRevenueCents / 100);
+    const revenueMeta = translate(
+      'backoffice.dashboard.metrics.revenue.meta',
+      'Reservas confirmadas em {month} {year}.',
+      {
+        month: capitalizeMonth(monthStart.format('MMMM')),
+        year: monthStart.format('YYYY')
+      }
+    );
+    const futureBookingsLabel = numberFormatter.format(futureBookings);
+    const futureBookingsMeta = futureBookings
+      ? translate(
+          'backoffice.dashboard.metrics.futureBookings.meta',
+          'Check-ins agendados a partir de {date}.',
+          { date: dayjs(tomorrow).format('DD/MM') }
+        )
+      : translate('backoffice.dashboard.metrics.futureBookings.empty', 'Nenhuma reserva futura registada.');
+    const pendingTasksLabel = numberFormatter.format(pendingTasks);
+    const pendingTasksMeta = pendingTasks
+      ? translate(
+          'backoffice.dashboard.metrics.pendingTasks.meta',
+          'Tarefas a aguardar intervenção da equipa.'
+        )
+      : translate(
+          'backoffice.dashboard.metrics.pendingTasks.empty',
+          'Sem tarefas pendentes neste momento.'
+        );
+    const updatedAt = dayjs();
+
+    const kicker = translate('backoffice.dashboard.kicker', 'Visão geral');
+    const titleText = translate('backoffice.dashboard.title', 'Painel de desempenho');
+    const subtitleText = translate(
+      'backoffice.dashboard.subtitle',
+      'Acompanha rapidamente o estado do negócio e acede às áreas mais usadas.'
+    );
+    const quickActionCalendar = translate('backoffice.dashboard.quickActions.calendar', 'Calendário');
+    const quickActionReservations = translate('backoffice.dashboard.quickActions.reservations', 'Reservas');
+    const quickActionHousekeeping = translate('backoffice.dashboard.quickActions.housekeeping', 'Housekeeping');
+    const kpiAriaLabel = translate('backoffice.dashboard.gridAria', 'Indicadores principais');
+    const occupancyCardLabelText = translate(
+      'backoffice.dashboard.cards.occupancy.label',
+      'Ocupação actual'
+    );
+    const occupancyLinkLabel = translate(
+      'backoffice.dashboard.cards.occupancy.link',
+      'Ver reservas de hoje'
+    );
+    const revenueCardLabelText = translate('backoffice.dashboard.cards.revenue.label', 'Receitas do mês');
+    const revenueLinkLabel = translate(
+      'backoffice.dashboard.cards.revenue.link',
+      'Abrir calendário de receita'
+    );
+    const futureBookingsCardLabelText = translate(
+      'backoffice.dashboard.cards.futureBookings.label',
+      'Reservas futuras'
+    );
+    const futureBookingsLinkLabel = translate(
+      'backoffice.dashboard.cards.futureBookings.link',
+      'Gerir reservas'
+    );
+    const pendingTasksCardLabelText = translate(
+      'backoffice.dashboard.cards.pendingTasks.label',
+      'Tarefas pendentes'
+    );
+    const pendingTasksLinkLabel = translate(
+      'backoffice.dashboard.cards.pendingTasks.link',
+      'Abrir painel de limpezas'
+    );
+    const updatedPrefix = translate('backoffice.dashboard.updated', 'Actualizado em');
+
+    const theme = resolveBrandingForRequest(req);
+    serverRender('route:/admin/dashboard');
+    res.send(
+      layout({
+        title: titleText,
+        language: req.language,
+        t: req.t,
+        user: req.user,
+        activeNav: 'dashboard',
+        branding: theme,
+        pageClass: 'page-backoffice page-dashboard',
+        body: html`${renderDashboardTemplate({
+          kicker: esc(kicker),
+          title: esc(titleText),
+          subtitle: esc(subtitleText),
+          quickActionCalendar: esc(quickActionCalendar),
+          quickActionReservations: esc(quickActionReservations),
+          quickActionHousekeeping: esc(quickActionHousekeeping),
+          kpiAriaLabel: esc(kpiAriaLabel),
+          occupancyCardLabel: esc(occupancyCardLabelText),
+          occupancyLabel: esc(occupancyLabel),
+          occupancyMeta: esc(occupancyMeta),
+          occupancyLinkLabel: esc(occupancyLinkLabel),
+          revenueCardLabel: esc(revenueCardLabelText),
+          revenueLabel: esc(revenueLabel),
+          revenueMeta: esc(revenueMeta),
+          revenueLinkLabel: esc(revenueLinkLabel),
+          futureBookingsCardLabel: esc(futureBookingsCardLabelText),
+          futureBookingsLabel: esc(futureBookingsLabel),
+          futureBookingsMeta: esc(futureBookingsMeta),
+          futureBookingsLinkLabel: esc(futureBookingsLinkLabel),
+          pendingTasksCardLabel: esc(pendingTasksCardLabelText),
+          pendingTasksLabel: esc(pendingTasksLabel),
+          pendingTasksMeta: esc(pendingTasksMeta),
+          pendingTasksLinkLabel: esc(pendingTasksLinkLabel),
+          updatedPrefix: esc(updatedPrefix),
+          updatedAtIso: esc(updatedAt.toISOString()),
+          updatedAtLabel: esc(updatedAt.format('DD/MM/YYYY HH:mm'))
+        })}`
+      })
+    );
+  });
 
   app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
     const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
@@ -1561,6 +2145,13 @@ module.exports = function registerBackoffice(app, context) {
         ]
       },
       {
+        id: 'integrations',
+        title: 'Integrações e API',
+        items: [
+          { id: 'ux-api', label: 'UX API', icon: 'code', allowed: true, href: '/admin/ux-api' }
+        ]
+      },
+      {
         id: 'administration',
         title: 'Administração',
         items: [
@@ -1574,6 +2165,13 @@ module.exports = function registerBackoffice(app, context) {
             allowed: isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit,
             href: '/admin/auditoria'
           }
+        ]
+      },
+      {
+        id: 'support',
+        title: 'Ajuda e suporte',
+        items: [
+          { id: 'help', label: 'Ajuda & FAQ', icon: 'life-buoy', allowed: true, href: '/admin/ajuda' }
         ]
       }
     ];
@@ -1589,7 +2187,7 @@ module.exports = function registerBackoffice(app, context) {
             if (item.href) classes.push('bo-tab--link');
             const iconMarkup = item.iconSvg
               ? item.iconSvg
-              : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
+              : `${renderIcon(item.icon, { className: 'w-5 h-5' })}`;
 
             if (!item.allowed) {
               return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
@@ -1619,7 +2217,7 @@ module.exports = function registerBackoffice(app, context) {
               aria-controls="${sectionItemsId}"
             >
               <span>${esc(section.title)}</span>
-              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
+              ${renderIcon('chevron-down', { className: 'bo-nav__section-toggle-icon' })}
             </button>
             <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
           </div>
@@ -2059,7 +2657,7 @@ module.exports = function registerBackoffice(app, context) {
                 Ver detalhe
               </a>
               <button type="button" class="btn btn-light btn-compact" data-kpi-info aria-describedby="kpi-tooltip-text">
-                <i data-lucide="info" class="w-4 h-4" aria-hidden="true"></i>
+                ${renderIcon('info', { className: 'w-4 h-4 text-slate-500' })}
                 <span class="sr-only">Como interpretar os KPIs</span>
               </button>
             </div>
@@ -2084,7 +2682,7 @@ module.exports = function registerBackoffice(app, context) {
             aria-live="polite"
           >
             <span class="mt-0.5 flex-shrink-0 text-amber-600" aria-hidden="true" data-kpi-alert-icon>
-              <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+              ${renderIcon('alert-triangle', { className: 'w-5 h-5 text-amber-600' })}
             </span>
             <div class="space-y-1">
               <p class="text-sm font-semibold text-slate-800" data-kpi-alert-title></p>
@@ -2550,6 +3148,8 @@ module.exports = function registerBackoffice(app, context) {
     res.send(
       layout({
         title: 'Backoffice',
+        language: req.language,
+        t: req.t,
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
@@ -2569,9 +3169,9 @@ module.exports = function registerBackoffice(app, context) {
                     aria-controls="bo-backoffice-nav"
                     aria-label="Encolher menu"
                   >
-                    <i data-lucide="chevron-left" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse" aria-hidden="true"></i>
-                    <i data-lucide="chevron-right" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand" aria-hidden="true"></i>
-                    <i data-lucide="x" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close" aria-hidden="true"></i>
+                    ${renderIcon('chevron-left', { className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse' })}
+                    ${renderIcon('chevron-right', { className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand' })}
+                    ${renderIcon('x', { className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close' })}
                   </button>
                 </div>
                 <nav class="bo-nav" id="bo-backoffice-nav" data-sidebar-nav>${navButtonsHtml}</nav>
@@ -2579,7 +3179,7 @@ module.exports = function registerBackoffice(app, context) {
               <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
               <div class="bo-main" data-bo-main>
                 <button type="button" class="bo-main__menu" data-sidebar-open>
-                  <i data-lucide="menu" aria-hidden="true"></i>
+                  ${renderIcon('menu')}
                   <span>Menu</span>
                 </button>
                 <header class="bo-header">
@@ -3209,6 +3809,310 @@ module.exports = function registerBackoffice(app, context) {
     );
   });
 
+  app.get('/admin/ux-api', requireLogin, requireBackofficeAccess, (req, res) => {
+    const theme = resolveBrandingForRequest(req);
+    const docUrl = 'https://docs.gestalojamentos.pt/ux-api';
+    const tutorialsUrl = 'https://docs.gestalojamentos.pt/ux-api/guias';
+    const rawTokens = Array.isArray(req.user?.apiTokens)
+      ? req.user.apiTokens
+      : Array.isArray(req.user?.api_tokens)
+      ? req.user.api_tokens
+      : [];
+    const normalizedTokens = rawTokens
+      .map(entry => {
+        if (!entry) return null;
+        if (typeof entry === 'string') {
+          return { label: 'Token ativo', value: entry, scopes: ['total'], createdAt: null, expiresAt: null };
+        }
+        const value = entry.value || entry.token || entry.secret || '';
+        if (!value) return null;
+        return {
+          label: entry.label || entry.name || 'Token ativo',
+          value,
+          scopes: Array.isArray(entry.scopes)
+            ? entry.scopes
+            : typeof entry.scopes === 'string'
+            ? entry.scopes.split(/[,\s]+/).filter(Boolean)
+            : Array.isArray(entry.permissions)
+            ? entry.permissions
+            : [],
+          createdAt: entry.created_at || entry.createdAt || null,
+          expiresAt: entry.expires_at || entry.expiresAt || null
+        };
+      })
+      .filter(Boolean);
+
+    const tokenCards = normalizedTokens.length
+      ? normalizedTokens
+          .map(token => {
+            const scopeLabel = token.scopes && token.scopes.length
+              ? token.scopes.join(', ')
+              : 'Acesso total ao backoffice';
+            const meta = [];
+            if (token.createdAt) {
+              meta.push(`emitido em ${esc(dayjs(token.createdAt).format('DD/MM/YYYY'))}`);
+            }
+            if (token.expiresAt) {
+              meta.push(`expira em ${esc(dayjs(token.expiresAt).format('DD/MM/YYYY'))}`);
+            }
+            return `
+              <article class="rounded-xl border border-slate-200 bg-white/80 p-4">
+                <header class="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 class="text-sm font-semibold text-slate-800">${esc(token.label)}</h3>
+                    <p class="text-xs text-slate-500">${esc(scopeLabel)}</p>
+                  </div>
+                  <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700" title="Token ativo. Rode a credencial se suspeitar de abuso.">
+                    ${renderIcon('lock', { className: 'text-emerald-700' })}
+                    Em produção
+                  </span>
+                </header>
+                <div class="mt-3">
+                  <label class="grid gap-1 text-xs font-mono text-slate-600" title="Copie o token completo para o cabeçalho Authorization. Não o partilhe publicamente.">
+                    <span class="uppercase tracking-wide text-slate-500">Token</span>
+                    <div class="rounded bg-slate-900/90 text-slate-100 px-3 py-2 text-sm overflow-x-auto">
+                      ${esc(token.value)}
+                    </div>
+                  </label>
+                </div>
+                ${meta.length ? `<p class="mt-3 text-xs text-slate-500">${meta.join(' · ')}</p>` : ''}
+              </article>
+            `;
+          })
+          .join('')
+      : '<p class="text-sm text-slate-500">Ainda não existem tokens emitidos para esta conta. Solicita um novo token para integrações externas.</p>';
+
+    const body = html`
+      <div class="bo-page bo-page--narrow space-y-8">
+        ${renderBreadcrumbs([
+          { label: 'Backoffice', href: '/admin' },
+          { label: 'UX API' }
+        ])}
+        <header class="space-y-3">
+          <h1 class="text-3xl font-semibold text-slate-900">UX API</h1>
+          <p class="lead max-w-3xl">
+            Conecta relatórios, tarifários e operações do backoffice a integrações internas com endpoints estáveis e seguros.
+          </p>
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <a class="inline-flex items-center gap-2 text-sky-700 hover:text-sky-800 font-medium" href="${docUrl}" target="_blank" rel="noreferrer">
+              ${renderIcon('book-open', { className: 'text-sky-700' })}
+              Documentação oficial
+            </a>
+            <a class="inline-flex items-center gap-2 text-sky-700 hover:text-sky-800 font-medium" href="${tutorialsUrl}" target="_blank" rel="noreferrer">
+              ${renderIcon('video', { className: 'text-sky-700' })}
+              Tutoriais em vídeo
+            </a>
+          </div>
+        </header>
+
+        <section class="bo-card space-y-4">
+          <header class="space-y-1">
+            <h2 class="text-xl font-semibold text-slate-900">Tokens de acesso</h2>
+            <p class="text-sm text-slate-600">Cada token identifica uma integração. Utilize nomes descritivos e renove as credenciais trimestralmente.</p>
+          </header>
+          <div class="space-y-4">${tokenCards}</div>
+          <form class="grid gap-3 lg:grid-cols-2" method="post" action="/admin/api/tokens" novalidate data-token-request aria-disabled="true">
+            <label class="grid gap-1 text-sm" title="Identificador público utilizado no cabeçalho X-Client-Id. Letras minúsculas e hífenes são recomendados.">
+              <span>Nome do cliente</span>
+              <input class="input" name="label" placeholder="Ex.: dashboard-operacional" disabled />
+            </label>
+            <label class="grid gap-1 text-sm" title="Token secreto de 48 caracteres. É apresentado apenas uma vez após a criação e deve ser guardado num cofre de segredos.">
+              <span>Token gerado</span>
+              <input class="input font-mono" value="Gerado automaticamente na emissão" readonly disabled />
+            </label>
+            <label class="grid gap-1 text-sm lg:col-span-2" title="Restringe o acesso desta integração. Combine escopos como bookings.read, rates.write ou housekeeping.manage.">
+              <span>Escopos autorizados</span>
+              <input class="input" name="scopes" placeholder="Ex.: bookings.read, housekeeping.manage" disabled />
+            </label>
+            <label class="grid gap-1 text-sm" title="Configure uma data de expiração para reforçar a rotação periódica das credenciais.">
+              <span>Expira em</span>
+              <input class="input" type="date" name="expires_at" disabled />
+            </label>
+            <p class="text-xs text-slate-500 lg:col-span-2">
+              Os tokens seguem o ciclo de vida recomendado: revisão trimestral, rotação imediata em caso de suspeita e registo de utilização no histórico.
+            </p>
+            <div class="flex flex-wrap items-center gap-3 lg:col-span-2">
+              <button class="btn btn-primary" type="submit" disabled title="Solicita a emissão através da equipa de suporte." data-token-request>Solicitar novo token</button>
+              <span class="text-xs text-slate-500">Contacta o suporte para ativar a emissão automática diretamente no backoffice.</span>
+            </div>
+          </form>
+        </section>
+
+        <section class="bo-card space-y-4">
+          <header class="space-y-1">
+            <h2 class="text-xl font-semibold text-slate-900">Recursos rápidos</h2>
+            <p class="text-sm text-slate-600">Seleciona o guia adequado antes de integrares automações ou dashboards externos.</p>
+          </header>
+          <ul class="grid gap-3 md:grid-cols-2">
+            <li class="rounded-lg border border-slate-200 bg-white/60 p-4 space-y-2">
+              <div class="flex items-center gap-2 text-slate-700 font-semibold">
+                ${renderIcon('line-chart', { className: 'text-slate-700' })}
+                KPIs e reporting
+              </div>
+              <p class="text-sm text-slate-600">Consome <code>/admin/api/kpis/summary</code> para popular dashboards financeiros e de ocupação.</p>
+            </li>
+            <li class="rounded-lg border border-slate-200 bg-white/60 p-4 space-y-2">
+              <div class="flex items-center gap-2 text-slate-700 font-semibold">
+                ${renderIcon('bed', { className: 'text-slate-700' })}
+                Disponibilidade e tarifas
+              </div>
+              <p class="text-sm text-slate-600">Orquestra atualizações de preço via <code>/admin/api/rates/bulk</code> e bloqueios de unidades com <code>/admin/api/unit-blocks</code>.</p>
+            </li>
+            <li class="rounded-lg border border-slate-200 bg-white/60 p-4 space-y-2">
+              <div class="flex items-center gap-2 text-slate-700 font-semibold">
+                ${renderIcon('mail', { className: 'text-slate-700' })}
+                Comunicação com hóspedes
+              </div>
+              <p class="text-sm text-slate-600">Cria fluxos que combinam reviews, mensagens e templates disponíveis no módulo de automações.</p>
+            </li>
+            <li class="rounded-lg border border-slate-200 bg-white/60 p-4 space-y-2">
+              <div class="flex items-center gap-2 text-slate-700 font-semibold">
+                ${renderIcon('shield', { className: 'text-slate-700' })}
+                Boas práticas de segurança
+              </div>
+              <p class="text-sm text-slate-600">Limita escopos, guarda tokens em cofres e acompanha logs através da auditoria do backoffice.</p>
+            </li>
+          </ul>
+        </section>
+
+        <section class="bo-card space-y-3">
+          <h2 class="text-xl font-semibold text-slate-900">Precisas de ajuda?</h2>
+          <p class="text-sm text-slate-600">A equipa de suporte pode ativar novos escopos, gerar tokens e validar integrações.</p>
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <a class="inline-flex items-center gap-2 text-sky-700 hover:text-sky-800 font-medium" href="mailto:suporte@gestalojamentos.pt">
+              ${renderIcon('life-buoy', { className: 'text-sky-700' })}
+              suporte@gestalojamentos.pt
+            </a>
+            <span class="text-xs text-slate-500">Tempo médio de resposta: &lt; 4h úteis.</span>
+          </div>
+        </section>
+      </div>
+    `;
+
+    res.send(
+      layout({
+        title: 'UX API',
+        language: req.language,
+        t: req.t,
+        user: req.user,
+        activeNav: 'ux-api',
+        branding: theme,
+        pageClass: 'page-backoffice page-ux-api',
+        body
+      })
+    );
+  });
+
+  app.get('/admin/ajuda', requireLogin, requireBackofficeAccess, (req, res) => {
+    const theme = resolveBrandingForRequest(req);
+    const docs = [
+      {
+        label: 'Guia rápido do backoffice',
+        description: 'Primeiros passos, atalhos e convenções de navegação.',
+        href: 'https://docs.gestalojamentos.pt/backoffice/guia-rapido'
+      },
+      {
+        label: 'FAQ de housekeeping',
+        description: 'Fluxos de limpeza, estados e sincronização com a app móvel.',
+        href: 'https://docs.gestalojamentos.pt/housekeeping/perguntas-frequentes'
+      },
+      {
+        label: 'Integrações & Channel Manager',
+        description: 'Checklist para ligar novos canais e resolver alertas.',
+        href: 'https://docs.gestalojamentos.pt/integracoes/overview'
+      }
+    ];
+
+    const docsList = docs
+      .map(
+        doc => `
+          <li class="rounded-lg border border-slate-200 bg-white/70 p-4 space-y-1">
+            <a class="inline-flex items-center gap-2 text-sky-700 hover:text-sky-800 font-medium" href="${esc(doc.href)}" target="_blank" rel="noreferrer">
+              ${renderIcon('external-link', { className: 'text-sky-700' })}
+              ${esc(doc.label)}
+            </a>
+            <p class="text-sm text-slate-600">${esc(doc.description)}</p>
+          </li>
+        `
+      )
+      .join('');
+
+    const body = html`
+      <div class="bo-page bo-page--narrow space-y-8">
+        ${renderBreadcrumbs([
+          { label: 'Backoffice', href: '/admin' },
+          { label: 'Ajuda' }
+        ])}
+        <header class="space-y-3">
+          <h1 class="text-3xl font-semibold text-slate-900">Ajuda & FAQ</h1>
+          <p class="lead max-w-3xl">Centraliza documentação, contactos e alertas críticos para apoiar a operação diária.</p>
+        </header>
+
+        <section class="bo-card space-y-4">
+          <header class="space-y-1">
+            <h2 class="text-xl font-semibold text-slate-900">Documentação recomendada</h2>
+            <p class="text-sm text-slate-600">Mantém os colegas alinhados partilhando estes guias oficiais.</p>
+          </header>
+          <ul class="grid gap-3 md:grid-cols-2">${docsList}</ul>
+        </section>
+
+        <section class="bo-card space-y-4">
+          <header class="space-y-1">
+            <h2 class="text-xl font-semibold text-slate-900">Atenção a operações irreversíveis</h2>
+            <p class="text-sm text-slate-600">Confirma sempre com a direção antes de executar estas ações administrativas.</p>
+          </header>
+          <div class="space-y-3">
+            <div class="rounded-lg border border-amber-300 bg-amber-50 p-4" role="alert">
+              <h3 class="font-semibold text-amber-900">Eliminar inquilino</h3>
+              <p class="text-sm text-amber-800">Remove propriedades, reservas e histórico associados. Exporta os dados críticos e valida a migração antes de prosseguir.</p>
+            </div>
+            <div class="rounded-lg border border-rose-300 bg-rose-50 p-4" role="alert">
+              <h3 class="font-semibold text-rose-900">Desativar ou eliminar utilizador</h3>
+              <p class="text-sm text-rose-800">Revoga imediatamente o acesso ao backoffice, APIs e notificações. Garante que outro utilizador assume as permissões essenciais.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="bo-card space-y-4">
+          <header class="space-y-1">
+            <h2 class="text-xl font-semibold text-slate-900">Contactos de suporte</h2>
+            <p class="text-sm text-slate-600">Disponíveis em dias úteis das 09h00 às 18h00 (GMT).</p>
+          </header>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-white/70 p-4 space-y-1">
+              <div class="text-sm text-slate-600">Email</div>
+              <a class="inline-flex items-center gap-2 text-sky-700 hover:text-sky-800 font-medium" href="mailto:suporte@gestalojamentos.pt">
+                ${renderIcon('mail', { className: 'text-sky-700' })}
+                suporte@gestalojamentos.pt
+              </a>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white/70 p-4 space-y-1">
+              <div class="text-sm text-slate-600">Linha direta</div>
+              <a class="inline-flex items-center gap-2 text-slate-700 hover:text-slate-900 font-medium" href="tel:+351211234567">
+                ${renderIcon('phone', { className: 'text-slate-700' })}
+                +351 21 123 45 67
+              </a>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">Para incidentes críticos fora de horas utiliza o assunto "URGENTE" no email.</p>
+        </section>
+      </div>
+    `;
+
+    res.send(
+      layout({
+        title: 'Ajuda',
+        language: req.language,
+        t: req.t,
+        user: req.user,
+        activeNav: 'help',
+        branding: theme,
+        pageClass: 'page-backoffice page-help',
+        body
+      })
+    );
+  });
+
   app.get('/admin/revenue-calendar', requireLogin, requirePermission('dashboard.view'), (req, res) => {
     setNoIndex(res);
     const startParam = typeof req.query.start === 'string' ? req.query.start : null;
@@ -3292,7 +4196,9 @@ module.exports = function registerBackoffice(app, context) {
 
     res.send(
       layout({
-        pageTitle: 'Calendário de receita',
+        title: 'Calendário de receita',
+        language: req.language,
+        t: req.t,
         pageClass: 'page-backoffice page-revenue-calendar',
         body
       })
@@ -3589,6 +4495,269 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
     }
   });
 
+  app.get(
+    '/admin/properties',
+    requireLogin,
+    requirePermission('properties.manage'),
+    (req, res) => {
+      ensureNoIndex(res);
+      serverRender('route:/admin/properties');
+      const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+      const searchTerm = String(req.query.search || '').trim().toLowerCase();
+      const statusRaw = String(req.query.status || '').trim().toLowerCase();
+      const statusFilter = statusRaw === 'ativa' || statusRaw === 'incompleta' ? statusRaw : '';
+      const allowedSort = new Set(['name', 'unit_count', 'revenue', 'status']);
+      const requestedSort = String(req.query.sort || '').trim();
+      const sortKey = allowedSort.has(requestedSort) ? requestedSort : 'name';
+      const sortDirection = req.query.direction === 'desc' ? 'desc' : 'asc';
+      const requestedPage = Number.parseInt(req.query.page, 10);
+      const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+      const pageSize = 12;
+
+      let propertyRows = db
+        .prepare(
+          `SELECT p.id, p.name, p.locality, p.district, p.address,
+                  COUNT(DISTINCT u.id) AS unit_count,
+                  COALESCE(SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END), 0) AS revenue_cents
+             FROM properties p
+             LEFT JOIN units u ON u.property_id = p.id
+             LEFT JOIN bookings b ON b.unit_id = u.id AND b.status = 'CONFIRMED'
+            WHERE p.tenant_id = ?
+            GROUP BY p.id`
+        )
+        .all(tenantId)
+        .map(row => {
+          const location = propertyLocationLabel(row);
+          const status = row.unit_count > 0 ? 'ativa' : 'incompleta';
+          return { ...row, location, status };
+        })
+        .filter(row => {
+          if (!userHasScope(req.user, 'properties.manage', row.id)) return false;
+          if (searchTerm) {
+            const haystack = `${row.name || ''} ${row.location || ''}`.toLowerCase();
+            if (!haystack.includes(searchTerm)) return false;
+          }
+          if (statusFilter && row.status !== statusFilter) return false;
+          return true;
+        });
+
+      const sorters = {
+        name: (a, b) => a.name.localeCompare(b.name, 'pt'),
+        unit_count: (a, b) => a.unit_count - b.unit_count,
+        revenue: (a, b) => a.revenue_cents - b.revenue_cents,
+        status: (a, b) => a.status.localeCompare(b.status, 'pt')
+      };
+      const sorter = sorters[sortKey] || sorters.name;
+      propertyRows.sort(sorter);
+      if (sortDirection === 'desc') {
+        propertyRows.reverse();
+      }
+
+      const total = propertyRows.length;
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      const currentPage = Math.min(page, pageCount);
+      const startIndex = (currentPage - 1) * pageSize;
+      const paginated = propertyRows.slice(startIndex, startIndex + pageSize);
+
+      const redirectQuery = [
+        ['status', statusFilter],
+        ['sort', sortKey],
+        ['direction', sortDirection],
+        ['page', String(currentPage)],
+        ['search', req.query.search || '']
+      ]
+        .filter(([, value]) => value != null && value !== '')
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join('&');
+
+      const t = req.t;
+      const translate = (key, fallback, values) =>
+        t(key, {
+          defaultValue: fallback,
+          values
+        });
+
+      const tableRows = paginated.map(row => {
+        const revenueLabel = `€ ${eur(row.revenue_cents || 0)}`;
+        const statusBadge = row.status === 'ativa'
+          ? `<span class="bo-data-table__badge is-success">${esc(
+              translate('backoffice.properties.status.active', 'Active')
+            )}</span>`
+          : `<span class="bo-data-table__badge is-muted">${esc(
+              translate('backoffice.properties.status.empty', 'No units')
+            )}</span>`;
+        const deleteMessage = translate(
+          'backoffice.properties.actions.delete.message',
+          'Are you sure you want to delete "{name}"? This action cannot be undone.',
+          { name: row.name }
+        );
+        return {
+          id: row.id,
+          cells: [
+            {
+              html: `<span class="bo-data-table__value">${esc(row.name)}</span>${row.location
+                ? `<span class="bo-data-table__muted">${esc(row.location)}</span>`
+                : ''}`
+            },
+            { text: String(row.unit_count) },
+            { html: `<span class="bo-data-table__value">${revenueLabel}</span>` },
+            { html: statusBadge }
+          ],
+          actions: [
+            {
+              type: 'link',
+              href: `/admin/properties/${row.id}`,
+              label: translate('actions.edit', 'Editar'),
+              icon: 'pencil',
+              variant: 'ghost',
+              name: 'edit'
+            },
+            {
+              type: 'post',
+              action: `/admin/properties/${row.id}/delete`,
+              label: translate('actions.delete', 'Eliminar'),
+              icon: 'trash-2',
+              variant: 'danger',
+              name: 'delete',
+              hidden: [
+                {
+                  name: 'redirect',
+                  value: redirectQuery ? `/admin/properties?${redirectQuery}` : '/admin/properties'
+                }
+              ],
+              confirm: {
+                title: translate('backoffice.properties.actions.delete.title', 'Delete property'),
+                message: deleteMessage,
+                confirmLabel: translate('actions.delete', 'Eliminar')
+              }
+            }
+          ]
+        };
+      });
+
+      const queryState = {
+        search: req.query.search || '',
+        status: statusFilter,
+        sort: sortKey,
+        direction: sortDirection,
+        page: currentPage
+      };
+
+      const noticeKey = String(req.query.notice || '').trim();
+      let feedbackHtml = '';
+      if (noticeKey === 'deleted') {
+        feedbackHtml = `
+          <div class="inline-feedback" data-variant="success" role="status">
+            <span class="inline-feedback-icon">✓</span>
+            <div>${esc(translate('backoffice.properties.feedback.deleted', 'Propriedade eliminada com sucesso.'))}</div>
+          </div>
+        `;
+      } else if (noticeKey === 'created') {
+        feedbackHtml = `
+          <div class="inline-feedback" data-variant="success" role="status">
+            <span class="inline-feedback-icon">✓</span>
+            <div>${esc(translate('backoffice.properties.feedback.created', 'Propriedade criada com sucesso.'))}</div>
+          </div>
+        `;
+      }
+
+      const tableHtml = renderDataTable({
+        id: 'properties-table',
+        action: '/admin/properties',
+        columns: [
+          {
+            key: 'name',
+            label: translate('backoffice.properties.table.columns.name', 'Propriedade'),
+            sortable: true
+          },
+          {
+            key: 'unit_count',
+            label: translate('backoffice.properties.table.columns.unitCount', 'Unidades'),
+            sortable: true
+          },
+          {
+            key: 'revenue',
+            label: translate('backoffice.properties.table.columns.revenue', 'Receita confirmada'),
+            sortable: true,
+            align: 'right'
+          },
+          {
+            key: 'status',
+            label: translate('backoffice.properties.table.columns.status', 'Estado'),
+            sortable: true
+          }
+        ],
+        rows: tableRows,
+        search: {
+          name: 'search',
+          label: translate('backoffice.properties.table.search.label', 'Pesquisa'),
+          placeholder: translate(
+            'backoffice.properties.table.search.placeholder',
+            'Pesquisar por nome ou localização'
+          ),
+          value: req.query.search || ''
+        },
+        filters: [
+          {
+            name: 'status',
+            label: translate('backoffice.properties.table.filters.status.label', 'Estado'),
+            options: [
+              { value: '', label: translate('backoffice.properties.table.filters.status.all', 'Todos os estados') },
+              { value: 'ativa', label: translate('backoffice.properties.table.filters.status.active', 'Ativas') },
+              { value: 'incompleta', label: translate('backoffice.properties.table.filters.status.empty', 'Sem unidades') }
+            ],
+            value: statusFilter
+          }
+        ],
+        sort: { key: sortKey, direction: sortDirection },
+        pagination: { page: currentPage, pageSize, pageCount, total },
+        query: queryState,
+        preserve: ['sort', 'direction'],
+        emptyState: translate('backoffice.properties.table.empty', 'Sem propriedades encontradas.'),
+        t
+      });
+
+      const theme = resolveBrandingForRequest(req);
+
+      res.send(
+        layout({
+          title: translate('backoffice.properties.title', 'Propriedades'),
+          language: req.language,
+          t: req.t,
+          user: req.user,
+          activeNav: 'backoffice',
+          branding: theme,
+          body: html`
+            <div class="bo-page bo-page--wide space-y-6">
+              ${renderBreadcrumbs([
+                {
+                  label: translate('backoffice.common.breadcrumb.backoffice', 'Backoffice'),
+                  href: '/admin'
+                },
+                { label: translate('backoffice.properties.breadcrumb', 'Propriedades') }
+              ])}
+              <header class="space-y-2">
+                <h1 class="text-2xl font-semibold text-slate-900">${esc(
+                  translate('backoffice.properties.title', 'Propriedades')
+                )}</h1>
+                <p class="text-sm text-slate-600 max-w-3xl">
+                  ${esc(
+                    translate(
+                      'backoffice.properties.description',
+                      'Consulta e gere as propriedades com pesquisa, filtros e ações consistentes para toda a equipa.'
+                    )
+                  )}
+                </p>
+              </header>
+              ${feedbackHtml}
+              ${tableHtml}
+            </div>
+          `
+        })
+      );
+    }
+  );
+
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
   const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
@@ -3636,7 +4805,10 @@ app.post(
     const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
     if (!property) return res.status(404).send('Propriedade não encontrada');
     db.prepare('DELETE FROM properties WHERE id = ?').run(id);
-    res.redirect('/admin');
+    const redirectRaw = typeof req.body.redirect === 'string' && req.body.redirect.startsWith('/admin')
+      ? req.body.redirect
+      : '/admin/properties?notice=deleted';
+    res.redirect(redirectRaw);
   }
 );
 
@@ -3685,6 +4857,8 @@ app.get(
     res.send(
       layout({
         title: p.name,
+        language: req.language,
+        t: req.t,
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
@@ -3827,15 +5001,311 @@ app.post(
   }
 );
 
-app.post(
-  '/admin/units/create',
-  requireLogin,
-  requireScope('properties', 'manage', req => {
-    const raw = req.body ? req.body.property_id : null;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isInteger(parsed) ? parsed : null;
-  }),
-  (req, res) => {
+  app.get(
+    '/admin/units',
+    requireLogin,
+    requirePermission('properties.manage'),
+    (req, res) => {
+      ensureNoIndex(res);
+      serverRender('route:/admin/units');
+      const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+      const searchTerm = String(req.query.search || '').trim().toLowerCase();
+      const statusRaw = String(req.query.status || '').trim().toLowerCase();
+      const statusFilter = ['disponivel', 'ocupada', 'bloqueada'].includes(statusRaw) ? statusRaw : '';
+      const allowedSort = new Set(['name', 'property', 'capacity', 'price', 'status']);
+      const requestedSort = String(req.query.sort || '').trim();
+      const sortKey = allowedSort.has(requestedSort) ? requestedSort : 'name';
+      const sortDirection = req.query.direction === 'desc' ? 'desc' : 'asc';
+      const requestedPage = Number.parseInt(req.query.page, 10);
+      const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+      const pageSize = 15;
+
+      const today = dayjs().startOf('day');
+      const activeBookingUnits = new Set(
+        db
+          .prepare(
+            `SELECT unit_id
+               FROM bookings
+              WHERE tenant_id = ?
+                AND status = 'CONFIRMED'
+                AND date(checkin) <= date(?)
+                AND date(checkout) > date(?)`
+          )
+          .all(tenantId, today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'))
+          .map(row => row.unit_id)
+      );
+
+      const activeBlockUnits = new Set();
+      db
+        .prepare(
+          `SELECT unit_id, start_date, end_date
+             FROM unit_blocks
+            WHERE tenant_id = ?`
+        )
+        .all(tenantId)
+        .forEach(block => {
+          const start = dayjs(block.start_date);
+          const end = dayjs(block.end_date);
+          if (start.isValid() && end.isValid() && today.isSameOrAfter(start) && today.isBefore(end)) {
+            activeBlockUnits.add(block.unit_id);
+          }
+        });
+      db
+        .prepare(
+          `SELECT unit_id, start_date, end_date
+             FROM blocks
+            WHERE tenant_id = ?`
+        )
+        .all(tenantId)
+        .forEach(block => {
+          const start = dayjs(block.start_date);
+          const end = dayjs(block.end_date);
+          if (start.isValid() && end.isValid() && today.isSameOrAfter(start) && today.isSameOrBefore(end)) {
+            activeBlockUnits.add(block.unit_id);
+          }
+        });
+
+      let unitRows = db
+        .prepare(
+          `SELECT u.id, u.name, u.capacity, u.base_price_cents, u.property_id,
+                  p.name AS property_name, p.locality, p.district
+             FROM units u
+             JOIN properties p ON p.id = u.property_id
+            WHERE p.tenant_id = ?`
+        )
+        .all(tenantId)
+        .filter(row => userHasScope(req.user, 'properties.manage', row.property_id))
+        .map(row => {
+          const status = activeBlockUnits.has(row.id)
+            ? 'bloqueada'
+            : activeBookingUnits.has(row.id)
+            ? 'ocupada'
+            : 'disponivel';
+          const propertyLabel = propertyLocationLabel(row);
+          return { ...row, status, property_label: propertyLabel };
+        })
+        .filter(row => {
+          if (searchTerm) {
+            const haystack = `${row.name || ''} ${row.property_name || ''}`.toLowerCase();
+            if (!haystack.includes(searchTerm)) return false;
+          }
+          if (statusFilter && row.status !== statusFilter) return false;
+          return true;
+        });
+
+      const sorters = {
+        name: (a, b) => a.name.localeCompare(b.name, 'pt'),
+        property: (a, b) => a.property_name.localeCompare(b.property_name, 'pt'),
+        capacity: (a, b) => a.capacity - b.capacity,
+        price: (a, b) => a.base_price_cents - b.base_price_cents,
+        status: (a, b) => a.status.localeCompare(b.status, 'pt')
+      };
+      const sorter = sorters[sortKey] || sorters.name;
+      unitRows.sort(sorter);
+      if (sortDirection === 'desc') {
+        unitRows.reverse();
+      }
+
+      const total = unitRows.length;
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      const currentPage = Math.min(page, pageCount);
+      const startIndex = (currentPage - 1) * pageSize;
+      const paginated = unitRows.slice(startIndex, startIndex + pageSize);
+
+      const redirectQuery = [
+        ['status', statusFilter],
+        ['sort', sortKey],
+        ['direction', sortDirection],
+        ['page', String(currentPage)],
+        ['search', req.query.search || '']
+      ]
+        .filter(([, value]) => value != null && value !== '')
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join('&');
+
+      const t = req.t;
+      const translate = (key, fallback, values) =>
+        t(key, {
+          defaultValue: fallback,
+          values
+        });
+
+      const tableRows = paginated.map(row => {
+        const statusMarkup = (() => {
+          if (row.status === 'ocupada') {
+            return `<span class="bo-data-table__badge is-warning">${esc(
+              translate('backoffice.units.status.occupied', 'Ocupada')
+            )}</span>`;
+          }
+          if (row.status === 'bloqueada') {
+            return `<span class="bo-data-table__badge is-danger">${esc(
+              translate('backoffice.units.status.blocked', 'Bloqueada')
+            )}</span>`;
+          }
+          return `<span class="bo-data-table__badge is-success">${esc(
+            translate('backoffice.units.status.available', 'Disponível')
+          )}</span>`;
+        })();
+        const deleteMessage = translate(
+          'backoffice.units.actions.delete.message',
+          'Deseja eliminar a unidade "{name}"? Reservas associadas permanecerão no histórico.',
+          { name: row.name }
+        );
+        return {
+          id: row.id,
+          cells: [
+            {
+              html: `<span class="bo-data-table__value">${esc(row.name)}</span><span class="bo-data-table__muted">${esc(
+                row.property_name
+              )}</span>`
+            },
+            { text: String(row.capacity) },
+            { html: `<span class="bo-data-table__value">€ ${eur(row.base_price_cents || 0)}</span>` },
+            { html: statusMarkup }
+          ],
+          actions: [
+            {
+              type: 'link',
+              href: `/admin/units/${row.id}`,
+              label: translate('actions.edit', 'Editar'),
+              icon: 'pencil',
+              variant: 'ghost',
+              name: 'edit'
+            },
+            {
+              type: 'post',
+              action: `/admin/units/${row.id}/delete`,
+              label: translate('actions.delete', 'Eliminar'),
+              icon: 'trash-2',
+              variant: 'danger',
+              name: 'delete',
+              hidden: [
+                {
+                  name: 'redirect',
+                  value: redirectQuery ? `/admin/units?${redirectQuery}` : '/admin/units'
+                }
+              ],
+              confirm: {
+                title: translate('backoffice.units.actions.delete.title', 'Eliminar unidade'),
+                message: deleteMessage,
+                confirmLabel: translate('actions.delete', 'Eliminar')
+              }
+            }
+          ]
+        };
+      });
+
+      const queryState = {
+        search: req.query.search || '',
+        status: statusFilter,
+        sort: sortKey,
+        direction: sortDirection,
+        page: currentPage
+      };
+
+      const noticeKey = String(req.query.notice || '').trim();
+      let feedbackHtml = '';
+      if (noticeKey === 'deleted') {
+        feedbackHtml = `
+          <div class="inline-feedback" data-variant="success" role="status">
+            <span class="inline-feedback-icon">✓</span>
+            <div>${esc(translate('backoffice.units.feedback.deleted', 'Unidade eliminada com sucesso.'))}</div>
+          </div>
+        `;
+      }
+
+      const tableHtml = renderDataTable({
+        id: 'units-table',
+        action: '/admin/units',
+        columns: [
+          { key: 'name', label: translate('backoffice.units.table.columns.name', 'Unidade'), sortable: true },
+          { key: 'capacity', label: translate('backoffice.units.table.columns.capacity', 'Capacidade'), sortable: true },
+          {
+            key: 'price',
+            label: translate('backoffice.units.table.columns.price', 'Preço base'),
+            sortable: true,
+            align: 'right'
+          },
+          { key: 'status', label: translate('backoffice.units.table.columns.status', 'Estado'), sortable: true }
+        ],
+        rows: tableRows,
+        search: {
+          name: 'search',
+          label: translate('backoffice.units.table.search.label', 'Pesquisa'),
+          placeholder: translate(
+            'backoffice.units.table.search.placeholder',
+            'Pesquisar por unidade ou propriedade'
+          ),
+          value: req.query.search || ''
+        },
+        filters: [
+          {
+            name: 'status',
+            label: translate('backoffice.units.table.filters.status.label', 'Estado'),
+            options: [
+              { value: '', label: translate('backoffice.units.table.filters.status.all', 'Todos os estados') },
+              { value: 'disponivel', label: translate('backoffice.units.table.filters.status.available', 'Disponíveis') },
+              { value: 'ocupada', label: translate('backoffice.units.table.filters.status.occupied', 'Ocupadas') },
+              { value: 'bloqueada', label: translate('backoffice.units.table.filters.status.blocked', 'Bloqueadas') }
+            ],
+            value: statusFilter
+          }
+        ],
+        sort: { key: sortKey, direction: sortDirection },
+        pagination: { page: currentPage, pageSize, pageCount, total },
+        query: queryState,
+        preserve: ['sort', 'direction'],
+        emptyState: translate('backoffice.units.table.empty', 'Sem unidades encontradas.'),
+        t
+      });
+
+      const theme = resolveBrandingForRequest(req);
+
+      res.send(
+        layout({
+          title: translate('backoffice.units.title', 'Unidades'),
+          language: req.language,
+          t: req.t,
+          user: req.user,
+          activeNav: 'backoffice',
+          branding: theme,
+          body: html`
+            <div class="bo-page bo-page--wide space-y-6">
+              ${renderBreadcrumbs([
+                { label: translate('backoffice.common.breadcrumb.backoffice', 'Backoffice'), href: '/admin' },
+                { label: translate('backoffice.units.breadcrumb', 'Unidades') }
+              ])}
+              <header class="space-y-2">
+                <h1 class="text-2xl font-semibold text-slate-900">${esc(
+                  translate('backoffice.units.title', 'Unidades')
+                )}</h1>
+                <p class="text-sm text-slate-600 max-w-3xl">
+                  ${esc(
+                    translate(
+                      'backoffice.units.description',
+                      'Consulta rápida das unidades ativas, o estado atual e ações consistentes para gestão diária.'
+                    )
+                  )}
+                </p>
+              </header>
+              ${feedbackHtml}
+              ${tableHtml}
+            </div>
+          `
+        })
+      );
+    }
+  );
+
+  app.post(
+    '/admin/units/create',
+    requireLogin,
+    requireScope('properties', 'manage', req => {
+      const raw = req.body ? req.body.property_id : null;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    }),
+    (req, res) => {
   let { property_id, name, capacity, base_price_eur, features_raw } = req.body;
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(property_id);
   if (!property) return res.status(400).send('Propriedade inválida');
@@ -3959,6 +5429,8 @@ app.get(
   serverRender('route:/admin/units/:id');
   res.send(layout({
     title: `${esc(u.property_name)} – ${esc(u.name)}`,
+    language: req.language,
+    t: req.t,
     user: req.user,
     activeNav: 'backoffice',
     branding: theme,
@@ -4211,7 +5683,10 @@ app.post(
   }),
   (req, res) => {
     db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
-    res.redirect('/admin');
+    const redirectRaw = typeof req.body.redirect === 'string' && req.body.redirect.startsWith('/admin')
+      ? req.body.redirect
+      : '/admin/units?notice=deleted';
+    res.redirect(redirectRaw);
   }
 );
 
@@ -4567,12 +6042,14 @@ app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (
 
   const formatCurrency = (value) => `€ ${eur(value)}`;
 
-  const pageTitle = 'Pagamentos';
-  res.send(layout({
-    title: pageTitle,
-    user: req.user,
-    activeNav: 'backoffice',
-    branding: resolveBrandingForRequest(req),
+const pageTitle = 'Pagamentos';
+res.send(layout({
+  title: pageTitle,
+  language: req.language,
+  t: req.t,
+  user: req.user,
+  activeNav: 'backoffice',
+  branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-4">${pageTitle}</h1>
 
@@ -4822,6 +6299,8 @@ app.get('/admin/identidade-visual', requireAdmin, (req, res) => {
 
   res.send(layout({
     title: 'Identidade visual',
+    language: req.language,
+    t: req.t,
     user: req.user,
     activeNav: 'branding',
     branding: theme,
@@ -5370,11 +6849,13 @@ app.get('/admin/auditoria', requireLogin, requireAnyPermission(['audit.view', 'l
 
   const theme = resolveBrandingForRequest(req);
 
-  res.send(layout({
-    title: 'Auditoria',
-    user: req.user,
-    activeNav: 'audit',
-    branding: theme,
+res.send(layout({
+  title: 'Auditoria',
+  language: req.language,
+  t: req.t,
+  user: req.user,
+  activeNav: 'audit',
+  branding: theme,
     pageClass: 'page-backoffice page-audit',
     body: html`
       <div class="bo-page bo-page--wide">
@@ -5510,6 +6991,246 @@ function maskUserEmail(email) {
   }
   return `${local.slice(0, 2)}…@${domain}`;
 }
+
+app.get(
+  '/admin/users',
+  requireLogin,
+  requirePermission('users.manage'),
+  (req, res) => {
+    ensureNoIndex(res);
+    serverRender('route:/admin/users');
+    const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+    const searchTerm = String(req.query.search || '').trim().toLowerCase();
+    const statusRaw = String(req.query.status || '').trim().toLowerCase();
+    const statusFilter = statusRaw === 'sem_email' || statusRaw === 'ativo' ? statusRaw : '';
+    const allowedSort = new Set(['name', 'email', 'role', 'status']);
+    const requestedSort = String(req.query.sort || '').trim();
+    const sortKey = allowedSort.has(requestedSort) ? requestedSort : 'name';
+    const sortDirection = req.query.direction === 'desc' ? 'desc' : 'asc';
+    const requestedPage = Number.parseInt(req.query.page, 10);
+    const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const pageSize = 20;
+
+    let usersList = db
+      .prepare('SELECT id, username, email, role FROM users WHERE tenant_id = ? ORDER BY username')
+      .all(tenantId)
+      .map(u => ({
+        ...u,
+        role_key: normalizeRole(u.role),
+        status: u.email ? 'ativo' : 'sem_email'
+      }))
+      .filter(user => {
+        if (searchTerm) {
+          const haystack = `${user.username || ''} ${user.email || ''}`.toLowerCase();
+          if (!haystack.includes(searchTerm)) return false;
+        }
+        if (statusFilter && user.status !== statusFilter) return false;
+        return true;
+      });
+
+    const sorters = {
+      name: (a, b) => a.username.localeCompare(b.username, 'pt'),
+      email: (a, b) => (a.email || '').localeCompare(b.email || '', 'pt'),
+      role: (a, b) => (ROLE_LABELS[a.role_key] || a.role_key).localeCompare(ROLE_LABELS[b.role_key] || b.role_key, 'pt'),
+      status: (a, b) => a.status.localeCompare(b.status, 'pt')
+    };
+    const sorter = sorters[sortKey] || sorters.name;
+    usersList.sort(sorter);
+    if (sortDirection === 'desc') {
+      usersList.reverse();
+    }
+
+    const total = usersList.length;
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
+    const currentPage = Math.min(page, pageCount);
+    const startIndex = (currentPage - 1) * pageSize;
+    const paginated = usersList.slice(startIndex, startIndex + pageSize);
+
+    const redirectQuery = [
+      ['status', statusFilter],
+      ['sort', sortKey],
+      ['direction', sortDirection],
+      ['page', String(currentPage)],
+      ['search', req.query.search || '']
+    ]
+      .filter(([, value]) => value != null && value !== '')
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+      .join('&');
+
+    const t = req.t;
+    const translate = (key, fallback, values) =>
+      t(key, {
+        defaultValue: fallback,
+        values
+      });
+
+    const tableRows = paginated.map(user => {
+      const roleLabel = ROLE_LABELS[user.role_key] || user.role_key;
+      const statusBadge = user.status === 'ativo'
+        ? `<span class="bo-data-table__badge is-success">${esc(
+            translate('backoffice.users.status.active', 'Ativo')
+          )}</span>`
+        : `<span class="bo-data-table__badge is-muted">${esc(
+            translate('backoffice.users.status.missingEmail', 'Sem email')
+          )}</span>`;
+      const basePermissionCount = Array.isArray(ROLE_PERMISSIONS[user.role_key])
+        ? ROLE_PERMISSIONS[user.role_key].length
+        : 0;
+      const confirmMessage = translate(
+        'backoffice.users.actions.delete.message',
+        'Tem a certeza que pretende eliminar "{name}"? Esta ação termina sessões ativas, revoga tokens API e remove {count} permissões base associadas.',
+        { name: user.username, count: basePermissionCount }
+      );
+      return {
+        id: user.id,
+        cells: [
+          {
+            html: `<span class="bo-data-table__value">${esc(user.username)}</span>${user.email
+              ? `<span class="bo-data-table__muted">${esc(user.email)}</span>`
+              : `<span class="bo-data-table__muted">${esc(
+                  translate('backoffice.users.table.noEmail', 'Sem email definido')
+                )}</span>`}`
+          },
+          { html: `<span class="bo-data-table__value">${esc(roleLabel)}</span>` },
+          { html: statusBadge }
+        ],
+        actions: [
+          {
+            type: 'link',
+            href: `/admin/utilizadores?user=${user.id}`,
+            label: translate('actions.edit', 'Editar'),
+            icon: 'pencil',
+            variant: 'ghost',
+            name: 'edit'
+          },
+          {
+            type: 'post',
+            action: `/admin/users/${user.id}/delete`,
+            label: translate('actions.delete', 'Eliminar'),
+            icon: 'trash-2',
+            variant: 'danger',
+            name: 'delete',
+            hidden: [
+              {
+                name: 'redirect',
+                value: redirectQuery ? `/admin/users?${redirectQuery}` : '/admin/users'
+              }
+            ],
+            confirm: {
+              title: translate('backoffice.users.actions.delete.title', 'Eliminar utilizador'),
+              message: confirmMessage,
+              confirmLabel: translate('actions.delete', 'Eliminar')
+            }
+          }
+        ]
+      };
+    });
+
+    const queryState = {
+      search: req.query.search || '',
+      status: statusFilter,
+      sort: sortKey,
+      direction: sortDirection,
+      page: currentPage
+    };
+
+    const noticeKey = String(req.query.notice || '').trim();
+    let feedbackHtml = '';
+    if (noticeKey === 'deleted') {
+      feedbackHtml = `
+        <div class="inline-feedback" data-variant="success" role="status">
+          <span class="inline-feedback-icon">✓</span>
+          <div>${esc(translate('backoffice.users.feedback.deleted', 'Utilizador eliminado com sucesso.'))}</div>
+        </div>
+      `;
+    }
+
+    const tableHtml = renderDataTable({
+      id: 'users-table',
+      action: '/admin/users',
+      columns: [
+        { key: 'name', label: translate('backoffice.users.table.columns.name', 'Utilizador'), sortable: true },
+        { key: 'role', label: translate('backoffice.users.table.columns.role', 'Perfil'), sortable: true },
+        { key: 'status', label: translate('backoffice.users.table.columns.status', 'Estado'), sortable: true }
+      ],
+      rows: tableRows,
+      search: {
+        name: 'search',
+        label: translate('backoffice.users.table.search.label', 'Pesquisa'),
+        placeholder: translate(
+          'backoffice.users.table.search.placeholder',
+          'Pesquisar por nome ou email'
+        ),
+        value: req.query.search || ''
+      },
+      filters: [
+        {
+          name: 'status',
+          label: translate('backoffice.users.table.filters.status.label', 'Estado'),
+          options: [
+            { value: '', label: translate('backoffice.users.table.filters.status.all', 'Todos os estados') },
+            { value: 'ativo', label: translate('backoffice.users.table.filters.status.active', 'Com email') },
+            { value: 'sem_email', label: translate('backoffice.users.table.filters.status.noEmail', 'Sem email') }
+          ],
+          value: statusFilter
+        }
+      ],
+      sort: { key: sortKey, direction: sortDirection },
+      pagination: { page: currentPage, pageSize, pageCount, total },
+      query: queryState,
+      preserve: ['sort', 'direction'],
+      emptyState: translate('backoffice.users.table.empty', 'Sem utilizadores encontrados.'),
+      t
+    });
+
+    const theme = resolveBrandingForRequest(req);
+
+    res.send(
+      layout({
+        title: translate('backoffice.users.title', 'Utilizadores'),
+        language: req.language,
+        t: req.t,
+        user: req.user,
+        activeNav: 'users',
+        branding: theme,
+        body: html`
+          <div class="bo-page bo-page--wide space-y-6">
+            ${renderBreadcrumbs([
+              { label: translate('backoffice.common.breadcrumb.backoffice', 'Backoffice'), href: '/admin' },
+              { label: translate('backoffice.users.breadcrumb', 'Utilizadores') }
+            ])}
+            <header class="space-y-2">
+              <h1 class="text-2xl font-semibold text-slate-900">${esc(
+                translate('backoffice.users.title', 'Utilizadores')
+              )}</h1>
+              <p class="text-sm text-slate-600 max-w-3xl">
+                ${esc(
+                  translate(
+                    'backoffice.users.description',
+                    'Pesquisa e gere rapidamente as contas com filtros partilháveis e ações consistentes.'
+                  )
+                )}
+              </p>
+            </header>
+            ${feedbackHtml}
+            <div class="inline-feedback" data-variant="warning" role="alert">
+              <span class="inline-feedback-icon">!</span>
+              <div>
+                ${esc(
+                  translate(
+                    'backoffice.users.warning.delete',
+                    'Eliminar um utilizador revoga tokens de API, termina sessões ativas e remove escopos personalizados. Reatribui as permissões essenciais a outro membro antes de confirmar a remoção.'
+                  )
+                )}
+              </div>
+            </div>
+            ${tableHtml}
+          </div>
+        `
+      })
+    );
+  }
+);
 
 app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
   const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
@@ -5654,6 +7375,8 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
   const theme = resolveBrandingForRequest(req);
   res.send(layout({
     title: 'Utilizadores',
+    language: req.language,
+    t: req.t,
     user: req.user,
     activeNav: 'users',
     branding: theme,
@@ -5668,6 +7391,10 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
         ${successMessage
           ? `<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(successMessage)}</div>`
           : ''}
+        <div class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+          <strong class="block text-amber-900 mb-1">Aviso sobre operações irreversíveis</strong>
+          A desativação ou eliminação de um utilizador revoga imediatamente o acesso ao backoffice, termina sessões ativas e remove escopos personalizados. Reatribui responsabilidades críticas antes de proceder.
+        </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <section class="card p-4">
@@ -6152,6 +7879,43 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     ` : ''}
   `}));
 });
+
+app.post(
+  '/admin/users/:id/delete',
+  requireLogin,
+  requirePermission('users.manage'),
+  (req, res) => {
+    const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+    const userId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(userId)) {
+      return res.status(400).send('Utilizador inválido');
+    }
+    if (req.user && Number(req.user.id) === userId) {
+      const fallback = '/admin/users?notice=forbidden';
+      const redirectTarget = typeof req.body.redirect === 'string' && req.body.redirect.startsWith('/admin/users')
+        ? req.body.redirect
+        : fallback;
+      return res.redirect(redirectTarget);
+    }
+    const existing = db
+      .prepare('SELECT id, username FROM users WHERE id = ? AND tenant_id = ?')
+      .get(userId, tenantId);
+    if (!existing) {
+      return res.status(404).send('Utilizador não encontrado');
+    }
+    db.prepare('DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ?').run(userId, tenantId);
+    db.prepare('DELETE FROM users WHERE id = ? AND tenant_id = ?').run(userId, tenantId);
+    revokeUserSessions(userId, req);
+    logActivity(req.user.id, 'user.delete', 'user', userId, { username: existing.username });
+    const redirectRaw = typeof req.body.redirect === 'string' && req.body.redirect.startsWith('/admin/users')
+      ? req.body.redirect
+      : '/admin/users';
+    const redirectUrl = redirectRaw.includes('notice=')
+      ? redirectRaw
+      : `${redirectRaw}${redirectRaw.includes('?') ? '&' : '?'}notice=deleted`;
+    res.redirect(redirectUrl);
+  }
+);
 
 app.post('/admin/users/create', requireAdmin, (req,res)=>{
   const { username, password, confirm, role } = req.body;

@@ -1869,7 +1869,9 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       const key = f.icon ? String(f.icon).toLowerCase() : "";
       const fallback = FEATURE_ICONS[key] || key.replace(/[-_]/g, " ");
       const label = f.label ? esc(f.label) : esc(fallback.replace(/\b\w/g, c => c.toUpperCase()));
-      const iconHtml = key ? `<span class="${iconWrap}"><i data-lucide="${key}" class="w-4 h-4"></i></span>` : "";
+      const iconHtml = key
+        ? `<span class="${iconWrap}" aria-hidden="true">${renderIcon(key, { className: 'w-4 h-4' })}</span>`
+        : "";
       const labelHtml = label ? `<span>${label}</span>` : "";
       if (!iconHtml && !labelHtml) return "";
       return `<span class="${badgeClass}">${iconHtml}${labelHtml}</span>`;
@@ -2195,8 +2197,125 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     return { total_cents: total, nights: nights.length, minStayReq };
   }
 
+  function renderIcon(name, { className = '', label = '', size } = {}) {
+    const iconName = typeof name === 'string' && name.trim() ? name.trim() : '';
+    if (!iconName) return '';
+    const classes = ['app-icon'];
+    if (className && typeof className === 'string') {
+      className
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach(token => classes.push(token));
+    }
+    const sizeValue = typeof size === 'number' ? `${size}px` : typeof size === 'string' && size.trim() ? size.trim() : '';
+    const sizeAttr = sizeValue ? ` style="width:${esc(sizeValue)};height:${esc(sizeValue)};"` : '';
+    if (label && typeof label === 'string' && label.trim()) {
+      const safeLabel = esc(label.trim());
+      return `<i data-lucide="${esc(iconName)}" class="${esc(classes.join(' ').trim())}"${sizeAttr} role="img" aria-label="${safeLabel}"></i>`;
+    }
+    return `<i data-lucide="${esc(iconName)}" class="${esc(classes.join(' ').trim())}"${sizeAttr} aria-hidden="true"></i>`;
+  }
+
+  const notificationReadState = new Map();
+
+  function notificationUserKey(user) {
+    if (!user || user.id == null) return null;
+    const numeric = Number(user.id);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Number.parseInt(String(user.id), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function ensureNotificationSet(user) {
+    const key = notificationUserKey(user);
+    if (key == null) return null;
+    if (!notificationReadState.has(key)) {
+      notificationReadState.set(key, new Set());
+    }
+    return notificationReadState.get(key);
+  }
+
+  function computeNotificationId(item = {}) {
+    const parts = [
+      item && item.title ? String(item.title) : '',
+      item && item.message ? String(item.message) : '',
+      item && item.meta ? String(item.meta) : '',
+      item && item.href ? String(item.href) : ''
+    ];
+    return crypto.createHash('sha1').update(parts.join('|')).digest('hex');
+  }
+
+  function annotateNotificationList(user, list = []) {
+    const readSet = ensureNotificationSet(user);
+    const annotated = list
+      .filter(Boolean)
+      .map(item => {
+        const id = computeNotificationId(item);
+        const read = readSet ? readSet.has(id) : false;
+        return { ...item, id, read };
+      });
+    if (readSet) {
+      const validIds = new Set(annotated.map(item => item.id));
+      Array.from(readSet).forEach(id => {
+        if (!validIds.has(id)) {
+          readSet.delete(id);
+        }
+      });
+    }
+    return annotated;
+  }
+
+  function markNotificationsRead(user, ids = []) {
+    const readSet = ensureNotificationSet(user);
+    if (!readSet || !Array.isArray(ids)) return;
+    ids.forEach(id => {
+      if (!id) return;
+      try {
+        readSet.add(String(id));
+      } catch (_) {
+        // ignore malformed identifiers
+      }
+    });
+  }
+
+  function getUserNotificationSummary(user, { notifications: overrideList = null, pendingLimit = 10 } = {}) {
+    const baseList = Array.isArray(overrideList)
+      ? overrideList.filter(Boolean)
+      : buildUserNotifications({
+          user,
+          db,
+          dayjs,
+          userCan,
+          ensureAutomationFresh,
+          automationCache,
+          pendingLimit
+        });
+    const annotated = annotateNotificationList(user, baseList);
+    const unreadCount = annotated.reduce((total, item) => (item.read ? total : total + 1), 0);
+    return { notifications: annotated, unreadCount };
+  }
+
   // ===================== Layout =====================
-  function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
+  function layout({
+    title,
+    body,
+    user,
+    activeNav = '',
+    branding,
+    notifications = null,
+    pageClass = '',
+    language = 'pt',
+    t
+  } = {}) {
+    const languageCode = i18n.normalizeLanguage(language) || 'pt';
+    const translate = typeof t === 'function'
+      ? (key, options = {}) => t(key, { language: languageCode, ...options })
+      : (key, options = {}) =>
+          i18n.translate(key, {
+            language: languageCode,
+            fallbackLanguage: 'en',
+            ...options
+          });
     const theme = branding || getBranding();
     const baseTheme = computeBrandingTheme(BRANDING_THEME_DEFAULT);
     const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
@@ -2209,32 +2328,26 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const brandHomeHref = isHousekeepingOnly
       ? '/limpeza/tarefas'
       : canAccessBackoffice && can('dashboard.view')
-      ? '/admin'
+      ? '/admin/dashboard'
       : canViewBookings
       ? '/admin/bookings'
       : '/';
     const userPermissions = user ? Array.from(user.permissions || []) : [];
-    const notificationsList =
+    const notificationSummary =
       notifications === null
-        ? buildUserNotifications({
-            user,
-            db,
-            dayjs,
-            userCan,
-            ensureAutomationFresh,
-            automationCache
-          })
-        : Array.isArray(notifications)
-        ? notifications.filter(Boolean)
-        : [];
-    const notificationsCount = notificationsList.length;
+        ? getUserNotificationSummary(user, { pendingLimit: 10 })
+        : getUserNotificationSummary(user, {
+            notifications: Array.isArray(notifications) ? notifications.filter(Boolean) : []
+          });
+    const notificationsList = notificationSummary.notifications;
+    const notificationsCount = notificationSummary.unreadCount;
     const userRoleLabel = user && user.role_label ? user.role_label : user && user.role ? user.role : '';
     const brandLogoClass = theme.logoPath ? 'brand-logo has-image' : 'brand-logo';
     const brandLogoContent = theme.logoPath
       ? `<img src="${esc(theme.logoPath)}" alt="${esc(theme.logoAlt)}" class="brand-logo-img" />`
       : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
     const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
-    const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+    const bodyClass = ['app-body', 'theme-light', pageClass].filter(Boolean).join(' ');
 
     const navBackground = theme.surface;
     const navBorder = theme.surfaceBorder;
@@ -2272,46 +2385,126 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     ].join(';');
     const navStyleAttr = esc(navStyle);
 
+    const interfaceLoadingText = translate('nav.loadingShell', {
+      defaultValue: 'A preparar interface…'
+    });
+    const themeToggleLightLabel = translate('nav.themeLight', {
+      defaultValue: 'Modo claro'
+    });
+    const themeToggleDarkLabel = translate('nav.themeDark', {
+      defaultValue: 'Modo escuro'
+    });
+    const globalSearchLabel = translate('nav.globalSearch', {
+      defaultValue: 'Pesquisa global'
+    });
+    const globalSearchPlaceholder = translate('nav.globalSearchPlaceholder', {
+      defaultValue: 'Pesquise reservas, unidades, hóspedes ou conteúdos'
+    });
+    const globalSearchHint = translate('nav.globalSearchHint', {
+      defaultValue: 'Escreve pelo menos duas letras para ver resultados.'
+    });
+    const globalSearchEmpty = translate('nav.globalSearchEmpty', {
+      defaultValue: 'Sem resultados para a pesquisa atual.'
+    });
+    const notificationsMarkAllLabel = translate('nav.notificationsMarkAllRead', {
+      defaultValue: 'Marcar como lidas'
+    });
+    const primaryNavLabel = translate('nav.primaryNavigation', {
+      defaultValue: 'Navegação principal'
+    });
+    const notificationsEmptyText = translate('nav.notificationsEmpty', {
+      defaultValue: 'Sem notificações no momento.'
+    });
+
+    const globalSearchHtml = hasUser && canAccessBackoffice
+      ? `
+          <div class="global-search" data-global-search role="search" aria-labelledby="global-search-label">
+            <label id="global-search-label" class="global-search__label" for="global-search-input">${esc(globalSearchLabel)}</label>
+            <div class="global-search__field">
+              ${renderIcon('search', { className: 'w-4 h-4' })}
+              <input
+                type="search"
+                class="global-search__input"
+                id="global-search-input"
+                name="global-search"
+                placeholder="${esc(globalSearchPlaceholder)}"
+                autocomplete="off"
+                data-global-search-input
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded="false"
+                aria-haspopup="listbox"
+                aria-controls="global-search-results"
+                aria-describedby="global-search-hint"
+              />
+              <span class="global-search__spinner" data-global-search-spinner aria-hidden="true"></span>
+            </div>
+            <p class="sr-only" id="global-search-hint">${esc(globalSearchHint)}</p>
+            <div class="global-search__results" id="global-search-results" data-global-search-results hidden role="listbox" aria-label="${esc(globalSearchLabel)}"></div>
+            <p class="global-search__empty" data-global-search-empty hidden>${esc(globalSearchEmpty)}</p>
+          </div>`
+      : '';
+
+    const defaultNotificationTitle = translate('messages.update', { defaultValue: 'Atualização' });
+
     const renderNotificationItem = (item) => {
       if (!item) return '';
-      const severity = typeof item.severity === 'string' && item.severity.trim()
+      const severityClass = typeof item.severity === 'string' && item.severity.trim()
         ? ` nav-notifications__item--${esc(item.severity.trim())}`
         : '';
-      const title = `<span class="nav-notifications__title">${esc(item.title || 'Atualização')}</span>`;
+      const classes = ['nav-notifications__item'];
+      if (severityClass) classes.push(severityClass.trim());
+      if (item.read) classes.push('is-read');
+      const id = item.id ? String(item.id) : computeNotificationId(item);
+      const attributes = [`class="${classes.join(' ')}"`, `data-notification-id="${esc(id)}"`, `data-notification-read="${item.read ? 'true' : 'false'}"`];
+      const titleText = item.title || defaultNotificationTitle;
+      const title = `<span class="nav-notifications__title">${esc(titleText)}</span>`;
       const message = item.message ? `<div class="nav-notifications__message">${esc(item.message)}</div>` : '';
       const meta = item.meta ? `<div class="nav-notifications__meta">${esc(item.meta)}</div>` : '';
       if (item.href) {
-        return `<li class="nav-notifications__item${severity}"><a class="nav-notifications__link" href="${esc(item.href)}">${title}${message}${meta}</a></li>`;
+        return `<li ${attributes.join(' ')}><a class="nav-notifications__link" href="${esc(item.href)}" data-notification-link>${title}${message}${meta}</a></li>`;
       }
-      return `<li class="nav-notifications__item${severity}">${title}${message}${meta}</li>`;
+      return `<li ${attributes.join(' ')}>${title}${message}${meta}</li>`;
     };
 
-    const notificationsPanelHtml = notificationsCount
-      ? `<ul class="nav-notifications__list">${notificationsList.map(renderNotificationItem).join('')}</ul>`
-      : '<p class="nav-notifications__empty">Sem notificações no momento.</p>';
+    const notificationsListHtml = notificationsList.map(renderNotificationItem).join('');
+    const notificationsPanelHtml = `
+              <div class="nav-notifications__body" data-notifications-body>
+                <ul class="nav-notifications__list" data-notifications-list${notificationsList.length ? '' : ' hidden'}>
+                  ${notificationsListHtml}
+                </ul>
+                <p class="nav-notifications__empty" data-notifications-empty${notificationsList.length ? ' hidden' : ''}>${esc(notificationsEmptyText)}</p>
+              </div>
+              <div class="nav-notifications__footer"><a class="nav-notifications__footer-link" href="/admin/bookings">${esc(
+                translate('nav.notificationsViewBookings', { defaultValue: 'Ver reservas' })
+              )}</a></div>`;
 
     const notificationsMarkup = hasUser && canAccessBackoffice
       ? `
-          <div class="nav-notifications">
+          <div class="nav-notifications" data-notifications>
             <button type="button" class="nav-notifications__button" data-notifications-toggle aria-haspopup="true" aria-expanded="false" aria-controls="nav-notifications-panel">
-              <i data-lucide="bell" class="w-5 h-5"></i>
-              <span class="sr-only">Notificações</span>
-              ${notificationsCount ? `<span class="nav-notifications__badge">${notificationsCount}</span>` : ''}
+              ${renderIcon('bell', { className: 'w-5 h-5' })}
+              <span class="sr-only">${esc(translate('nav.notifications', { defaultValue: 'Notificações' }))}</span>
+              <span class="nav-notifications__badge" data-notifications-count${notificationsCount ? '' : ' hidden'}>${notificationsCount}</span>
             </button>
-            <div class="nav-notifications__panel" id="nav-notifications-panel" data-notifications-panel hidden>
+            <div class="nav-notifications__panel" id="nav-notifications-panel" data-notifications-panel hidden role="dialog" aria-labelledby="nav-notifications-title">
               <div class="nav-notifications__header">
-                <span>Notificações</span>
-                <span class="nav-notifications__counter">${notificationsCount}</span>
+                <span id="nav-notifications-title">${esc(translate('nav.notifications', { defaultValue: 'Notificações' }))}</span>
+                <div class="nav-notifications__header-actions">
+                  <span class="nav-notifications__counter" data-notifications-counter>${notificationsCount}</span>
+                  <button type="button" class="nav-notifications__mark-read" data-notifications-mark-read${notificationsCount ? '' : ' disabled'}>${esc(notificationsMarkAllLabel)}</button>
+                </div>
               </div>
               ${notificationsPanelHtml}
-              <div class="nav-notifications__footer"><a class="nav-notifications__footer-link" href="/admin/bookings">Ver reservas</a></div>
             </div>
           </div>`
       : '';
 
     const navSecurityMenuItem =
       hasUser && isFeatureEnabled('FEATURE_NAV_SECURITY_LINK')
-        ? `<li class="nav-user__item"><a class="nav-user__link" href="/account/seguranca">Security / Segurança</a></li>`
+        ? `<li class="nav-user__item"><a class="nav-user__link" href="/account/seguranca">${esc(
+            translate('nav.security', { defaultValue: 'Segurança' })
+          )}</a></li>`
         : '';
 
     const navUserMenuHtml = hasUser
@@ -2320,7 +2513,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             <button type="button" class="nav-user__trigger" data-user-menu-toggle aria-haspopup="true" aria-expanded="false">
               <span class="nav-user__name">${esc(user.username)}</span>
               ${userRoleLabel ? `<span class="nav-user__role">${esc(userRoleLabel)}</span>` : ''}
-              <i aria-hidden="true" data-lucide="chevron-down" class="w-4 h-4"></i>
+              ${renderIcon('chevron-down', { className: 'w-4 h-4' })}
             </button>
             <div class="nav-user__panel" data-user-menu-panel hidden>
               <div class="nav-user__summary">
@@ -2331,7 +2524,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
                 ${navSecurityMenuItem}
                 <li class="nav-user__item">
                   <form method="post" action="/logout" class="nav-user__logout">
-                    <button type="submit">Terminar sessão</button>
+                    <button type="submit">${esc(translate('nav.logout', { defaultValue: 'Terminar sessão' }))}</button>
                   </form>
                 </li>
               </ul>
@@ -2339,29 +2532,78 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           </div>`
       : '';
 
-    const navActionsHtml = hasUser
-      ? `${notificationsMarkup}${navUserMenuHtml}`
-      : '<a class="login-link" href="/login">Login</a>';
+    const languageLabel = translate('language.label', { defaultValue: 'Idioma' });
+    const languageOptions = i18n.supportedLanguages
+      .map(code => {
+        const optionLabel = translate(`language.${code}`, {
+          defaultValue: i18n.getLanguageLabel(code) || code.toUpperCase()
+        });
+        const selected = languageCode === code ? ' selected' : '';
+        return `<option value="${esc(code)}"${selected}>${esc(optionLabel)}</option>`;
+      })
+      .join('');
+    const languageSelectorHtml = `
+      <div class="language-switcher">
+        <label class="language-switcher__label" for="language-selector">${esc(languageLabel)}</label>
+        <div class="language-switcher__field">
+          ${renderIcon('globe')}
+          <select id="language-selector" class="language-switcher__select" data-language-switcher>
+            ${languageOptions}
+          </select>
+        </div>
+      </div>`;
+
+    const themeToggleHtml = hasUser && canAccessBackoffice
+      ? `
+          <button
+            type="button"
+            class="theme-toggle"
+            data-theme-toggle
+            data-theme-label-light="${esc(themeToggleLightLabel)}"
+            data-theme-label-dark="${esc(themeToggleDarkLabel)}"
+            aria-pressed="false"
+            aria-label="${esc(themeToggleDarkLabel)}"
+          >
+            <span class="theme-toggle__icon theme-toggle__icon--sun">${renderIcon('sun', { className: 'w-4 h-4' })}</span>
+            <span class="theme-toggle__icon theme-toggle__icon--moon">${renderIcon('moon', { className: 'w-4 h-4' })}</span>
+            <span class="theme-toggle__label" data-theme-toggle-label>${esc(themeToggleLightLabel)}</span>
+          </button>`
+      : '';
+
+    const navActionsParts = [languageSelectorHtml];
+    if (themeToggleHtml) {
+      navActionsParts.push(themeToggleHtml);
+    }
+    if (hasUser) {
+      navActionsParts.push(`${notificationsMarkup}${navUserMenuHtml}`);
+    } else {
+      navActionsParts.push(`<a class="login-link" href="/login">${esc(translate('nav.login', { defaultValue: 'Login' }))}</a>`);
+    }
+
+    const navActionsHtml = navActionsParts.join('');
 
     const navLinks = [];
     const pushNavLink = (key, href, label) => {
       navLinks.push(`<a class="${navClass(key)}" href="${href}">${label}</a>`);
     };
 
+    if (canAccessBackoffice && can('dashboard.view')) {
+      pushNavLink('dashboard', '/admin/dashboard', esc(translate('nav.dashboard', { defaultValue: 'Dashboard' })));
+    }
     if (!isHousekeepingOnly) {
-      pushNavLink('search', '/search', 'Pesquisar');
+      pushNavLink('search', '/search', esc(translate('nav.search', { defaultValue: 'Pesquisar' })));
     }
     if (can('owners.portal.view')) {
-      pushNavLink('owners', '/owners', 'Área de proprietários');
+      pushNavLink('owners', '/owners', esc(translate('nav.owners', { defaultValue: 'Área de proprietários' })));
     }
     if (can('calendar.view')) {
-      pushNavLink('calendar', '/calendar', 'Mapa de reservas');
+      pushNavLink('calendar', '/calendar', esc(translate('nav.calendar', { defaultValue: 'Mapa de reservas' })));
     }
     if (can('housekeeping.view')) {
-      pushNavLink('housekeeping', '/limpeza/tarefas', 'Limpezas');
+      pushNavLink('housekeeping', '/limpeza/tarefas', esc(translate('nav.housekeeping', { defaultValue: 'Limpezas' })));
     }
     if (canAccessBackoffice && can('dashboard.view')) {
-      pushNavLink('backoffice', '/admin', 'Backoffice');
+      pushNavLink('backoffice', '/admin', esc(translate('nav.backoffice', { defaultValue: 'Backoffice' })));
     }
     // intentionally restrict the top navigation to the primary shortcuts only
 
@@ -2370,15 +2612,17 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const telemetryClientScript = telemetryFeatureEnabled ? '<script defer src="/public/js/telemetry.js"></script>' : '';
 
     return html`<!doctype html>
-    <html lang="pt">
+    <html lang="${esc(languageCode)}">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${pageTitle}</title>
+        <link rel="stylesheet" href="/public/css/themes.css" />
         <script src="https://unpkg.com/htmx.org@2.0.3"></script>
         <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+        <script defer src="/public/js/backoffice-shell.js"></script>
         ${telemetryBootstrapScript}
         ${telemetryClientScript}
         <style>
@@ -2460,6 +2704,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .topbar{background:var(--nav-background,var(--brand-surface));border-bottom:1px solid var(--nav-border,var(--brand-surface-border));box-shadow:0 1px 0 rgba(15,23,42,.04);}
           .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
           .brand{display:flex;align-items:center;gap:12px;color:var(--nav-foreground,#3a3b47);font-weight:600;text-decoration:none;font-size:1.125rem;}
+          .app-icon{display:inline-flex;align-items:center;justify-content:center;width:1em;height:1em;line-height:1;}
           .brand-logo{width:40px;height:40px;border-radius:var(--nav-radius-sm,var(--brand-radius-sm));background:linear-gradient(130deg,var(--nav-logo-from,var(--brand-primary)),var(--nav-logo-to,var(--brand-secondary)));display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--nav-logo-contrast,var(--brand-primary-contrast));box-shadow:0 10px 20px rgba(15,23,42,.18);overflow:hidden;}
           .brand-logo.has-image{box-shadow:none;background:none;padding:0;border-radius:var(--nav-radius-sm,var(--brand-radius-sm));}
           .brand-logo-img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -2472,6 +2717,13 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .nav-link.active{color:var(--nav-link-active,#2f3140);}
           .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));}
           .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
+          .language-switcher{display:inline-flex;align-items:center;gap:8px;padding:.35rem .75rem;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.85);box-shadow:0 6px 16px rgba(15,23,42,.08);}
+          .language-switcher__label{font-size:.7rem;font-weight:600;letter-spacing:.08em;color:#64748b;text-transform:uppercase;}
+          .language-switcher__field{display:inline-flex;align-items:center;gap:.35rem;}
+          .language-switcher__field .app-icon{width:16px;height:16px;color:#475569;}
+          .language-switcher__select{border:none;background:transparent;font-size:.85rem;font-weight:600;color:#1e293b;appearance:none;padding-right:1.1rem;cursor:pointer;}
+          .language-switcher__select:focus{outline:none;}
+          .language-switcher__select option{color:#0f172a;}
           .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
           .nav-notifications{position:relative;display:flex;align-items:center;}
           .nav-notifications__button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#475569;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 18px rgba(15,23,42,.08);}
@@ -3369,26 +3621,33 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         </script>
       </head>
         <body class="${bodyClass}">
-          <div class="app-shell" style="${navStyleAttr}">
-          <header class="topbar">
-            <div class="topbar-inner">
-              <a href="${esc(brandHomeHref)}" class="brand" aria-label="${esc(theme.brandName)}">
-                <span class="${brandLogoClass}">${brandLogoContent}</span>
-                <span class="brand-info">
-                  <span class="brand-name">${esc(theme.brandName)}</span>
-                  ${brandTagline}
-                </span>
-              </a>
-              <nav class="nav-links">
-                ${navLinks.join('')}
-              </nav>
-              <div class="nav-actions">${navActionsHtml}</div>
+          <div class="app-shell" style="${navStyleAttr}" data-app-shell data-loading="true">
+            <div class="app-shell__loader" role="status" aria-live="polite">
+              <span class="app-shell__spinner" aria-hidden="true"></span>
+              <span class="sr-only">${esc(interfaceLoadingText)}</span>
             </div>
-            <div class="nav-accent-bar"></div>
-          </header>
-          <main class="main-content">
-            ${body}
-          </main>
+            <header class="topbar" role="banner">
+              <div class="topbar-inner">
+                <a href="${esc(brandHomeHref)}" class="brand" aria-label="${esc(theme.brandName)}">
+                  <span class="${brandLogoClass}">${brandLogoContent}</span>
+                  <span class="brand-info">
+                    <span class="brand-name">${esc(theme.brandName)}</span>
+                    ${brandTagline}
+                  </span>
+                </a>
+                <nav class="nav-links" role="navigation" aria-label="${esc(primaryNavLabel)}">
+                  ${navLinks.join('')}
+                </nav>
+                <div class="nav-actions">${navActionsHtml}</div>
+              </div>
+              ${globalSearchHtml
+                ? `<div class="topbar-utilities"><div class="topbar-utilities__inner">${globalSearchHtml}</div></div>`
+                : ''}
+              <div class="nav-accent-bar"></div>
+            </header>
+            <main class="main-content" data-shell-main>
+              ${body}
+            </main>
           <footer class="footer">
             <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(theme.brandName)} · Plataforma demo</div>
           </footer>
@@ -3404,6 +3663,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     dayjs,
     html,
     layout,
+    renderIcon,
     esc,
     eur,
     bcrypt,
@@ -3506,6 +3766,10 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     requireDev,
     userHasScope,
     buildUserNotifications,
+    annotateNotificationList,
+    getUserNotificationSummary,
+    markNotificationsRead,
+    computeNotificationId,
     overlaps,
     unitAvailable,
     rateQuote,

@@ -1,0 +1,91 @@
+<section class="dashboard-shell">
+  <header class="dashboard-header">
+    <div>
+      <p class="dashboard-kicker"><%= kicker %></p>
+      <h1 class="dashboard-title"><%= title %></h1>
+      <p class="dashboard-subtitle"><%= subtitle %></p>
+    </div>
+    <div class="dashboard-quick-actions">
+      <a href="/calendar" class="dashboard-action">
+        <%- include('partials/icon', { name: 'calendar-days', className: 'dashboard-action__icon' }) %>
+        <span><%= quickActionCalendar %></span>
+      </a>
+      <a href="/admin/bookings" class="dashboard-action">
+        <%- include('partials/icon', { name: 'notebook-text', className: 'dashboard-action__icon' }) %>
+        <span><%= quickActionReservations %></span>
+      </a>
+      <a href="/limpeza/tarefas" class="dashboard-action">
+        <%- include('partials/icon', { name: 'broom', className: 'dashboard-action__icon' }) %>
+        <span><%= quickActionHousekeeping %></span>
+      </a>
+    </div>
+  </header>
+
+  <section class="dashboard-grid" aria-label="<%= kpiAriaLabel %>">
+    <article class="dashboard-card">
+      <div class="dashboard-card__icon" aria-hidden="true"><%- include('partials/icon', { name: 'bed' }) %></div>
+      <p class="dashboard-card__label"><%= occupancyCardLabel %></p>
+      <p class="dashboard-card__value dashboard-card__value--highlight"><%= occupancyLabel %></p>
+      <p class="dashboard-card__meta"><%= occupancyMeta %></p>
+      <a class="dashboard-card__link" href="/admin/bookings?filter=today"><%= occupancyLinkLabel %></a>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="dashboard-card__icon" aria-hidden="true"><%- include('partials/icon', { name: 'euro' }) %></div>
+      <p class="dashboard-card__label"><%= revenueCardLabel %></p>
+      <p class="dashboard-card__value dashboard-card__value--success"><%= revenueLabel %></p>
+      <p class="dashboard-card__meta"><%= revenueMeta %></p>
+      <a class="dashboard-card__link" href="/admin/revenue-calendar"><%= revenueLinkLabel %></a>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="dashboard-card__icon" aria-hidden="true"><%- include('partials/icon', { name: 'clock-8' }) %></div>
+      <p class="dashboard-card__label"><%= futureBookingsCardLabel %></p>
+      <p class="dashboard-card__value"><%= futureBookingsLabel %></p>
+      <p class="dashboard-card__meta"><%= futureBookingsMeta %></p>
+      <a class="dashboard-card__link" href="/admin/bookings"><%= futureBookingsLinkLabel %></a>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="dashboard-card__icon" aria-hidden="true"><%- include('partials/icon', { name: 'sparkles' }) %></div>
+      <p class="dashboard-card__label"><%= pendingTasksCardLabel %></p>
+      <p class="dashboard-card__value dashboard-card__value--warning"><%= pendingTasksLabel %></p>
+      <p class="dashboard-card__meta"><%= pendingTasksMeta %></p>
+      <a class="dashboard-card__link" href="/limpeza/tarefas"><%= pendingTasksLinkLabel %></a>
+    </article>
+  </section>
+
+  <footer class="dashboard-footer">
+    <p class="dashboard-updated"><%= updatedPrefix %> <time datetime="<%= updatedAtIso %>"><%= updatedAtLabel %></time></p>
+  </footer>
+</section>
+
+<style>
+  .page-dashboard .dashboard-shell{display:grid;gap:32px;padding:16px;max-width:1200px;margin:0 auto;}
+  .page-dashboard .dashboard-header{display:flex;flex-direction:column;gap:20px;align-items:flex-start;}
+  @media (min-width:768px){.page-dashboard .dashboard-header{flex-direction:row;align-items:center;justify-content:space-between;}}
+  .page-dashboard .dashboard-kicker{text-transform:uppercase;letter-spacing:.08em;font-size:.75rem;font-weight:700;color:#fb923c;margin:0;}
+  .page-dashboard .dashboard-title{font-size:2rem;line-height:1.2;color:#0f172a;margin:4px 0 0;font-weight:700;}
+  .page-dashboard .dashboard-subtitle{margin:8px 0 0;font-size:1rem;color:#475569;max-width:38rem;}
+  .page-dashboard .dashboard-quick-actions{display:flex;flex-wrap:wrap;gap:12px;}
+  .page-dashboard .dashboard-action{display:inline-flex;align-items:center;gap:8px;padding:.65rem 1.1rem;border-radius:999px;background:#ede9fe;color:#4c1d95;font-weight:600;text-decoration:none;box-shadow:0 8px 20px rgba(76,29,149,.18);transition:transform .15s ease,box-shadow .15s ease;}
+  .page-dashboard .dashboard-action__icon{width:18px;height:18px;}
+  .page-dashboard .dashboard-action:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(76,29,149,.22);}
+  .page-dashboard .dashboard-grid{display:grid;gap:18px;}
+  @media (min-width:640px){.page-dashboard .dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  @media (min-width:1024px){.page-dashboard .dashboard-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
+  .page-dashboard .dashboard-card{background:rgba(255,255,255,.92);border-radius:24px;border:1px solid rgba(148,163,184,.18);padding:20px;box-shadow:0 20px 45px rgba(15,23,42,.08);display:grid;gap:8px;align-content:start;min-height:200px;}
+  .page-dashboard .dashboard-card__icon{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(59,130,246,.12));display:inline-flex;align-items:center;justify-content:center;color:#f97316;}
+  .page-dashboard .dashboard-card__icon .app-icon{width:22px;height:22px;}
+  .page-dashboard .dashboard-card__label{margin:4px 0 0;font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:#64748b;font-weight:700;}
+  .page-dashboard .dashboard-card__value{font-size:1.8rem;font-weight:700;color:#0f172a;margin:0;}
+  .page-dashboard .dashboard-card__value--highlight{color:#0ea5e9;}
+  .page-dashboard .dashboard-card__value--success{color:#16a34a;}
+  .page-dashboard .dashboard-card__value--warning{color:#f97316;}
+  .page-dashboard .dashboard-card__meta{margin:0;font-size:.9rem;color:#475569;}
+  .page-dashboard .dashboard-card__link{margin-top:auto;font-size:.85rem;font-weight:600;color:#4c1d95;text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+  .page-dashboard .dashboard-card__link::after{content:'\2192';font-size:1rem;line-height:1;transition:transform .2s ease;}
+  .page-dashboard .dashboard-card__link:hover::after{transform:translateX(3px);}
+  .page-dashboard .dashboard-footer{display:flex;justify-content:flex-end;}
+  .page-dashboard .dashboard-updated{margin:0;font-size:.8rem;color:#94a3b8;}
+</style>

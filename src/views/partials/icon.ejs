@@ -1,0 +1,17 @@
+<%
+  const iconName = typeof name === 'string' && name.trim() ? name.trim() : '';
+  const additionalClasses = Array.isArray(classList)
+    ? classList
+    : typeof className === 'string' && className.trim()
+    ? className.trim().split(/\s+/)
+    : [];
+  const classes = ['app-icon'].concat(additionalClasses).join(' ').trim();
+  const labelled = typeof label === 'string' && label.trim().length > 0;
+  const iconSize = typeof size === 'number' ? `${size}` : typeof size === 'string' ? size.trim() : '';
+  const sizeAttributes = iconSize ? `style="width:${iconSize};height:${iconSize};"` : '';
+%>
+<i data-lucide="<%= iconName %>"
+   class="<%= classes %>"
+   <%= sizeAttributes %>
+   <%= labelled ? `role="img" aria-label="${label.trim()}"` : 'aria-hidden="true"' %>
+></i>

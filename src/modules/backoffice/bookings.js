@@ -12,6 +12,7 @@ function registerBookings(app, context) {
     layout,
     esc,
     eur,
+    renderIcon,
     resolveBrandingForRequest,
     rememberActiveBrandingProperty,
     userCan,
@@ -25,8 +26,14 @@ function registerBookings(app, context) {
     logActivity,
     deleteLockByBookingStmt,
     adminBookingUpdateStmt,
-    bookingEmailer
+    bookingEmailer,
+    buildBookingExportRow,
+    sendBookingsExport
   } = context;
+
+  if (typeof buildBookingExportRow !== 'function' || typeof sendBookingsExport !== 'function') {
+    throw new Error('registerBookings: export helpers são obrigatórios.');
+  }
 
   function renderBookingDetailPage(req, res, { booking, bookingNotes, planOptions = [], feedback = null, statusCode = 200 }) {
     if (!booking) {
@@ -213,6 +220,8 @@ function registerBookings(app, context) {
 
     res.status(statusCode).send(layout({
       title: `Reserva #${b.id}`,
+      language: req.language,
+      t: req.t,
       user: req.user,
       activeNav: 'bookings',
       branding: theme,
@@ -221,108 +230,296 @@ function registerBookings(app, context) {
     }));
   }
 
-  app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
-    const q = String(req.query.q || '').trim();
-    const status = String(req.query.status || '').trim();
-    const ym = String(req.query.ym || '').trim();
+  app.get(
+    '/admin/bookings',
+    requireLogin,
+    requirePermission('bookings.view'),
+    async (req, res) => {
+      const translate = req.t
+        ? (key, options = {}) => req.t(key, options)
+        : (key, options = {}) => options.defaultValue || key;
 
-    const where = [];
-    const args = [];
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+      const ym = typeof req.query.ym === 'string' ? req.query.ym.trim() : '';
 
-    if (q) {
-      where.push(`(b.guest_name LIKE ? OR b.guest_email LIKE ? OR u.name LIKE ? OR p.name LIKE ? OR b.agency LIKE ?)`);
-      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      const exportFormatRaw =
+        typeof req.query.export === 'string' ? req.query.export.trim().toLowerCase() : '';
+      const isExport = exportFormatRaw === 'csv' || exportFormatRaw === 'xlsx';
+      const limit = isExport ? 2000 : 500;
+
+      const where = [];
+      const args = [];
+
+      if (q) {
+        const pattern = `%${q}%`;
+        where.push(
+          `(b.guest_name LIKE ? OR b.guest_email LIKE ? OR u.name LIKE ? OR p.name LIKE ? OR b.agency LIKE ?)`
+        );
+        args.push(pattern, pattern, pattern, pattern, pattern);
+      }
+
+      if (status) {
+        where.push(`b.status = ?`);
+        args.push(status);
+      }
+
+      let hasMonthFilter = false;
+      if (/^\d{4}-\d{2}$/.test(ym)) {
+        hasMonthFilter = true;
+        const startYM = `${ym}-01`;
+        const endYM = dayjs(startYM).endOf('month').add(1, 'day').format('YYYY-MM-DD');
+        where.push(`NOT (b.checkout <= ? OR b.checkin >= ?)`);
+        args.push(startYM, endYM);
+      }
+
+      const sql = `
+        SELECT b.*, u.name AS unit_name, p.name AS property_name
+          FROM bookings b
+          JOIN units u ON u.id = b.unit_id
+          JOIN properties p ON p.id = u.property_id
+        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          ORDER BY b.checkin DESC, b.created_at DESC
+          LIMIT ?
+      `;
+
+      let rows = [];
+      try {
+        rows = db.prepare(sql).all(...args, limit);
+      } catch (err) {
+        console.error('Erro ao carregar reservas:', err);
+        return res.status(500).send('Não foi possível carregar as reservas.');
+      }
+
+      if (isExport) {
+        try {
+          const exportRows = rows.map(buildBookingExportRow);
+          await sendBookingsExport(res, exportFormatRaw, exportRows);
+        } catch (err) {
+          console.error('Erro ao exportar reservas:', err);
+          res.status(500).send('Falha ao gerar exportação de reservas.');
+        }
+        return;
+      }
+
+      const filterParams = new URLSearchParams();
+      if (q) filterParams.set('q', q);
+      if (status) filterParams.set('status', status);
+      if (hasMonthFilter) filterParams.set('ym', ym);
+      const baseQuery = filterParams.toString();
+      const csvUrl = `/admin/bookings${baseQuery ? `?${baseQuery}&` : '?'}export=csv`;
+      const xlsxUrl = `/admin/bookings${baseQuery ? `?${baseQuery}&` : '?'}export=xlsx`;
+
+      const pageTitle = translate('backoffice.bookings.title', { defaultValue: 'Reservas' });
+      const exportGroupLabel = translate('backoffice.bookings.export.groupLabel', {
+        defaultValue: 'Exportar reservas'
+      });
+      const exportCsvLabel = translate('backoffice.bookings.export.csv', {
+        defaultValue: 'Exportar CSV'
+      });
+      const exportXlsxLabel = translate('backoffice.bookings.export.xlsx', {
+        defaultValue: 'Exportar XLSX'
+      });
+      const searchPlaceholder = translate('backoffice.bookings.filters.searchPlaceholder', {
+        defaultValue: 'Procurar por hóspede, email, unidade, propriedade'
+      });
+      const searchLabel = translate('backoffice.bookings.filters.searchLabel', {
+        defaultValue: 'Pesquisar reservas'
+      });
+      const filterFormLabel = translate('backoffice.bookings.filters.formLabel', {
+        defaultValue: 'Filtros de reservas'
+      });
+      const statusAnyLabel = translate('backoffice.bookings.filters.statusAny', {
+        defaultValue: 'Todos os estados'
+      });
+      const statusFilterLabel = translate('backoffice.bookings.filters.statusLabel', {
+        defaultValue: 'Filtrar por estado'
+      });
+      const monthFilterLabel = translate('backoffice.bookings.filters.monthLabel', {
+        defaultValue: 'Filtrar por mês'
+      });
+      const statusConfirmedLabel = translate('backoffice.bookings.status.confirmed', {
+        defaultValue: 'Confirmada'
+      });
+      const statusPendingLabel = translate('backoffice.bookings.status.pending', {
+        defaultValue: 'Pendente'
+      });
+      const cancelPrompt = translate('backoffice.bookings.actions.cancelConfirm', {
+        defaultValue: 'Cancelar esta reserva?'
+      });
+      const cancelLabel = translate('actions.cancel', { defaultValue: 'Cancelar' });
+      const editLabel = translate('actions.edit', { defaultValue: 'Editar' });
+      const viewLabel = translate('actions.view', { defaultValue: 'Ver' });
+      const emptyStateText = translate('table.empty', {
+        defaultValue: 'Sem registos para apresentar.'
+      });
+      const propertyUnitLabel = translate('backoffice.bookings.table.propertyUnit', {
+        defaultValue: 'Propriedade/Unidade'
+      });
+      const agencyLabel = translate('backoffice.bookings.table.agency', { defaultValue: 'Agência' });
+      const guestLabel = translate('backoffice.bookings.table.guest', { defaultValue: 'Hóspede' });
+      const occupancyLabel = translate('backoffice.bookings.table.occupancy', { defaultValue: 'Ocup.' });
+      const totalLabel = translate('backoffice.bookings.table.total', { defaultValue: 'Total' });
+      const statusColumnLabel = translate('labels.status', { defaultValue: 'Estado' });
+      const actionsColumnLabel = translate('table.actionsColumn', { defaultValue: 'Ações' });
+      const filterButtonLabel = translate('actions.filter', { defaultValue: 'Filtrar' });
+
+      const canEditBooking = userCan(req.user, 'bookings.edit');
+      const canCancelBooking = userCan(req.user, 'bookings.cancel');
+      const detailLabel = canEditBooking ? editLabel : viewLabel;
+
+      res.send(
+        layout({
+          title: pageTitle,
+          language: req.language,
+          t: req.t,
+          user: req.user,
+          activeNav: 'bookings',
+          branding: resolveBrandingForRequest(req),
+          pageClass: 'page-backoffice page-bookings',
+          body: html`
+            <div class="bo-page" data-bookings-root>
+              <h1 class="text-2xl font-semibold mb-4">${esc(pageTitle)}</h1>
+
+              <form
+                method="get"
+                class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4"
+                role="search"
+                aria-label="${esc(filterFormLabel)}"
+              >
+                <input
+                  class="input md:col-span-2"
+                  type="search"
+                  name="q"
+                  placeholder="${esc(searchPlaceholder)}"
+                  value="${esc(q)}"
+                  aria-label="${esc(searchLabel)}"
+                />
+                <select class="input" name="status" aria-label="${esc(statusFilterLabel)}">
+                  <option value="">${esc(statusAnyLabel)}</option>
+                  <option value="CONFIRMED" ${status === 'CONFIRMED' ? 'selected' : ''}>
+                    ${esc(statusConfirmedLabel)}
+                  </option>
+                  <option value="PENDING" ${status === 'PENDING' ? 'selected' : ''}>
+                    ${esc(statusPendingLabel)}
+                  </option>
+                </select>
+                <input
+                  class="input"
+                  type="month"
+                  name="ym"
+                  value="${/^\d{4}-\d{2}$/.test(ym) ? ym : ''}"
+                  aria-label="${esc(monthFilterLabel)}"
+                />
+                <button class="btn btn-primary" type="submit">${esc(filterButtonLabel)}</button>
+              </form>
+
+              <div class="flex flex-wrap justify-end gap-2 mb-4" role="group" aria-label="${esc(
+                exportGroupLabel
+              )}">
+                <a class="btn btn-light" href="${csvUrl}">
+                  ${renderIcon('file-down', { className: 'w-4 h-4' })}
+                  <span>${esc(exportCsvLabel)}</span>
+                </a>
+                <a class="btn btn-light" href="${xlsxUrl}">
+                  ${renderIcon('file-spreadsheet', { className: 'w-4 h-4' })}
+                  <span>${esc(exportXlsxLabel)}</span>
+                </a>
+              </div>
+
+              <div class="card p-0" data-table-container>
+                <div class="responsive-table">
+                  <table class="w-full text-sm" aria-label="${esc(pageTitle)}">
+                    <thead>
+                      <tr class="text-left text-slate-500">
+                        <th scope="col">Check-in</th>
+                        <th scope="col">Check-out</th>
+                        <th scope="col">${esc(propertyUnitLabel)}</th>
+                        <th scope="col">${esc(agencyLabel)}</th>
+                        <th scope="col">${esc(guestLabel)}</th>
+                        <th scope="col">${esc(occupancyLabel)}</th>
+                        <th scope="col">${esc(totalLabel)}</th>
+                        <th scope="col">${esc(statusColumnLabel)}</th>
+                        <th scope="col" class="text-right">${esc(actionsColumnLabel)}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${rows
+                        .map(b => {
+                          const statusLabel =
+                            b.status === 'CONFIRMED'
+                              ? statusConfirmedLabel
+                              : b.status === 'PENDING'
+                              ? statusPendingLabel
+                              : b.status || '';
+                          return `
+                            <tr>
+                              <td data-label="Check-in">
+                                <span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span>
+                              </td>
+                              <td data-label="Check-out">
+                                <span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span>
+                              </td>
+                              <td data-label="${esc(propertyUnitLabel)}">
+                                <span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span>
+                              </td>
+                              <td data-label="${esc(agencyLabel)}">
+                                <span class="table-cell-value">${esc(b.agency || '') || '—'}</span>
+                              </td>
+                              <td data-label="${esc(guestLabel)}">
+                                <span class="table-cell-value">
+                                  ${esc(b.guest_name)}
+                                  <span class="table-cell-muted">${esc(b.guest_email || '')}</span>
+                                </span>
+                              </td>
+                              <td data-label="${esc(occupancyLabel)}">
+                                <span class="table-cell-value">${b.adults}A+${b.children}C</span>
+                              </td>
+                              <td data-label="${esc(totalLabel)}">
+                                <span class="table-cell-value">€ ${eur(b.total_cents)}</span>
+                              </td>
+                              <td data-label="${esc(statusColumnLabel)}">
+                                <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${
+                                  b.status === 'CONFIRMED'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : b.status === 'PENDING'
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-slate-200 text-slate-700'
+                                }">
+                                  ${esc(statusLabel)}
+                                </span>
+                              </td>
+                              <td data-label="${esc(actionsColumnLabel)}">
+                                <div class="table-cell-actions">
+                                  <a class="underline" href="/admin/bookings/${b.id}">${esc(detailLabel)}</a>
+                                  ${
+                                    canCancelBooking
+                                      ? `
+                                          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm(&quot;${esc(
+                                            cancelPrompt
+                                          )}&quot;);">
+                                            <button class="text-rose-600" type="submit">${esc(cancelLabel)}</button>
+                                          </form>
+                                        `
+                                      : ''
+                                  }
+                                </div>
+                              </td>
+                            </tr>
+                          `;
+                        })
+                        .join('')}
+                    </tbody>
+                  </table>
+                </div>
+                ${rows.length === 0 ? `<div class="p-4 text-slate-500">${esc(emptyStateText)}</div>` : ''}
+              </div>
+            </div>
+          `
+        })
+      );
     }
-    if (status) {
-      where.push(`b.status = ?`);
-      args.push(status);
-    }
-    if (/^\d{4}-\d{2}$/.test(ym)) {
-      const startYM = `${ym}-01`;
-      const endYM = dayjs(startYM).endOf('month').add(1, 'day').format('YYYY-MM-DD');
-      where.push(`NOT (b.checkout <= ? OR b.checkin >= ?)`);
-      args.push(startYM, endYM);
-    }
-
-    const sql = `
-      SELECT b.*, u.name AS unit_name, p.name AS property_name
-        FROM bookings b
-        JOIN units u ON u.id = b.unit_id
-        JOIN properties p ON p.id = u.property_id
-      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-        ORDER BY b.checkin DESC, b.created_at DESC
-        LIMIT 500
-    `;
-    const rows = db.prepare(sql).all(...args);
-
-    const canEditBooking = userCan(req.user, 'bookings.edit');
-    const canCancelBooking = userCan(req.user, 'bookings.cancel');
-
-    res.send(layout({
-      title: 'Reservas',
-      user: req.user,
-      activeNav: 'bookings',
-      branding: resolveBrandingForRequest(req),
-      pageClass: 'page-backoffice page-bookings',
-      body: html`
-        <div class="bo-page">
-          <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
-
-          <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-          <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
-          <select class="input" name="status">
-            <option value="">Todos os estados</option>
-            <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-            <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
-          </select>
-          <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
-          <button class="btn btn-primary">Filtrar</button>
-        </form>
-
-        <div class="card p-0">
-          <div class="responsive-table">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map(b => `
-                  <tr>
-                    <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
-                    <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
-                    <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
-                    <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                    <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                    <td data-label="Status">
-                      <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
-                        ${b.status}
-                      </span>
-                    </td>
-                    <td data-label="Ações">
-                      <div class="table-cell-actions">
-                        <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
-                        ${canCancelBooking ? `
-                          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-                            <button class="text-rose-600">Cancelar</button>
-                          </form>
-                        ` : ''}
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
-        </div>
-      </div>
-    `
-    }));
-  });
+  );
 
   app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'), (req, res) => {
     const b = db.prepare(`

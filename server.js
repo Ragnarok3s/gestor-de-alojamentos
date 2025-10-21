@@ -155,6 +155,64 @@ const services = initServices({
 
 const { context, db, tenantService, guestPortalService, requireScope, buildUserContext } = services;
 
+const { i18n } = context;
+
+app.use((req, res, next) => {
+  const queryLanguage = req.query && req.query.lang;
+  const cookieLanguage = req.cookies && req.cookies.lang;
+  let resolved = i18n.normalizeLanguage(queryLanguage) || i18n.normalizeLanguage(cookieLanguage);
+
+  if (!resolved && typeof req.acceptsLanguages === 'function') {
+    const accepted = req.acceptsLanguages() || [];
+    for (const candidate of accepted) {
+      const normalized = i18n.normalizeLanguage(candidate);
+      if (normalized) {
+        resolved = normalized;
+        break;
+      }
+    }
+  }
+
+  if (!resolved) {
+    resolved = 'pt';
+  }
+
+  if (queryLanguage) {
+    const cookieOptions = { maxAge: 31536000000, sameSite: 'lax', path: '/' };
+    if (secureCookies) {
+      cookieOptions.secure = true;
+    }
+    res.cookie('lang', resolved, cookieOptions);
+  }
+
+  const translate = (key, options = {}) =>
+    i18n.translate(key, {
+      language: resolved,
+      fallbackLanguage: 'en',
+      ...options
+    });
+
+  req.language = resolved;
+  res.locals.language = resolved;
+  req.t = translate;
+  res.locals.t = translate;
+  res.locals.translations = i18n.getTranslations(resolved);
+
+  next();
+});
+
+app.post('/set-language', (req, res) => {
+  const body = req.body || {};
+  const selected = body.selected || body.language || body.lang;
+  const resolved = i18n.normalizeLanguage(selected) || 'pt';
+  const cookieOptions = { maxAge: 31536000000, sameSite: 'lax', path: '/' };
+  if (secureCookies) {
+    cookieOptions.secure = true;
+  }
+  res.cookie('lang', resolved, cookieOptions);
+  res.json({ success: true, language: resolved });
+});
+
 // Resolver tenant e aplicar middleware multi-tenant por pedido.
 const { resolveTenantDomain, resolveTenantForRequest, tenantMiddleware } = createTenantResolver({
   tenantService

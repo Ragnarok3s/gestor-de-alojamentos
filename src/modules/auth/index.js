@@ -4,6 +4,7 @@ const { hashRecoveryCode } = require('../../services/twoFactor');
 module.exports = function registerAuthRoutes(app, context) {
   const {
     layout,
+    renderIcon,
     html,
     esc,
     db,
@@ -73,7 +74,7 @@ module.exports = function registerAuthRoutes(app, context) {
   function computeDefaultRedirect(userContext) {
     if (!userContext) return '/';
     if (userHasBackofficeAccess(userContext) && userCan(userContext, 'dashboard.view')) {
-      return '/admin';
+      return '/admin/dashboard';
     }
     if (userCan(userContext, 'bookings.view')) return '/admin/bookings';
     if (userCan(userContext, 'housekeeping.view')) return '/limpeza/tarefas';
@@ -101,6 +102,231 @@ module.exports = function registerAuthRoutes(app, context) {
 
   function getTwoFactorToken(req) {
     return req && req.cookies ? req.cookies[TWO_FA_COOKIE] : null;
+  }
+
+  function renderBrandingSymbol(branding) {
+    const theme = branding || {};
+    const hasLogo = typeof theme.logoPath === 'string' && theme.logoPath.trim().length > 0;
+    if (hasLogo) {
+      const altText = theme.logoAlt ? theme.logoAlt : theme.brandName || 'Logótipo';
+      return html`<img src="${esc(theme.logoPath)}" alt="${esc(altText)}" class="h-14 w-auto" />`;
+    }
+    const sourceName = typeof theme.brandName === 'string' && theme.brandName.trim().length
+      ? theme.brandName.trim()
+      : 'Gestor de Alojamentos';
+    const defaultInitials = sourceName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join('') || 'GA';
+    const initials = typeof theme.brandInitials === 'string' && theme.brandInitials.trim().length
+      ? theme.brandInitials.trim()
+      : defaultInitials;
+    return html`<span class="inline-flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 text-lg font-semibold text-white shadow-sm">${esc(initials)}</span>`;
+  }
+
+  function renderLoginPage(req, res, { errorMessage = '', noticeMessage = '', nextValue = '', status = 200 } = {}) {
+    const branding = resolveBrandingForRequest(req) || {};
+    const brandName = typeof branding.brandName === 'string' && branding.brandName.trim().length
+      ? branding.brandName.trim()
+      : 'Gestor de Alojamentos';
+    const helperText = typeof branding.loginTagline === 'string' && branding.loginTagline.trim().length
+      ? branding.loginTagline.trim()
+      : 'Aceda ao painel de gestão para acompanhar reservas, equipas e operações.';
+    const safeNextValue = safeNextRedirect(nextValue) || '';
+    const csrfToken = csrfProtection.ensureToken(req, res);
+    ensureNoIndexHeader(res);
+    res.status(status).send(
+      layout({
+        title: 'Iniciar sessão',
+        language: req.language,
+        t: req.t,
+        branding,
+        pageClass: 'auth-page',
+        body: html`
+    <section class="auth-container py-16">
+      <div class="max-w-xl mx-auto card p-8 shadow-lg">
+        <div class="mb-6 text-center space-y-3">
+          <div class="flex justify-center">${renderBrandingSymbol(branding)}</div>
+          <p class="uppercase tracking-widest text-xs font-semibold text-slate-500">Área reservada</p>
+          <h1 class="text-2xl font-semibold text-slate-900">Bem-vindo(a) ao ${esc(brandName)}</h1>
+          <p class="text-sm text-slate-600 max-w-md mx-auto">${esc(helperText)}</p>
+        </div>
+        ${noticeMessage
+          ? html`<div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">${esc(noticeMessage)}</div>`
+          : ''}
+        ${errorMessage
+          ? html`<div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+          : ''}
+        <form method="post" action="/login" class="grid gap-5 text-left">
+          <input type="hidden" name="_csrf" value="${csrfToken}" />
+          ${safeNextValue ? html`<input type="hidden" name="next" value="${esc(safeNextValue)}" />` : ''}
+          <div class="grid gap-2">
+            <label for="login-username" class="text-sm font-medium text-slate-700">Nome de utilizador</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('user', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="login-username"
+                name="username"
+                class="input pl-10"
+                placeholder="Introduza o nome de utilizador"
+                autocomplete="username"
+                required
+              />
+            </div>
+          </div>
+          <div class="grid gap-2">
+            <label for="login-password" class="text-sm font-medium text-slate-700">Password</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('lock', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="login-password"
+                name="password"
+                type="password"
+                class="input pl-10"
+                placeholder="Introduza a sua password"
+                autocomplete="current-password"
+                required
+              />
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary w-full py-3 text-base font-semibold flex items-center justify-center gap-2">
+            ${renderIcon('log-in', { className: 'text-white' })}
+            <span>Entrar</span>
+          </button>
+        </form>
+        <p class="mt-6 text-sm text-center text-slate-600">
+          <a class="text-sky-600 hover:underline" href="/login/reset">Esqueci-me da password</a>
+        </p>
+      </div>
+    </section>
+        `
+      })
+    );
+  }
+
+  function getTwoFactorContext(req, res) {
+    if (!twoFactorService || typeof twoFactorService.describeChallenge !== 'function') {
+      res.redirect('/login');
+      return null;
+    }
+    const challengeToken = getTwoFactorToken(req);
+    if (!challengeToken) {
+      res.redirect('/login');
+      return null;
+    }
+    const challenge = twoFactorService.describeChallenge(challengeToken);
+    if (!challenge) {
+      clearTwoFactorCookie(res);
+      res.redirect('/login?error=O código expirou. Faça login novamente.');
+      return null;
+    }
+    if (challenge.expires_at && dayjs && !dayjs().isBefore(dayjs(challenge.expires_at))) {
+      twoFactorService.revokeChallenge(challengeToken);
+      clearTwoFactorCookie(res);
+      res.redirect('/login?error=O código expirou. Faça login novamente.');
+      return null;
+    }
+    const metadata = challenge.metadata || {};
+    const tenantId = metadata.tenant_id
+      ? Number(metadata.tenant_id) || 1
+      : req.tenant && req.tenant.id
+      ? Number(req.tenant.id) || 1
+      : 1;
+    const user = selectUserByIdStmt.get(challenge.user_id, tenantId);
+    if (!user) {
+      twoFactorService.revokeChallenge(challengeToken);
+      clearTwoFactorCookie(res);
+      res.redirect('/login?error=Conta não encontrada.');
+      return null;
+    }
+    const maskedEmail = metadata.masked_email || maskEmail(metadata.email || user.email);
+    return { challengeToken, challenge, metadata, tenantId, user, maskedEmail };
+  }
+
+  function renderTwoFactorPage(
+    req,
+    res,
+    { context = null, errorMessage = '', resentNotice = false, status = 200 } = {}
+  ) {
+    const viewContext = context || getTwoFactorContext(req, res);
+    if (!viewContext) {
+      return;
+    }
+    const branding = resolveBrandingForRequest(req) || {};
+    const brandName = typeof branding.brandName === 'string' && branding.brandName.trim().length
+      ? branding.brandName.trim()
+      : 'Gestor de Alojamentos';
+    const csrfToken = csrfProtection.ensureToken(req, res);
+    ensureNoIndexHeader(res);
+    res.status(status).send(
+      layout({
+        title: 'Confirmar código',
+        language: req.language,
+        t: req.t,
+        branding,
+        pageClass: 'auth-page',
+        body: html`
+    <section class="auth-container py-16">
+      <div class="max-w-xl mx-auto card p-8 shadow-lg">
+        <div class="text-center space-y-3">
+          <div class="flex justify-center">${renderBrandingSymbol(branding)}</div>
+          <p class="uppercase tracking-widest text-xs font-semibold text-slate-500">Verificação 2FA</p>
+          <h1 class="text-2xl font-semibold text-slate-900">Confirme a sua identidade</h1>
+          <p class="text-sm text-slate-600 max-w-md mx-auto">Introduza o código que enviámos para <strong>${esc(
+            viewContext.maskedEmail || viewContext.metadata.email || viewContext.user.email || ''
+          )}</strong> para concluir o login em ${esc(brandName)}.</p>
+        </div>
+        ${resentNotice
+          ? html`<div class="mt-6 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">Novo código enviado para o seu email.</div>`
+          : ''}
+        ${errorMessage
+          ? html`<div class="mt-6 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+          : ''}
+        <form method="post" action="/login/2fa" class="mt-6 grid gap-4">
+          <input type="hidden" name="_csrf" value="${csrfToken}" />
+          <div class="grid gap-2 text-left">
+            <label for="login-2fa-code" class="text-sm font-medium text-slate-700">Código de verificação</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('key-round', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="login-2fa-code"
+                name="code"
+                class="input pl-10 tracking-widest uppercase"
+                placeholder="Introduza o código de 6 dígitos"
+                autocomplete="one-time-code"
+                required
+                autofocus
+              />
+            </div>
+          </div>
+          <button class="btn btn-primary w-full py-3 text-base font-semibold flex items-center justify-center gap-2" type="submit">
+            ${renderIcon('unlock', { className: 'text-white' })}
+            <span>Confirmar código</span>
+          </button>
+        </form>
+        <div class="mt-6 grid gap-2">
+          <form method="post" action="/login/2fa/resend">
+            <input type="hidden" name="_csrf" value="${csrfToken}" />
+            <button class="btn btn-light w-full" type="submit">Reenviar código</button>
+          </form>
+          <form method="post" action="/login/2fa/cancel">
+            <input type="hidden" name="_csrf" value="${csrfToken}" />
+            <button class="btn btn-light w-full" type="submit">Cancelar e voltar ao login</button>
+          </form>
+        </div>
+      </div>
+    </section>
+        `
+      })
+    );
   }
 
   const selectUserByIdStmt = db.prepare(
@@ -228,38 +454,14 @@ module.exports = function registerAuthRoutes(app, context) {
   }
 
   app.get('/login', (req, res) => {
-    const errorMessage = req.query && req.query.error ? esc(req.query.error) : '';
-    const csrfToken = csrfProtection.ensureToken(req, res);
-    const { error, next: nxt, notice } = req.query;
-    const safeError = error ? esc(error) : '';
-    const safeNotice = notice ? esc(notice) : '';
-    const safeNext = nxt && isSafeRedirectTarget(nxt) ? esc(nxt) : '';
-
-    ensureNoIndexHeader(res);
-
-    res.send(
-      layout({
-        title: 'Login',
-        branding: resolveBrandingForRequest(req),
-        body: html`
-    <div class="max-w-md mx-auto card p-6">
-      <h1 class="text-xl font-semibold mb-4">Login Backoffice</h1>
-      ${safeError ? `<div class="mb-3 text-sm text-rose-600">${safeError}</div>` : ''}
-      ${safeNotice ? `<div class="mb-3 text-sm text-emerald-600">${safeNotice}</div>` : ''}
-      <form method="post" action="/login" class="grid gap-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        ${safeNext ? `<input type="hidden" name="next" value="${safeNext}"/>` : ''}
-        <input name="username" class="input" placeholder="Utilizador" required />
-        <input name="password" type="password" class="input" placeholder="Palavra-passe" required />
-        <button class="btn btn-primary">Entrar</button>
-      </form>
-      <p class="mt-3 text-sm text-center text-slate-600">
-        <a class="text-sky-600 hover:underline" href="/login/reset">Esqueci-me da password!</a>
-      </p>
-    </div>
-        `
-      })
-    );
+    const query = req.query || {};
+    const noticeMessage = typeof query.notice === 'string' ? query.notice : '';
+    const errorMessage = typeof query.error === 'string' ? query.error : '';
+    renderLoginPage(req, res, {
+      noticeMessage,
+      errorMessage,
+      nextValue: typeof query.next === 'string' ? query.next : ''
+    });
   });
 
   app.post('/login', async (req, res) => {
@@ -275,7 +477,11 @@ module.exports = function registerAuthRoutes(app, context) {
     if (!user || !bcrypt.compareSync(String(password), user.password_hash)) {
       csrfProtection.rotateToken(req, res);
       clearTwoFactorCookie(res);
-      return res.redirect('/login?error=Credenciais inválidas');
+      return renderLoginPage(req, res, {
+        errorMessage: 'Não foi possível iniciar sessão. Verifique as credenciais e tente novamente.',
+        nextValue: nxt,
+        status: 401
+      });
     }
 
     const normalizedRole = normalizeRole(user.role);
@@ -300,7 +506,11 @@ module.exports = function registerAuthRoutes(app, context) {
         console.warn('Falha ao enviar código 2FA por email:', err.message);
         csrfProtection.rotateToken(req, res);
         clearTwoFactorCookie(res);
-        return res.redirect('/login?error=Não foi possível enviar o código 2FA. Contacte o administrador.');
+        return renderLoginPage(req, res, {
+          errorMessage: 'Não foi possível enviar o código 2FA. Contacte o administrador.',
+          nextValue: nxt,
+          status: 503
+        });
       }
     }
 
@@ -319,65 +529,16 @@ module.exports = function registerAuthRoutes(app, context) {
   });
 
   app.get('/login/2fa', (req, res) => {
-    if (!twoFactorService || typeof twoFactorService.describeChallenge !== 'function') {
-      return res.redirect('/login');
+    const context = getTwoFactorContext(req, res);
+    if (!context) {
+      return;
     }
-    const challengeToken = getTwoFactorToken(req);
-    if (!challengeToken) {
-      return res.redirect('/login');
-    }
-    const challenge = twoFactorService.describeChallenge(challengeToken);
-    if (!challenge) {
-      clearTwoFactorCookie(res);
-      return res.redirect('/login?error=O código expirou. Faça login novamente.');
-    }
-    if (challenge.expires_at && dayjs && !dayjs().isBefore(dayjs(challenge.expires_at))) {
-      twoFactorService.revokeChallenge(challengeToken);
-      clearTwoFactorCookie(res);
-      return res.redirect('/login?error=O código expirou. Faça login novamente.');
-    }
-    const metadata = challenge.metadata || {};
-    const tenantId = metadata.tenant_id ? Number(metadata.tenant_id) || 1 : req.tenant && req.tenant.id ? Number(req.tenant.id) || 1 : 1;
-    const user = selectUserByIdStmt.get(challenge.user_id, tenantId);
-    if (!user) {
-      twoFactorService.revokeChallenge(challengeToken);
-      clearTwoFactorCookie(res);
-      return res.redirect('/login?error=Conta não encontrada.');
-    }
-    const maskedEmail = metadata.masked_email || maskEmail(metadata.email || user.email);
-    const csrfToken = csrfProtection.ensureToken(req, res);
-    const errorMessage = req.query && req.query.error ? esc(req.query.error) : '';
-    const resentNotice = req.query && req.query.resent === '1';
-    ensureNoIndexHeader(res);
-    res.send(
-      layout({
-        title: 'Confirmar código',
-        branding: resolveBrandingForRequest(req),
-        body: html`
-    <div class="max-w-md mx-auto card p-6">
-      <h1 class="text-xl font-semibold mb-2">Confirmar código</h1>
-      <p class="text-sm text-slate-600">Enviámos um código de verificação para <strong>${esc(maskedEmail || metadata.email || user.email || '')}</strong>.</p>
-      ${resentNotice
-        ? '<div class="mt-3 rounded border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">Novo código enviado para o seu email.</div>'
-        : ''}
-      ${errorMessage ? `<div class="mt-3 rounded border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">${errorMessage}</div>` : ''}
-      <form method="post" action="/login/2fa" class="mt-4 grid gap-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        <input name="code" class="input" placeholder="Código de 6 dígitos" required autofocus />
-        <button class="btn btn-primary">Confirmar</button>
-      </form>
-      <form method="post" action="/login/2fa/resend" class="mt-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        <button class="btn btn-light w-full" type="submit">Reenviar código</button>
-      </form>
-      <form method="post" action="/login/2fa/cancel" class="mt-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        <button class="btn btn-light w-full" type="submit">Cancelar</button>
-      </form>
-    </div>
-        `
-      })
-    );
+    const query = req.query || {};
+    renderTwoFactorPage(req, res, {
+      context,
+      resentNotice: query.resent === '1',
+      errorMessage: typeof query.error === 'string' ? query.error : ''
+    });
   });
 
   app.post('/login/2fa', (req, res) => {
@@ -393,9 +554,18 @@ module.exports = function registerAuthRoutes(app, context) {
     if (!challengeToken) {
       return res.redirect('/login');
     }
+    const context = getTwoFactorContext(req, res);
+    if (!context) {
+      return;
+    }
     const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
     if (!code) {
-      return res.redirect('/login/2fa?error=Introduza o código recebido por email.');
+      csrfProtection.rotateToken(req, res);
+      return renderTwoFactorPage(req, res, {
+        context,
+        errorMessage: 'Introduza o código recebido por email.',
+        status: 400
+      });
     }
     const result = twoFactorService.verifyChallenge(challengeToken, code, { window: 2 });
     if (!result.ok) {
@@ -404,7 +574,12 @@ module.exports = function registerAuthRoutes(app, context) {
         clearTwoFactorCookie(res);
         return res.redirect('/login?error=O código expirou. Faça login novamente.');
       }
-      return res.redirect('/login/2fa?error=Código inválido. Tente novamente.');
+      csrfProtection.rotateToken(req, res);
+      return renderTwoFactorPage(req, res, {
+        context,
+        errorMessage: 'Código inválido. Confirme os dígitos e tente novamente.',
+        status: 400
+      });
     }
     const metadata = result.metadata || {};
     const tenantId = metadata.tenant_id ? Number(metadata.tenant_id) || 1 : req.tenant && req.tenant.id ? Number(req.tenant.id) || 1 : 1;
@@ -494,26 +669,58 @@ module.exports = function registerAuthRoutes(app, context) {
 
   app.get('/login/reset', (req, res) => {
     const csrfToken = csrfProtection.ensureToken(req, res);
-    const errorMessage = req.query && req.query.error ? esc(req.query.error) : '';
-    const sent = req.query && req.query.sent === '1';
+    const query = req.query || {};
+    const errorMessage = typeof query.error === 'string' ? query.error : '';
+    const sent = query.sent === '1';
+    const branding = resolveBrandingForRequest(req) || {};
     ensureNoIndexHeader(res);
     res.send(
       layout({
         title: 'Recuperar password',
-        branding: resolveBrandingForRequest(req),
+        language: req.language,
+        t: req.t,
+        branding,
+        pageClass: 'auth-page',
         body: html`
-    <div class="max-w-md mx-auto card p-6">
-      <h1 class="text-xl font-semibold mb-2">Recuperar password</h1>
-      <p class="text-sm text-slate-600">Introduza o email associado à sua conta para receber instruções de redefinição.</p>
-      ${sent ? '<div class="mt-3 rounded border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">Se existir uma conta com esse email enviámos um link de recuperação.</div>' : ''}
-      ${errorMessage ? `<div class="mt-3 rounded border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">${errorMessage}</div>` : ''}
-      <form method="post" action="/login/reset" class="mt-4 grid gap-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        <input type="email" name="email" class="input" placeholder="Email" required autofocus />
-        <button class="btn btn-primary">Enviar instruções</button>
-      </form>
-      <p class="mt-3 text-sm text-center text-slate-600"><a class="text-sky-600 hover:underline" href="/login">Voltar ao login</a></p>
-    </div>
+    <section class="auth-container py-16">
+      <div class="max-w-xl mx-auto card p-8 shadow-lg">
+        <div class="text-center space-y-3">
+          <div class="flex justify-center">${renderBrandingSymbol(branding)}</div>
+          <p class="uppercase tracking-widest text-xs font-semibold text-slate-500">Passo 1 de 2</p>
+          <h1 class="text-2xl font-semibold text-slate-900">Pedir recuperação de password</h1>
+          <p class="text-sm text-slate-600 max-w-md mx-auto">Introduza o email associado à sua conta e selecione "Enviar link de recuperação" para receber instruções seguras no seu email.</p>
+        </div>
+        ${sent
+          ? html`<div class="mt-6 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">Se existir uma conta com esse email, enviámos um link de recuperação. Verifique a caixa de entrada ou a pasta de spam.</div>`
+          : ''}
+        ${errorMessage
+          ? html`<div class="mt-6 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+          : ''}
+        <form method="post" action="/login/reset" class="mt-6 grid gap-4 text-left">
+          <input type="hidden" name="_csrf" value="${csrfToken}" />
+          <div class="grid gap-2">
+            <label for="reset-email" class="text-sm font-medium text-slate-700">Email da conta</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('mail', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="reset-email"
+                type="email"
+                name="email"
+                class="input pl-10"
+                placeholder="Introduza o email associado à conta"
+                autocomplete="email"
+                required
+                autofocus
+              />
+            </div>
+          </div>
+          <button class="btn btn-primary w-full py-3 text-base font-semibold" type="submit">Enviar link de recuperação</button>
+        </form>
+        <p class="mt-6 text-sm text-center text-slate-600"><a class="text-sky-600 hover:underline" href="/login">Voltar ao login</a></p>
+      </div>
+    </section>
         `
       })
     );
@@ -569,26 +776,72 @@ module.exports = function registerAuthRoutes(app, context) {
       deleteResetTokenStmt.run(tokenHash);
       return res.redirect('/login/reset?error=Ligação inválida ou expirada.');
     }
-    const errorMessage = req.query && req.query.error ? esc(req.query.error) : '';
+    const query = req.query || {};
+    const errorMessage = typeof query.error === 'string' ? query.error : '';
     const csrfToken = csrfProtection.ensureToken(req, res);
+    const branding = resolveBrandingForRequest(req) || {};
     ensureNoIndexHeader(res);
     res.send(
       layout({
         title: 'Definir nova password',
-        branding: resolveBrandingForRequest(req),
+        language: req.language,
+        t: req.t,
+        branding,
+        pageClass: 'auth-page',
         body: html`
-    <div class="max-w-md mx-auto card p-6">
-      <h1 class="text-xl font-semibold mb-2">Definir nova password</h1>
-      <p class="text-sm text-slate-600">Introduza a nova password para concluir a recuperação.</p>
-      ${errorMessage ? `<div class="mt-3 rounded border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">${errorMessage}</div>` : ''}
-      <form method="post" action="/login/reset/confirm" class="mt-4 grid gap-3">
-        <input type="hidden" name="_csrf" value="${csrfToken}" />
-        <input type="hidden" name="token" value="${esc(token)}" />
-        <input type="password" name="password" class="input" placeholder="Nova password (min 8)" required autofocus />
-        <input type="password" name="confirm" class="input" placeholder="Confirmar password" required />
-        <button class="btn btn-primary">Guardar password</button>
-      </form>
-    </div>
+    <section class="auth-container py-16">
+      <div class="max-w-xl mx-auto card p-8 shadow-lg">
+        <div class="text-center space-y-3">
+          <div class="flex justify-center">${renderBrandingSymbol(branding)}</div>
+          <p class="uppercase tracking-widest text-xs font-semibold text-slate-500">Passo 2 de 2</p>
+          <h1 class="text-2xl font-semibold text-slate-900">Definir nova password</h1>
+          <p class="text-sm text-slate-600 max-w-md mx-auto">Crie uma nova password com pelo menos 8 caracteres para voltar a aceder à plataforma em segurança.</p>
+        </div>
+        ${errorMessage
+          ? html`<div class="mt-6 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">${esc(errorMessage)}</div>`
+          : ''}
+        <form method="post" action="/login/reset/confirm" class="mt-6 grid gap-4 text-left">
+          <input type="hidden" name="_csrf" value="${csrfToken}" />
+          <input type="hidden" name="token" value="${esc(token)}" />
+          <div class="grid gap-2">
+            <label for="reset-password" class="text-sm font-medium text-slate-700">Nova password</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('lock', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="reset-password"
+                type="password"
+                name="password"
+                class="input pl-10"
+                placeholder="Mínimo 8 caracteres"
+                autocomplete="new-password"
+                required
+                autofocus
+              />
+            </div>
+          </div>
+          <div class="grid gap-2">
+            <label for="reset-confirm" class="text-sm font-medium text-slate-700">Confirmar password</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                ${renderIcon('check', { className: 'text-slate-400' })}
+              </span>
+              <input
+                id="reset-confirm"
+                type="password"
+                name="confirm"
+                class="input pl-10"
+                placeholder="Repita a nova password"
+                autocomplete="new-password"
+                required
+              />
+            </div>
+          </div>
+          <button class="btn btn-primary w-full py-3 text-base font-semibold" type="submit">Guardar nova password</button>
+        </form>
+      </div>
+    </section>
         `
       })
     );
@@ -634,7 +887,7 @@ module.exports = function registerAuthRoutes(app, context) {
     logActivity(user.id, 'auth:password_reset_confirm', 'user', user.id, {});
     csrfProtection.rotateToken(req, res);
     clearTwoFactorCookie(res);
-    res.redirect('/login?notice=Password atualizada. Pode iniciar sessão.');
+    res.redirect('/login?notice=Password atualizada com sucesso. Inicie sessão com a nova password.');
   });
 
   app.post('/logout', (req, res) => {

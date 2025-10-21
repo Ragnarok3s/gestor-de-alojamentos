@@ -138,7 +138,7 @@
               index +
               '"><span class="feature-builder__icon" aria-hidden="true"><i data-lucide="' +
               entry.icon +
-              '"></i></span><span>' +
+              '" class="app-icon"></i></span><span>' +
               labelHtml +
               '</span><button type="button" class="feature-builder__remove" data-feature-remove aria-label="Remover ' +
               escapeHtml(ariaLabel) +
@@ -162,10 +162,10 @@
       }
       if (pickerPreview) {
         if (safeIcon) {
-          pickerPreview.innerHTML = '<i data-lucide="' + safeIcon + '"></i>';
+          pickerPreview.innerHTML = '<i data-lucide="' + safeIcon + '" class="app-icon"></i>';
           pickerPreview.classList.remove("is-empty");
         } else {
-          pickerPreview.innerHTML = '<i data-lucide="plus"></i>';
+          pickerPreview.innerHTML = '<i data-lucide="plus" class="app-icon"></i>';
           pickerPreview.classList.add("is-empty");
         }
         ensureIcons(pickerPreview);
