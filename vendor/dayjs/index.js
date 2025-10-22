@@ -61,6 +61,7 @@ const monthNameLookup = {
 
 const locales = { ...BASE_LOCALES };
 let defaultLocale = 'en';
+let customParseTwoDigitYear = null;
 
 function cloneDate(date) {
   return new Date(date.getTime());
@@ -114,6 +115,309 @@ function normalizeUnit(unit) {
   }
 }
 
+function parseTwoDigitYearValue(value) {
+  if (typeof customParseTwoDigitYear === 'function') {
+    const overrideResult = customParseTwoDigitYear(String(value));
+    const numeric = Number(overrideResult);
+    return Number.isFinite(numeric) ? numeric : NaN;
+  }
+
+  const year = Number(value);
+  if (!Number.isFinite(year)) return NaN;
+  return year + (year > 68 ? 1900 : 2000);
+}
+
+function escapeRegexLiteral(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyMilliseconds(ctx, raw) {
+  const str = String(raw);
+  if (!/^[0-9]+$/.test(str)) {
+    ctx.invalid = true;
+    return;
+  }
+  const padded = str.padEnd(3, '0').slice(0, 3);
+  ctx.millisecond = Number(padded);
+}
+
+function lookupMonthIndexFromLocale(name, locale) {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(monthNameLookup, lower)) {
+    return monthNameLookup[lower];
+  }
+
+  const months = (locale && Array.isArray(locale.months) ? locale.months : BASE_LOCALES.en.months) || [];
+  let index = months.findIndex(entry => entry && entry.toLowerCase() === lower);
+  if (index >= 0) return index;
+
+  const monthsShort = (locale && Array.isArray(locale.monthsShort) ? locale.monthsShort : BASE_LOCALES.en.monthsShort) || [];
+  index = monthsShort.findIndex(entry => entry && entry.toLowerCase() === lower);
+  if (index >= 0) return index;
+
+  return null;
+}
+
+const GENERIC_TOKEN_HANDLERS = {
+  YYYY: {
+    pattern: '\\d{4}',
+    apply: (ctx, value) => {
+      const year = Number(value);
+      if (!Number.isFinite(year)) {
+        ctx.invalid = true;
+      } else {
+        ctx.year = year;
+      }
+    }
+  },
+  YY: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const year = parseTwoDigitYearValue(value);
+      if (!Number.isFinite(year)) {
+        ctx.invalid = true;
+      } else {
+        ctx.year = year;
+      }
+    }
+  },
+  MMMM: {
+    pattern: '[^\\d\\s]+',
+    apply: (ctx, value, locale) => {
+      const index = lookupMonthIndexFromLocale(value, locale);
+      if (index === null) {
+        ctx.invalid = true;
+      } else {
+        ctx.month = index;
+      }
+    }
+  },
+  MMM: {
+    pattern: '[^\\d\\s]+',
+    apply: (ctx, value, locale) => {
+      const index = lookupMonthIndexFromLocale(value, locale);
+      if (index === null) {
+        ctx.invalid = true;
+      } else {
+        ctx.month = index;
+      }
+    }
+  },
+  MM: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const month = Number(value) - 1;
+      if (!Number.isFinite(month)) {
+        ctx.invalid = true;
+      } else {
+        ctx.month = month;
+      }
+    }
+  },
+  M: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const month = Number(value) - 1;
+      if (!Number.isFinite(month)) {
+        ctx.invalid = true;
+      } else {
+        ctx.month = month;
+      }
+    }
+  },
+  DD: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const day = Number(value);
+      if (!Number.isFinite(day)) {
+        ctx.invalid = true;
+      } else {
+        ctx.day = day;
+      }
+    }
+  },
+  D: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const day = Number(value);
+      if (!Number.isFinite(day)) {
+        ctx.invalid = true;
+      } else {
+        ctx.day = day;
+      }
+    }
+  },
+  Do: {
+    pattern: '\\d{1,2}(?:º|ª|st|nd|rd|th)?',
+    apply: (ctx, value) => {
+      const match = value.match(/\\d+/);
+      const day = match ? Number(match[0]) : NaN;
+      if (!Number.isFinite(day)) {
+        ctx.invalid = true;
+      } else {
+        ctx.day = day;
+      }
+    }
+  },
+  HH: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const hour = Number(value);
+      if (!Number.isFinite(hour)) {
+        ctx.invalid = true;
+      } else {
+        ctx.hour = hour;
+      }
+    }
+  },
+  H: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const hour = Number(value);
+      if (!Number.isFinite(hour)) {
+        ctx.invalid = true;
+      } else {
+        ctx.hour = hour;
+      }
+    }
+  },
+  hh: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const hour = Number(value);
+      if (!Number.isFinite(hour)) {
+        ctx.invalid = true;
+      } else {
+        ctx.hour = hour % 12;
+        ctx.is12Hour = true;
+      }
+    }
+  },
+  h: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const hour = Number(value);
+      if (!Number.isFinite(hour)) {
+        ctx.invalid = true;
+      } else {
+        ctx.hour = hour % 12;
+        ctx.is12Hour = true;
+      }
+    }
+  },
+  mm: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const minute = Number(value);
+      if (!Number.isFinite(minute)) {
+        ctx.invalid = true;
+      } else {
+        ctx.minute = minute;
+      }
+    }
+  },
+  m: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const minute = Number(value);
+      if (!Number.isFinite(minute)) {
+        ctx.invalid = true;
+      } else {
+        ctx.minute = minute;
+      }
+    }
+  },
+  ss: {
+    pattern: '\\d{2}',
+    apply: (ctx, value) => {
+      const second = Number(value);
+      if (!Number.isFinite(second)) {
+        ctx.invalid = true;
+      } else {
+        ctx.second = second;
+      }
+    }
+  },
+  s: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => {
+      const second = Number(value);
+      if (!Number.isFinite(second)) {
+        ctx.invalid = true;
+      } else {
+        ctx.second = second;
+      }
+    }
+  },
+  SSS: {
+    pattern: '\\d{1,3}',
+    apply: (ctx, value) => applyMilliseconds(ctx, value)
+  },
+  SS: {
+    pattern: '\\d{1,2}',
+    apply: (ctx, value) => applyMilliseconds(ctx, value)
+  },
+  S: {
+    pattern: '\\d',
+    apply: (ctx, value) => applyMilliseconds(ctx, value)
+  },
+  A: {
+    pattern: 'AM|PM',
+    apply: (ctx, value) => {
+      ctx.meridiem = value.toUpperCase();
+      ctx.is12Hour = true;
+    }
+  },
+  a: {
+    pattern: 'am|pm',
+    apply: (ctx, value) => {
+      ctx.meridiem = value.toUpperCase();
+      ctx.is12Hour = true;
+    }
+  },
+  dddd: {
+    pattern: '[^\\d\\s]+',
+    apply: () => {}
+  },
+  ddd: {
+    pattern: '[^\\d\\s]+',
+    apply: () => {}
+  },
+  dd: {
+    pattern: '[^\\d\\s]+',
+    apply: () => {}
+  }
+};
+
+const GENERIC_TOKENS_ORDER = [
+  'YYYY',
+  'YY',
+  'MMMM',
+  'MMM',
+  'MM',
+  'M',
+  'DD',
+  'Do',
+  'D',
+  'HH',
+  'H',
+  'hh',
+  'h',
+  'mm',
+  'm',
+  'ss',
+  's',
+  'SSS',
+  'SS',
+  'S',
+  'A',
+  'a',
+  'dddd',
+  'ddd',
+  'dd'
+];
+
 function getLocaleConfig(name) {
   const target = name && locales[name] ? locales[name] : locales[defaultLocale];
   return target || locales.en;
@@ -139,7 +443,7 @@ function buildDate(year, month, day, hour = 0, minute = 0, second = 0, milliseco
   return result;
 }
 
-function parseWithKnownFormat(value, format, strict) {
+function parseWithKnownFormat(value, format, strict, localeName) {
   if (typeof value !== 'string') return null;
   const input = strict ? value : value.trim();
   switch (format) {
@@ -201,14 +505,122 @@ function parseWithKnownFormat(value, format, strict) {
       return buildDate(1970, 0, 1, hour, minute);
     }
     default:
-      return null;
+      return parseGenericFormat(input, format, strict, localeName);
   }
 }
 
-function parseFormatted(value, formats, strict) {
+function parseGenericFormat(value, format, strict, localeName) {
+  if (typeof format !== 'string' || !format) return null;
+  const locale = getLocaleConfig(localeName);
+  const handlers = [];
+  let pattern = '';
+
+  for (let i = 0; i < format.length; ) {
+    const char = format[i];
+    if (char === '[') {
+      const end = format.indexOf(']', i);
+      if (end === -1) return null;
+      pattern += escapeRegexLiteral(format.slice(i + 1, end));
+      i = end + 1;
+      continue;
+    }
+
+    let matchedToken;
+    for (const token of GENERIC_TOKENS_ORDER) {
+      if (format.slice(i, i + token.length) === token) {
+        matchedToken = token;
+        break;
+      }
+    }
+
+    if (matchedToken) {
+      const handler = GENERIC_TOKEN_HANDLERS[matchedToken];
+      if (!handler) {
+        pattern += escapeRegexLiteral(char);
+        i += 1;
+        continue;
+      }
+      handlers.push(handler);
+      pattern += `(${handler.pattern})`;
+      i += matchedToken.length;
+    } else {
+      pattern += escapeRegexLiteral(char);
+      i += 1;
+    }
+  }
+
+  if (!handlers.length) return null;
+
+  const matcher = new RegExp(`^${pattern}$`, 'i');
+  const target = strict ? value : value.trim();
+  const match = matcher.exec(target);
+  if (!match) return null;
+
+  const context = {
+    meridiem: null,
+    is12Hour: false,
+    invalid: false
+  };
+
+  let index = 1;
+  for (const handler of handlers) {
+    const segment = match[index++] || '';
+    handler.apply(context, segment, locale);
+    if (context.invalid) {
+      return new Date(NaN);
+    }
+  }
+
+  let year = context.year;
+  let month = context.month;
+  let day = context.day;
+  let hour = context.hour !== undefined ? Number(context.hour) : 0;
+  let minute = context.minute !== undefined ? Number(context.minute) : 0;
+  let second = context.second !== undefined ? Number(context.second) : 0;
+  let millisecond = context.millisecond !== undefined ? Number(context.millisecond) : 0;
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || !Number.isFinite(second) || !Number.isFinite(millisecond)) {
+    return new Date(NaN);
+  }
+
+  if (context.is12Hour) {
+    const meridiem = context.meridiem ? context.meridiem.toUpperCase() : null;
+    if (meridiem === 'PM' && hour < 12) {
+      hour += 12;
+    }
+    if (meridiem === 'AM' && hour === 12) {
+      hour = 0;
+    }
+    if (meridiem === null && hour > 12) {
+      return new Date(NaN);
+    }
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 || millisecond < 0 || millisecond > 999) {
+    return new Date(NaN);
+  }
+
+  if (month !== undefined && (!Number.isFinite(month) || month < 0 || month > 11)) {
+    return new Date(NaN);
+  }
+
+  if (day !== undefined && (!Number.isFinite(day) || day < 1 || day > 31)) {
+    return new Date(NaN);
+  }
+
+  const hasDate = year !== undefined || month !== undefined || day !== undefined;
+  const reference = new Date();
+  year = Number.isFinite(year) ? year : hasDate ? reference.getFullYear() : 1970;
+  month = Number.isFinite(month) ? month : hasDate ? reference.getMonth() : 0;
+  day = Number.isFinite(day) ? day : hasDate ? 1 : 1;
+
+  return buildDate(year, month, day, hour, minute, second, millisecond);
+}
+
+function parseFormatted(value, formats, strict, localeName) {
   const list = Array.isArray(formats) ? formats : [formats];
   for (const fmt of list) {
-    const parsed = parseWithKnownFormat(value, fmt, strict);
+    const parsed = parseWithKnownFormat(value, fmt, strict, localeName);
     if (parsed) return parsed;
   }
   return null;
@@ -282,14 +694,108 @@ function addMonths(baseDate, amount) {
 }
 
 class DayjsLite {
-  constructor(date, localeName) {
-    this.$d = date;
-    this.$isValid = !Number.isNaN(date.getTime());
-    this.$locale = localeName || defaultLocale;
+  constructor(config, legacyLocale) {
+    const cfg =
+      config instanceof Date || config instanceof DayjsLite || typeof config !== 'object' || config === null
+        ? { date: config, locale: legacyLocale }
+        : { ...config };
+
+    this.$L = typeof cfg.locale === 'string' ? cfg.locale : defaultLocale;
+    this.$u = cfg.utc === true;
+    this.$d = new Date();
+    this.parse({ ...cfg, args: Array.isArray(cfg.args) ? cfg.args.slice() : cfg.args });
+    this.init();
+  }
+
+  init() {
+    this.$isValid = !Number.isNaN(this.$d.getTime());
+    return this;
+  }
+
+  parse(config) {
+    const cfg = config || {};
+    const args = Array.isArray(cfg.args) ? cfg.args : [];
+
+    if (typeof cfg.locale === 'string') {
+      this.$L = cfg.locale;
+    }
+
+    let parsingFormat = cfg.format;
+    let parsingStrict = cfg.strict;
+    let localeFromArgs = cfg.locale;
+
+    if (args.length > 1) {
+      const second = args[1];
+      if (second && typeof second === 'object' && !Array.isArray(second)) {
+        if (second.locale && localeFromArgs === undefined) {
+          localeFromArgs = second.locale;
+        }
+        if (second.format !== undefined && parsingFormat === undefined) {
+          parsingFormat = second.format;
+        }
+        if (second.strict !== undefined && parsingStrict === undefined) {
+          parsingStrict = second.strict;
+        }
+      } else if (parsingFormat === undefined && (typeof second === 'string' || Array.isArray(second))) {
+        parsingFormat = second;
+      }
+    }
+
+    if (args.length > 2 && parsingStrict === undefined) {
+      parsingStrict = args[2];
+    }
+
+    if (args.length > 3 && localeFromArgs === undefined && typeof args[3] === 'string') {
+      localeFromArgs = args[3];
+    }
+
+    if (typeof localeFromArgs === 'string') {
+      this.$L = localeFromArgs;
+    }
+
+    const input = cfg.date;
+
+    if (input instanceof DayjsLite) {
+      this.$d = cloneDate(input.$d);
+      this.$L = input.$L;
+      this.$u = input.$u;
+      return;
+    }
+
+    if (input instanceof Date) {
+      this.$d = new Date(input.getTime());
+      return;
+    }
+
+    if (typeof input === 'number') {
+      this.$d = new Date(input);
+      return;
+    }
+
+    if (input === undefined) {
+      this.$d = new Date();
+      return;
+    }
+
+    if (input === null) {
+      this.$d = new Date(NaN);
+      return;
+    }
+
+    if (typeof input === 'string' || Array.isArray(parsingFormat)) {
+      this.$d = parseInput(input, parsingFormat, parsingStrict, this.$L);
+      return;
+    }
+
+    this.$d = parseInput(input, parsingFormat, parsingStrict, this.$L);
+  }
+
+  $locale() {
+    return getLocaleConfig(this.$L);
   }
 
   clone() {
-    return wrap(cloneDate(this.$d), this.$locale);
+    return wrap(cloneDate(this.$d), this.$L, this.$u);
   }
 
   isValid() {
@@ -319,14 +825,14 @@ class DayjsLite {
   format(fmt) {
     if (!this.$isValid) return INVALID_DATE_STRING;
     const formatString = fmt || 'YYYY-MM-DDTHH:mm:ssZ';
-    return formatDate(this.$d, formatString, this.$locale);
+    return formatDate(this.$d, formatString, this.$L);
   }
 
   add(amount, unit) {
-    if (!this.$isValid) return wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return wrap(new Date(NaN), this.$L, this.$u);
     const normalized = normalizeUnit(unit);
     const value = Number(amount);
-    if (!Number.isFinite(value)) return wrap(new Date(NaN), this.$locale);
+    if (!Number.isFinite(value)) return wrap(new Date(NaN), this.$L, this.$u);
     let result;
     switch (normalized) {
       case 'millisecond':
@@ -356,7 +862,7 @@ class DayjsLite {
       default:
         result = new Date(NaN);
     }
-    return wrap(result, this.$locale);
+    return wrap(result, this.$L, this.$u);
   }
 
   subtract(amount, unit) {
@@ -364,7 +870,7 @@ class DayjsLite {
   }
 
   startOf(unit) {
-    if (!this.$isValid) return wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return wrap(new Date(NaN), this.$L, this.$u);
     const normalized = normalizeUnit(unit);
     const date = cloneDate(this.$d);
     switch (normalized) {
@@ -387,7 +893,7 @@ class DayjsLite {
         date.setMilliseconds(0);
         break;
       case 'week': {
-        const locale = getLocaleConfig(this.$locale);
+        const locale = this.$locale();
         const weekStart = Number.isInteger(locale.weekStart) ? locale.weekStart : 0;
         const diff = (date.getDay() - weekStart + 7) % 7;
         date.setHours(0, 0, 0, 0);
@@ -395,13 +901,13 @@ class DayjsLite {
         break;
       }
       default:
-        return wrap(new Date(NaN), this.$locale);
+        return wrap(new Date(NaN), this.$L, this.$u);
     }
-    return wrap(date, this.$locale);
+    return wrap(date, this.$L, this.$u);
   }
 
   endOf(unit) {
-    if (!this.$isValid) return wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return wrap(new Date(NaN), this.$L, this.$u);
     const normalized = normalizeUnit(unit);
     switch (normalized) {
       case 'year':
@@ -419,7 +925,7 @@ class DayjsLite {
       case 'second':
         return this.startOf('second').add(1, 'second').subtract(1, 'millisecond');
       default:
-        return wrap(new Date(NaN), this.$locale);
+        return wrap(new Date(NaN), this.$L, this.$u);
     }
   }
 
@@ -492,69 +998,69 @@ class DayjsLite {
   }
 
   day(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getDay();
     const normalized = Number(value);
-    if (!Number.isFinite(normalized)) return wrap(new Date(NaN), this.$locale);
+    if (!Number.isFinite(normalized)) return wrap(new Date(NaN), this.$L, this.$u);
     const current = this.$d.getDay();
     const diff = normalized - current;
     return this.add(diff, 'day');
   }
 
   date(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getDate();
     const newDate = cloneDate(this.$d);
     newDate.setDate(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   month(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getMonth();
     const newDate = cloneDate(this.$d);
     newDate.setMonth(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   year(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getFullYear();
     const newDate = cloneDate(this.$d);
     newDate.setFullYear(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   hour(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getHours();
     const newDate = cloneDate(this.$d);
     newDate.setHours(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   minute(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getMinutes();
     const newDate = cloneDate(this.$d);
     newDate.setMinutes(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   second(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getSeconds();
     const newDate = cloneDate(this.$d);
     newDate.setSeconds(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   millisecond(value) {
-    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$locale);
+    if (!this.$isValid) return value === undefined ? NaN : wrap(new Date(NaN), this.$L, this.$u);
     if (value === undefined) return this.$d.getMilliseconds();
     const newDate = cloneDate(this.$d);
     newDate.setMilliseconds(Number(value));
-    return wrap(newDate, this.$locale);
+    return wrap(newDate, this.$L, this.$u);
   }
 
   daysInMonth() {
@@ -563,21 +1069,21 @@ class DayjsLite {
   }
 
   locale(name) {
-    if (name === undefined) return this.$locale;
+    if (name === undefined) return this.$L;
     if (typeof name === 'string' && locales[name]) {
-      return wrap(cloneDate(this.$d), name);
+      return wrap(cloneDate(this.$d), name, this.$u);
     }
     return this.clone();
   }
 }
 
-function wrap(date, localeName) {
-  return new DayjsLite(date, localeName);
+function wrap(date, localeName, utcFlag) {
+  return new DayjsLite({ date, locale: localeName, utc: utcFlag === true });
 }
 
-function parseInput(input, format, strict) {
+function parseInput(input, format, strict, localeName) {
   if (format) {
-    const parsed = parseFormatted(input, format, strict);
+    const parsed = parseFormatted(input, format, strict, localeName);
     return parsed || new Date(NaN);
   }
   if (input instanceof DayjsLite) return cloneDate(input.$d);
@@ -593,24 +1099,37 @@ function parseInput(input, format, strict) {
   return new Date(NaN);
 }
 
-function dayjs(input, format, strict) {
-  let parsingFormat = format;
-  let parsingStrict = strict;
+function dayjs() {
+  const args = Array.prototype.slice.call(arguments);
+  const input = args[0];
+  let format = args[1];
+  let strict = args[2];
   let localeFromOptions;
 
   if (format && typeof format === 'object' && !Array.isArray(format)) {
     localeFromOptions = format.locale;
-    parsingFormat = format.format;
-    parsingStrict = format.strict;
+    strict = format.strict;
+    format = format.format;
   }
 
-  const date = parseInput(input, parsingFormat, parsingStrict);
-  const baseLocale = input instanceof DayjsLite ? input.$locale : undefined;
-  return new DayjsLite(date, localeFromOptions || baseLocale || defaultLocale);
+  if (args.length > 3 && localeFromOptions === undefined && typeof args[3] === 'string') {
+    localeFromOptions = args[3];
+  }
+
+  return new DayjsLite({
+    date: input,
+    format,
+    strict,
+    locale: localeFromOptions,
+    args
+  });
 }
 
 dayjs.Dayjs = DayjsLite;
 dayjs.isDayjs = value => value instanceof DayjsLite;
+
+dayjs.Ls = locales;
+dayjs.p = {};
 
 dayjs.extend = function extend(plugin, options) {
   if (typeof plugin === 'function') {
@@ -656,6 +1175,10 @@ dayjs.locale = function locale(name, config, setAsDefault) {
   }
 
   return defaultLocale;
+};
+
+dayjs.__setParseTwoDigitYear = fn => {
+  customParseTwoDigitYear = typeof fn === 'function' ? fn : null;
 };
 
 module.exports = dayjs;
