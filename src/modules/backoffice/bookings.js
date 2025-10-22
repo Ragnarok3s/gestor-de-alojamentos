@@ -82,7 +82,8 @@ function registerBookings(app, context) {
     logActivity,
     deleteLockByBookingStmt,
     adminBookingUpdateStmt,
-    bookingEmailer
+    bookingEmailer,
+    ExcelJS
   } = context;
 
   function renderBookingDetailPage(req, res, { booking, bookingNotes, planOptions = [], feedback = null, statusCode = 200 }) {
@@ -279,40 +280,64 @@ function registerBookings(app, context) {
     }));
   }
 
-  app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
-<<<<<<< HEAD
-    const search = String(req.query.search || '').trim();
-    const statusRaw = String(req.query.status || '').trim().toLowerCase();
-    const sortRaw = String(req.query.sort || '').trim().toLowerCase();
-=======
-    const q = String(req.query.q || '').trim();
-    const status = String(req.query.status || '').trim();
-    const ym = String(req.query.ym || '').trim();
->>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
+  const BOOKING_STATUS_FILTERS = {
+    pendente: ['PENDING'],
+    confirmada: ['CONFIRMED'],
+    cancelada: ['CANCELLED', 'CANCELED']
+  };
 
+  function escapeSqlLike(value) {
+    return String(value || '').replace(/[\\%_]/g, '\\$&');
+  }
+
+  function labelBookingStatus(statusRaw) {
+    const status = String(statusRaw || '').toUpperCase();
+    if (status === 'CONFIRMED') return 'Confirmada';
+    if (status === 'PENDING') return 'Pendente';
+    if (status === 'CANCELLED' || status === 'CANCELED') return 'Cancelada';
+    return status || 'Desconhecido';
+  }
+
+  function resolveBookingFilters(query = {}) {
+    return {
+      search: String(query.search || '').trim(),
+      statusRaw: String(query.status || '').trim().toLowerCase(),
+      sortRaw: String(query.sort || '').trim().toLowerCase()
+    };
+  }
+
+  function prepareBookingsQuery(filters = {}, limit = 500) {
     const where = [];
-    const args = [];
+    const params = [];
+    const search = filters.search || '';
+    const statusRaw = filters.statusRaw || '';
+    const sortRaw = filters.sortRaw || '';
 
-<<<<<<< HEAD
     if (search) {
-      where.push('(b.guest_name LIKE ? OR CAST(b.id AS TEXT) LIKE ?)');
-      const likeTerm = `%${search}%`;
-      args.push(likeTerm, likeTerm);
+      const escaped = escapeSqlLike(search);
+      const likeTerm = `%${escaped}%`;
+      const numericTerm = search.replace(/[^0-9]/g, '');
+      const likeIdTerm = numericTerm ? `%${numericTerm}%` : likeTerm;
+      where.push(
+        `(
+          b.guest_name LIKE ? ESCAPE '\\' OR
+          b.guest_email LIKE ? ESCAPE '\\' OR
+          p.name LIKE ? ESCAPE '\\' OR
+          u.name LIKE ? ESCAPE '\\' OR
+          CAST(b.id AS TEXT) LIKE ?
+        )`
+      );
+      params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeIdTerm);
     }
 
-    const statusFilters = {
-      pendente: ['PENDING'],
-      confirmada: ['CONFIRMED'],
-      cancelada: ['CANCELLED', 'CANCELED']
-    };
-    const selectedStatusValues = statusFilters[statusRaw];
+    const selectedStatusValues = BOOKING_STATUS_FILTERS[statusRaw];
     if (selectedStatusValues && selectedStatusValues.length) {
       if (selectedStatusValues.length === 1) {
         where.push('b.status = ?');
-        args.push(selectedStatusValues[0]);
+        params.push(selectedStatusValues[0]);
       } else {
         where.push(`b.status IN (${selectedStatusValues.map(() => '?').join(', ')})`);
-        args.push(...selectedStatusValues);
+        params.push(...selectedStatusValues);
       }
     }
 
@@ -321,22 +346,6 @@ function registerBookings(app, context) {
       sortKey === 'arrival_date'
         ? 'b.checkin DESC, b.created_at DESC'
         : 'b.created_at DESC';
-=======
-    if (q) {
-      where.push(`(b.guest_name LIKE ? OR b.guest_email LIKE ? OR u.name LIKE ? OR p.name LIKE ? OR b.agency LIKE ?)`);
-      args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
-    }
-    if (status) {
-      where.push(`b.status = ?`);
-      args.push(status);
-    }
-    if (/^\d{4}-\d{2}$/.test(ym)) {
-      const startYM = `${ym}-01`;
-      const endYM = dayjs(startYM).endOf('month').add(1, 'day').format('YYYY-MM-DD');
-      where.push(`NOT (b.checkout <= ? OR b.checkin >= ?)`);
-      args.push(startYM, endYM);
-    }
->>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
 
     const sql = `
       SELECT b.*, u.name AS unit_name, p.name AS property_name
@@ -344,20 +353,86 @@ function registerBookings(app, context) {
         JOIN units u ON u.id = b.unit_id
         JOIN properties p ON p.id = u.property_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-<<<<<<< HEAD
         ORDER BY ${orderClause}
-=======
-        ORDER BY b.checkin DESC, b.created_at DESC
->>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
-        LIMIT 500
+        ${limit && Number.isInteger(limit) ? 'LIMIT ' + Math.max(1, limit) : ''}
     `;
-    const rows = db.prepare(sql).all(...args);
+
+    return { sql, params, sortKey, orderClause };
+  }
+
+  function exportBookingsToCsv(res, rows) {
+    const header = ['ID', 'Hóspede', 'Email', 'Check-in', 'Check-out', 'Propriedade', 'Unidade', 'Status', 'Total (€)'];
+    const lines = [header.join(';')];
+    rows.forEach(row => {
+      const checkin = row.checkin ? dayjs(row.checkin).format('YYYY-MM-DD') : '';
+      const checkout = row.checkout ? dayjs(row.checkout).format('YYYY-MM-DD') : '';
+      const total = Number.isFinite(row.total_cents) ? (row.total_cents / 100).toFixed(2).replace('.', ',') : '';
+      const values = [
+        row.id,
+        (row.guest_name || '').replace(/;/g, ','),
+        (row.guest_email || '').replace(/;/g, ','),
+        checkin,
+        checkout,
+        (row.property_name || '').replace(/;/g, ','),
+        (row.unit_name || '').replace(/;/g, ','),
+        labelBookingStatus(row.status),
+        total
+      ];
+      lines.push(values.join(';'));
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="reservas.csv"');
+    res.send(`\ufeff${lines.join('\n')}`);
+  }
+
+  function exportBookingsToXlsx(res, rows) {
+    if (!ExcelJS || typeof ExcelJS.Workbook !== 'function') {
+      exportBookingsToCsv(res, rows);
+      return;
+    }
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Reservas');
+    sheet.columns = [
+      { header: 'ID', key: 'id', width: 10 },
+      { header: 'Hóspede', key: 'guest', width: 28 },
+      { header: 'Email', key: 'email', width: 28 },
+      { header: 'Check-in', key: 'checkin', width: 14 },
+      { header: 'Check-out', key: 'checkout', width: 14 },
+      { header: 'Propriedade', key: 'property', width: 26 },
+      { header: 'Unidade', key: 'unit', width: 26 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Total (€)', key: 'total', width: 14 }
+    ];
+    rows.forEach(row => {
+      sheet.addRow({
+        id: row.id,
+        guest: row.guest_name || '',
+        email: row.guest_email || '',
+        checkin: row.checkin ? dayjs(row.checkin).format('YYYY-MM-DD') : '',
+        checkout: row.checkout ? dayjs(row.checkout).format('YYYY-MM-DD') : '',
+        property: row.property_name || '',
+        unit: row.unit_name || '',
+        status: labelBookingStatus(row.status),
+        total: Number.isFinite(row.total_cents) ? row.total_cents / 100 : ''
+      });
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="reservas.xlsx"');
+    workbook.xlsx.write(res).then(() => {
+      res.end();
+    });
+  }
+
+  app.get('/admin/bookings', requireLogin, requirePermission('bookings.view'), (req, res) => {
+    const filtersRaw = resolveBookingFilters(req.query);
+    const queryConfig = prepareBookingsQuery(filtersRaw, 500);
+    const rows = db.prepare(queryConfig.sql).all(...queryConfig.params);
 
     const canEditBooking = userCan(req.user, 'bookings.edit');
     const canCancelBooking = userCan(req.user, 'bookings.cancel');
 
-<<<<<<< HEAD
-    const filters = { search, status: statusRaw, sort: sortKey };
+    const sortKey = queryConfig.sortKey;
+    const filters = { search: filtersRaw.search, status: filtersRaw.statusRaw, sort: sortKey };
     const statusOptions = [
       { value: '', label: 'Todos' },
       { value: 'pendente', label: 'Pendente' },
@@ -371,8 +446,8 @@ function registerBookings(app, context) {
 
     const buildSortUrl = (key) => {
       const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      if (statusRaw) params.set('status', statusRaw);
+      if (filtersRaw.search) params.set('search', filtersRaw.search);
+      if (filtersRaw.statusRaw) params.set('status', filtersRaw.statusRaw);
       params.set('sort', key);
       const queryString = params.toString();
       return queryString ? `/admin/bookings?${queryString}` : '/admin/bookings';
@@ -428,76 +503,32 @@ function registerBookings(app, context) {
     }
 
     res.locals.activeNav = '/admin/bookings';
-=======
->>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
     res.send(layout({
       title: 'Reservas',
       user: req.user,
       activeNav: 'bookings',
       branding: resolveBrandingForRequest(req),
       pageClass: 'page-backoffice page-bookings',
-<<<<<<< HEAD
       body: bodyContent
-=======
-      body: html`
-        <div class="bo-page">
-          <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
-
-          <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-          <input class="input md:col-span-2" name="q" placeholder="Procurar por hóspede, email, unidade, propriedade" value="${esc(q)}"/>
-          <select class="input" name="status">
-            <option value="">Todos os estados</option>
-            <option value="CONFIRMED" ${status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
-            <option value="PENDING" ${status==='PENDING'?'selected':''}>PENDING</option>
-          </select>
-          <input class="input" type="month" name="ym" value="${/^\d{4}-\d{2}$/.test(ym)?ym:''}"/>
-          <button class="btn btn-primary">Filtrar</button>
-        </form>
-
-        <div class="card p-0">
-          <div class="responsive-table">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-slate-500">
-                  <th>Check-in</th><th>Check-out</th><th>Propriedade/Unidade</th><th>Agência</th><th>Hóspede</th><th>Ocup.</th><th>Total</th><th>Status</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map(b => `
-                  <tr>
-                    <td data-label="Check-in"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Check-out"><span class="table-cell-value">${dayjs(b.checkout).format('DD/MM/YYYY')}</span></td>
-                    <td data-label="Propriedade/Unidade"><span class="table-cell-value">${esc(b.property_name)} - ${esc(b.unit_name)}</span></td>
-                    <td data-label="Agência"><span class="table-cell-value">${esc(b.agency || '') || '—'}</span></td>
-                    <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}<span class="table-cell-muted">${esc(b.guest_email)}</span></span></td>
-                    <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                    <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                    <td data-label="Status">
-                      <span class="inline-flex items-center text-xs font-semibold rounded px-2 py-0.5 ${b.status==='CONFIRMED'?'bg-emerald-100 text-emerald-700':b.status==='PENDING'?'bg-amber-100 text-amber-700':'bg-slate-200 text-slate-700'}">
-                        ${b.status}
-                      </span>
-                    </td>
-                    <td data-label="Ações">
-                      <div class="table-cell-actions">
-                        <a class="underline" href="/admin/bookings/${b.id}">${canEditBooking ? 'Editar' : 'Ver'}</a>
-                        ${canCancelBooking ? `
-                          <form method="post" action="/admin/bookings/${b.id}/cancel" onsubmit="return confirm('Cancelar esta reserva?');">
-                            <button class="text-rose-600">Cancelar</button>
-                          </form>
-                        ` : ''}
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          ${rows.length===0?'<div class="p-4 text-slate-500">Sem resultados.</div>':''}
-        </div>
-      </div>
-    `
->>>>>>> parent of b643f66 (Add theming, search, and notifications enhancements)
     }));
+  });
+
+  app.get('/admin/bookings/export', requireLogin, requirePermission('bookings.view'), (req, res) => {
+    const filtersRaw = resolveBookingFilters(req.query);
+    const queryConfig = prepareBookingsQuery(filtersRaw, null);
+    const rows = db.prepare(queryConfig.sql).all(...queryConfig.params);
+    const format = String(req.query.format || 'csv').trim().toLowerCase();
+
+    try {
+      if (format === 'xlsx') {
+        exportBookingsToXlsx(res, rows);
+      } else {
+        exportBookingsToCsv(res, rows);
+      }
+    } catch (err) {
+      console.error('Falha ao exportar reservas:', err);
+      res.status(500).send('Não foi possível exportar as reservas.');
+    }
   });
 
   app.get('/admin/bookings/:id', requireLogin, requirePermission('bookings.view'), (req, res) => {

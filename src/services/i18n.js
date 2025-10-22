@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 const SUPPORTED_LANGUAGES = ['pt', 'en'];
 const LANGUAGE_ALIASES = new Map([
   ['pt', 'pt'],
@@ -20,6 +22,22 @@ const LANGUAGE_LABELS = {
   pt: 'Português',
   en: 'Inglês'
 };
+
+const TRANSLATION_FILES = {
+  pt: path.join(__dirname, '..', 'i18n', 'pt.json'),
+  en: path.join(__dirname, '..', 'i18n', 'en.json')
+};
+
+const TRANSLATIONS = SUPPORTED_LANGUAGES.reduce((acc, language) => {
+  try {
+    // eslint-disable-next-line import/no-dynamic-require, global-require
+    const dictionary = require(TRANSLATION_FILES[language]);
+    acc[language] = dictionary && typeof dictionary === 'object' ? dictionary : {};
+  } catch (err) {
+    acc[language] = {};
+  }
+  return acc;
+}, {});
 
 const PORTUGUESE_TOKEN_SET = new Set([
   'olá',
@@ -141,7 +159,64 @@ function detectLanguage(text, { minScore = 1 } = {}) {
   return ranked[0];
 }
 
-function createI18nService() {
+function getNested(dictionary, key) {
+  if (!dictionary || typeof dictionary !== 'object') return null;
+  const segments = String(key || '')
+    .split('.')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (!segments.length) return null;
+  let current = dictionary;
+  for (const segment of segments) {
+    if (current && Object.prototype.hasOwnProperty.call(current, segment)) {
+      current = current[segment];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+function formatReplacements(template, replacements) {
+  if (!template || typeof template !== 'string') return template;
+  if (!replacements || typeof replacements !== 'object') return template;
+  return template.replace(/\{(\w+)\}/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(replacements, key)) return match;
+    const value = replacements[key];
+    return value == null ? '' : String(value);
+  });
+}
+
+function translate(key, { language, fallbackLanguage = 'pt', replacements } = {}) {
+  const normalized = normalizeLanguage(language) || normalizeLanguage(fallbackLanguage) || 'pt';
+  const fallback = normalizeLanguage(fallbackLanguage) || 'pt';
+  const primaryDict = TRANSLATIONS[normalized] || {};
+  const fallbackDict = TRANSLATIONS[fallback] || {};
+  const raw = getNested(primaryDict, key) ?? getNested(fallbackDict, key);
+  const value = raw == null ? key : raw;
+  if (typeof value === 'string') {
+    return formatReplacements(value, replacements);
+  }
+  return value;
+}
+
+function buildTranslator(language, options = {}) {
+  const { fallbackLanguage = 'pt' } = options;
+  const normalized = normalizeLanguage(language) || normalizeLanguage(fallbackLanguage) || 'pt';
+  const fallback = normalizeLanguage(fallbackLanguage) || 'pt';
+  return (key, replacements) => translate(key, { language: normalized, fallbackLanguage: fallback, replacements });
+}
+
+function lookupTranslations(language) {
+  const normalized = normalizeLanguage(language);
+  if (!normalized || !Object.prototype.hasOwnProperty.call(TRANSLATIONS, normalized)) {
+    return {};
+  }
+  return TRANSLATIONS[normalized];
+}
+
+function createI18nService({ defaultLanguage = 'pt' } = {}) {
+  const fallbackLanguage = normalizeLanguage(defaultLanguage) || 'pt';
   return {
     supportedLanguages: SUPPORTED_LANGUAGES.slice(),
     normalizeLanguage,
@@ -149,6 +224,16 @@ function createI18nService() {
     getLanguageLabel(language) {
       const normalized = normalizeLanguage(language);
       return normalized ? LANGUAGE_LABELS[normalized] || normalized.toUpperCase() : null;
+    },
+    defaultLanguage: fallbackLanguage,
+    translate(key, options = {}) {
+      return translate(key, { fallbackLanguage, ...options });
+    },
+    createTranslator(language, options = {}) {
+      return buildTranslator(language, { fallbackLanguage, ...options });
+    },
+    getTranslations(language) {
+      return lookupTranslations(language);
     }
   };
 }
@@ -158,5 +243,8 @@ module.exports = {
   SUPPORTED_LANGUAGES,
   LANGUAGE_LABELS,
   normalizeLanguage,
-  detectLanguage
+  detectLanguage,
+  getTranslations: lookupTranslations,
+  createTranslator: buildTranslator,
+  translate
 };

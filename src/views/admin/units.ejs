@@ -1,0 +1,21 @@
+<div class="bo-page bo-page--wide">
+  <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold">Inventário de unidades</h1>
+    <p class="text-sm text-slate-600 max-w-2xl">
+      Acompanha as unidades disponíveis em cada propriedade, identifica rapidamente bloqueios ativos e acede às ações de
+      gestão mais comuns.
+    </p>
+  </header>
+
+  <section class="card p-4">
+    <div class="flex flex-col gap-2 mb-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-800">Unidades registadas</h2>
+        <p class="text-sm text-slate-500">Encontradas <strong><%= totalCount %></strong> unidades.</p>
+      </div>
+      <a class="btn btn-primary" href="/admin">Adicionar unidade</a>
+    </div>
+    <%- renderTable(table) %>
+  </section>
+</div>

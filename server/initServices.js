@@ -1,3 +1,5 @@
+const { AsyncLocalStorage } = require('async_hooks');
+
 function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
   // ===================== DB =====================
   const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
@@ -9,6 +11,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   const rateRuleService = createRateRuleService({ db, dayjs });
   const ratePlanService = createRatePlanService({ db, dayjs });
   const skipStartupTasks = SKIP_SERVER_BOOT;
+  const requestContext = new AsyncLocalStorage();
 
 
   function normalizeRole(role) {
@@ -1526,6 +1529,135 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   }
 
   const i18n = createI18nService();
+  const LANGUAGE_COOKIE = 'lang';
+  const LANGUAGE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000;
+  const supportedLanguages = Array.isArray(i18n.supportedLanguages) && i18n.supportedLanguages.length
+    ? i18n.supportedLanguages.slice()
+    : ['pt', 'en'];
+  const supportedLanguageSet = new Set(supportedLanguages);
+  const defaultLanguage = i18n.normalizeLanguage(i18n.defaultLanguage) || 'pt';
+  const fallbackTranslator = i18n.createTranslator(defaultLanguage);
+
+  function parseAcceptLanguageHeader(header) {
+    if (!header) return [];
+    return header
+      .split(',')
+      .map(part => {
+        const [languagePart, ...parameters] = part.trim().split(';');
+        const normalized = i18n.normalizeLanguage(languagePart);
+        if (!normalized) return null;
+        let quality = 1;
+        const qParam = parameters.find(param => param.trim().startsWith('q='));
+        if (qParam) {
+          const qValue = parseFloat(qParam.split('=')[1]);
+          if (Number.isFinite(qValue)) {
+            quality = qValue;
+          }
+        }
+        return { language: normalized, quality };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.quality - a.quality);
+  }
+
+  function resolveRequestLanguage(req) {
+    if (!req) return defaultLanguage;
+    const queryLang = req.query ? i18n.normalizeLanguage(req.query.lang || req.query.language) : null;
+    const bodyLang = req.body ? i18n.normalizeLanguage(req.body.lang || req.body.language) : null;
+    const cookieLang = req.cookies ? i18n.normalizeLanguage(req.cookies[LANGUAGE_COOKIE]) : null;
+    const header = typeof req.get === 'function' ? req.get('accept-language') : null;
+    const headerCandidates = parseAcceptLanguageHeader(header);
+
+    const candidate = queryLang || bodyLang || cookieLang;
+    if (candidate && supportedLanguageSet.has(candidate)) {
+      return candidate;
+    }
+
+    if (headerCandidates.length) {
+      const match = headerCandidates.find(item => supportedLanguageSet.has(item.language));
+      if (match) return match.language;
+    }
+
+    return defaultLanguage;
+  }
+
+  function getActiveStore() {
+    return requestContext.getStore && requestContext.getStore();
+  }
+
+  function getActiveResponse() {
+    const store = getActiveStore();
+    return store && store.res ? store.res : null;
+  }
+
+  function resolveActiveTranslator() {
+    const res = getActiveResponse();
+    if (res && res.locals && typeof res.locals.t === 'function') {
+      return res.locals.t;
+    }
+    return fallbackTranslator;
+  }
+
+  function resolveActiveLanguage() {
+    const res = getActiveResponse();
+    if (res && res.locals && res.locals.language) {
+      return res.locals.language;
+    }
+    return defaultLanguage;
+  }
+
+  function resolveSupportedLanguageOptions() {
+    const res = getActiveResponse();
+    if (res && res.locals && Array.isArray(res.locals.supportedLanguages)) {
+      return res.locals.supportedLanguages;
+    }
+    return supportedLanguages.map(code => ({ code, label: i18n.getLanguageLabel(code) || code.toUpperCase() }));
+  }
+
+  app.use((req, res, next) => {
+    requestContext.run({ req, res }, next);
+  });
+
+  app.use((req, res, next) => {
+    const language = resolveRequestLanguage(req);
+    const translator = i18n.createTranslator(language, { fallbackLanguage: defaultLanguage });
+    res.locals.language = language;
+    res.locals.languageLabel = i18n.getLanguageLabel(language) || language.toUpperCase();
+    res.locals.supportedLanguages = supportedLanguages.map(code => ({
+      code,
+      label: i18n.getLanguageLabel(code) || code.toUpperCase()
+    }));
+    res.locals.t = translator;
+    req.language = language;
+    req.t = translator;
+    next();
+  });
+
+  app.post('/i18n/set-language', (req, res) => {
+    const requested = (req.body && (req.body.language || req.body.lang)) || (req.query && (req.query.language || req.query.lang));
+    const language = i18n.normalizeLanguage(requested);
+    if (!language || !supportedLanguageSet.has(language)) {
+      return res.status(400).json({ ok: false, error: 'language_unsupported' });
+    }
+    res.cookie(LANGUAGE_COOKIE, language, {
+      maxAge: LANGUAGE_COOKIE_MAX_AGE,
+      sameSite: 'lax',
+      httpOnly: false,
+      secure: !!secureCookies
+    });
+    return res.json({ ok: true, language, label: i18n.getLanguageLabel(language) || language.toUpperCase() });
+  });
+
+  app.get('/i18n/:lang.json', (req, res) => {
+    const language = i18n.normalizeLanguage(req.params.lang);
+    if (!language || !supportedLanguageSet.has(language)) {
+      return res.status(404).json({ ok: false, error: 'language_unsupported' });
+    }
+    return res.json({
+      language,
+      translations: i18n.getTranslations(language) || {}
+    });
+  });
   const emailTemplates = createEmailTemplateService({ db, dayjs });
   const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
   const mailerLogger = SKIP_SERVER_BOOT
@@ -2196,7 +2328,23 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   }
 
   // ===================== Layout =====================
-  function layout({ title, body, user, activeNav = '', branding, notifications = null, pageClass = '' }) {
+  function layout({
+    title,
+    body,
+    user,
+    activeNav = '',
+    branding,
+    notifications = null,
+    pageClass = '',
+    t,
+    language,
+    supportedLanguages: supportedLanguagesOverride
+  } = {}) {
+    const translator = typeof t === 'function' ? t : resolveActiveTranslator();
+    const currentLanguage = language || resolveActiveLanguage();
+    const languageOptions = Array.isArray(supportedLanguagesOverride) && supportedLanguagesOverride.length
+      ? supportedLanguagesOverride
+      : resolveSupportedLanguageOptions();
     const theme = branding || getBranding();
     const baseTheme = computeBrandingTheme(BRANDING_THEME_DEFAULT);
     const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
@@ -2209,7 +2357,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const brandHomeHref = isHousekeepingOnly
       ? '/limpeza/tarefas'
       : canAccessBackoffice && can('dashboard.view')
-      ? '/admin'
+      ? '/admin/dashboard'
       : canViewBookings
       ? '/admin/bookings'
       : '/';
@@ -2234,7 +2382,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       ? `<img src="${esc(theme.logoPath)}" alt="${esc(theme.logoAlt)}" class="brand-logo-img" />`
       : `<span class="brand-logo-text">${esc(theme.brandInitials)}</span>`;
     const brandTagline = theme.tagline ? `<span class="brand-tagline">${esc(theme.tagline)}</span>` : '';
-    const bodyClass = ['app-body', pageClass].filter(Boolean).join(' ');
+    const bodyClass = ['app-body', pageClass, 'theme-light'].filter(Boolean).join(' ');
 
     const navBackground = theme.surface;
     const navBorder = theme.surfaceBorder;
@@ -2272,6 +2420,17 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     ].join(';');
     const navStyleAttr = esc(navStyle);
 
+    const computeNotificationKey = (item) => {
+      if (!item) return '';
+      const parts = [item.title || '', item.message || '', item.meta || '', item.href || ''];
+      const raw = parts.join('|');
+      try {
+        return Buffer.from(raw).toString('base64');
+      } catch (err) {
+        return raw.replace(/[^a-z0-9]+/gi, '_').slice(0, 48);
+      }
+    };
+
     const renderNotificationItem = (item) => {
       if (!item) return '';
       const severity = typeof item.severity === 'string' && item.severity.trim()
@@ -2280,10 +2439,13 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       const title = `<span class="nav-notifications__title">${esc(item.title || 'Atualização')}</span>`;
       const message = item.message ? `<div class="nav-notifications__message">${esc(item.message)}</div>` : '';
       const meta = item.meta ? `<div class="nav-notifications__meta">${esc(item.meta)}</div>` : '';
+      const key = item.key || computeNotificationKey(item);
+      const keyAttr = key ? ` data-notification-key="${esc(key)}"` : '';
+      const readAttr = item.read ? ' data-notification-read="true"' : '';
       if (item.href) {
-        return `<li class="nav-notifications__item${severity}"><a class="nav-notifications__link" href="${esc(item.href)}">${title}${message}${meta}</a></li>`;
+        return `<li class="nav-notifications__item${severity}"${keyAttr}${readAttr}><a class="nav-notifications__link" href="${esc(item.href)}">${title}${message}${meta}</a></li>`;
       }
-      return `<li class="nav-notifications__item${severity}">${title}${message}${meta}</li>`;
+      return `<li class="nav-notifications__item${severity}"${keyAttr}${readAttr}>${title}${message}${meta}</li>`;
     };
 
     const notificationsPanelHtml = notificationsCount
@@ -2292,20 +2454,97 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
 
     const notificationsMarkup = hasUser && canAccessBackoffice
       ? `
-          <div class="nav-notifications">
+          <div class="nav-notifications" data-notifications data-unread="${notificationsCount}">
             <button type="button" class="nav-notifications__button" data-notifications-toggle aria-haspopup="true" aria-expanded="false" aria-controls="nav-notifications-panel">
               <i data-lucide="bell" class="w-5 h-5"></i>
               <span class="sr-only">Notificações</span>
-              ${notificationsCount ? `<span class="nav-notifications__badge">${notificationsCount}</span>` : ''}
+              <span class="nav-notifications__badge" data-notifications-badge${notificationsCount ? '' : ' hidden'}>${notificationsCount}</span>
             </button>
             <div class="nav-notifications__panel" id="nav-notifications-panel" data-notifications-panel hidden>
               <div class="nav-notifications__header">
                 <span>Notificações</span>
-                <span class="nav-notifications__counter">${notificationsCount}</span>
+                <div class="nav-notifications__header-actions">
+                  <span class="nav-notifications__counter" data-notifications-counter>${notificationsCount}</span>
+                  <button type="button" class="nav-notifications__mark-read" data-notifications-mark-read aria-label="Marcar notificações como lidas"${notificationsCount ? '' : ' disabled'}>
+                    <i data-lucide="check" aria-hidden="true"></i>
+                  </button>
+                </div>
               </div>
               ${notificationsPanelHtml}
-              <div class="nav-notifications__footer"><a class="nav-notifications__footer-link" href="/admin/bookings">Ver reservas</a></div>
+              <div class="nav-notifications__footer">
+                <button type="button" class="nav-notifications__refresh" data-notifications-refresh aria-label="Atualizar notificações">
+                  <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                </button>
+                <a class="nav-notifications__footer-link" href="/admin/bookings">Ver reservas</a>
+              </div>
             </div>
+          </div>`
+      : '';
+
+    const languageOptionsHtml = languageOptions
+      .map(option => {
+        if (!option || !option.code) return '';
+        const code = String(option.code).toLowerCase();
+        const selected = code === currentLanguage ? ' selected' : '';
+        const optionLabel = option.label || option.code.toUpperCase();
+        return `<option value="${esc(code)}"${selected}>${esc(optionLabel)}</option>`;
+      })
+      .filter(Boolean)
+      .join('');
+
+    const globalSearchLabel = translator('navigation.globalSearchLabel') || 'Pesquisa global';
+    const globalSearchPlaceholder =
+      translator('navigation.globalSearchPlaceholder') || 'Pesquisar reservas, unidades ou conteúdos…';
+
+    const navLanguageHtml = languageOptionsHtml
+      ? `
+          <div class="nav-language">
+            <label class="nav-language__label" for="nav-language-select">${esc(translator('language.label'))}</label>
+            <select id="nav-language-select" class="nav-language__select" data-language-selector data-current-language="${esc(currentLanguage)}">
+              ${languageOptionsHtml}
+            </select>
+          </div>`
+      : '';
+
+    const navThemeHtml = `
+          <div class="nav-theme">
+            <button type="button" class="nav-theme__toggle" data-theme-toggle aria-pressed="false" aria-label="Alternar modo de cor">
+              <span class="nav-theme__icon" data-theme-toggle-icon><i data-lucide="moon" aria-hidden="true"></i></span>
+              <span class="nav-theme__label" data-theme-toggle-label>Modo escuro</span>
+            </button>
+          </div>`;
+
+    const navSearchHtml = hasUser && canAccessBackoffice
+      ? `
+          <div class="nav-search" data-global-search>
+            <label class="sr-only" id="global-search-label">${esc(globalSearchLabel)}</label>
+            <div class="nav-search__control" data-global-search-control>
+              <span class="nav-search__icon" aria-hidden="true"><i data-lucide="search"></i></span>
+              <input
+                type="search"
+                class="nav-search__input"
+                placeholder="${esc(globalSearchPlaceholder)}"
+                autocomplete="off"
+                aria-labelledby="global-search-label"
+                aria-controls="global-search-results"
+                data-global-search-input
+              />
+              <button type="button" class="nav-search__clear" data-global-search-clear aria-label="Limpar pesquisa" hidden>
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+              <div class="nav-search__spinner" data-global-search-spinner hidden>
+                <span class="loading-spinner" aria-hidden="true"></span>
+              </div>
+            </div>
+            <div
+              class="nav-search__results"
+              id="global-search-results"
+              data-global-search-results
+              role="listbox"
+              aria-live="polite"
+              aria-label="Resultados da pesquisa"
+              hidden
+            ></div>
           </div>`
       : '';
 
@@ -2339,9 +2578,10 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           </div>`
       : '';
 
-    const navActionsHtml = hasUser
+    const baseActionsHtml = hasUser
       ? `${notificationsMarkup}${navUserMenuHtml}`
       : '<a class="login-link" href="/login">Login</a>';
+    const navActionsHtml = `${navThemeHtml}${navLanguageHtml}${baseActionsHtml}`;
 
     const navLinks = [];
     const pushNavLink = (key, href, label) => {
@@ -2361,7 +2601,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       pushNavLink('housekeeping', '/limpeza/tarefas', 'Limpezas');
     }
     if (canAccessBackoffice && can('dashboard.view')) {
-      pushNavLink('backoffice', '/admin', 'Backoffice');
+      pushNavLink('backoffice', '/admin/dashboard', 'Backoffice');
     }
     // intentionally restrict the top navigation to the primary shortcuts only
 
@@ -2370,7 +2610,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const telemetryClientScript = telemetryFeatureEnabled ? '<script defer src="/public/js/telemetry.js"></script>' : '';
 
     return html`<!doctype html>
-    <html lang="pt">
+    <html lang="${esc(currentLanguage || 'pt')}">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -2381,6 +2621,25 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
         ${telemetryBootstrapScript}
         ${telemetryClientScript}
+        <script>
+          (function (w, d) {
+            try {
+              var storage = w.localStorage;
+              var stored = storage ? storage.getItem('ga.theme') : '';
+              var theme = stored === 'theme-dark' || stored === 'theme-light'
+                ? stored
+                : (w.matchMedia && w.matchMedia('(prefers-color-scheme: dark)').matches ? 'theme-dark' : 'theme-light');
+              if (theme !== 'theme-dark' && theme !== 'theme-light') theme = 'theme-light';
+              d.documentElement.classList.add(theme);
+              d.documentElement.setAttribute('data-theme', theme);
+            } catch (err) {
+              d.documentElement.classList.add('theme-light');
+              d.documentElement.setAttribute('data-theme', 'theme-light');
+            }
+          })(window, document);
+        </script>
+        <script defer src="/public/js/i18n.js"></script>
+        <link rel="stylesheet" href="/public/css/themes.css" />
         <link rel="stylesheet" href="/public/css/style.css" />
         <link rel="stylesheet" href="/css/responsive.css" />
         <style>
@@ -2457,7 +2716,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .feature-builder__legend-item strong{display:block;font-weight:600;color:#c2410c;}
           .feature-builder__legend-item small{display:block;color:#9a3412b3;font-size:.72rem;margin-top:.1rem;}
           .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
-          body.app-body{margin:0;background:var(--brand-background);color:#4b4d59;font-family:'Inter','Segoe UI',sans-serif;}
+          body.app-body{margin:0;background:var(--bg-color,var(--brand-background));color:var(--text-color,#4b4d59);font-family:'Inter','Segoe UI',sans-serif;}
           .app-shell{min-height:100vh;display:flex;flex-direction:column;}
           .topbar{background:var(--nav-background,var(--brand-surface));border-bottom:1px solid var(--nav-border,var(--brand-surface-border));box-shadow:0 1px 0 rgba(15,23,42,.04);}
           .topbar-inner{max-width:1120px;margin:0 auto;padding:24px 32px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:24px;}
@@ -2473,7 +2732,37 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .nav-link:hover{color:var(--nav-link-hover,#424556);}
           .nav-link.active{color:var(--nav-link-active,#2f3140);}
           .nav-link.active::after{content:'';position:absolute;left:0;right:0;bottom:-12px;height:3px;border-radius:999px;background:var(--nav-accent-gradient,linear-gradient(90deg,var(--brand-secondary),var(--brand-primary)));}
-          .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;}
+          .nav-actions{margin-left:auto;display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end;row-gap:12px;}
+          .nav-language{display:inline-flex;align-items:center;gap:10px;color:var(--nav-muted,#7a7b88);font-weight:500;}
+          .nav-language__label{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;}
+          .nav-language__select{appearance:none;border:1px solid rgba(148,163,184,.45);background:#fff;border-radius:999px;padding:.35rem .75rem;font-size:.8rem;color:#475569;cursor:pointer;box-shadow:0 6px 14px rgba(15,23,42,.08);}
+          .nav-language__select:focus{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.2);}
+          .nav-search{flex:1 1 280px;min-width:240px;position:relative;display:flex;flex-direction:column;gap:.35rem;}
+          .nav-search__control{position:relative;display:flex;align-items:center;gap:.5rem;border:1px solid rgba(148,163,184,.35);border-radius:999px;background:var(--nav-button-bg,rgba(255,255,255,.85));padding:.35rem .75rem;box-shadow:0 10px 24px rgba(15,23,42,.12);}
+          .nav-search__input{flex:1;border:none;background:transparent;color:var(--nav-foreground,#0f172a);font-size:.9rem;min-width:0;}
+          .nav-search__input:focus{outline:none;}
+          .nav-search__input::placeholder{color:var(--nav-muted,#94a3b8);}
+          .nav-search__icon{display:inline-flex;align-items:center;justify-content:center;color:var(--nav-muted,#94a3b8);}
+          .nav-search__clear{border:none;background:transparent;color:var(--nav-muted,#94a3b8);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;}
+          .nav-search__clear:hover,.nav-search__clear:focus{color:var(--nav-link-hover,#1d4ed8);}
+          .nav-search__spinner{display:inline-flex;align-items:center;justify-content:center;}
+          .nav-search__spinner[hidden]{display:none;}
+          .nav-search__results{position:absolute;top:calc(100% + 10px);left:0;right:0;background:var(--nav-panel-bg,#fff);border:1px solid var(--nav-panel-border,rgba(148,163,184,.35));border-radius:18px;box-shadow:var(--shadow-strong,0 25px 60px rgba(15,23,42,.18));padding:14px;z-index:45;max-height:420px;overflow:auto;display:grid;gap:12px;}
+          .nav-search__results[hidden]{display:none;}
+          .nav-search__group{display:grid;gap:8px;}
+          .nav-search__group-title{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--nav-muted,#94a3b8);}
+          .nav-search__items{list-style:none;margin:0;padding:0;display:grid;gap:6px;}
+          .nav-search__item{border-radius:12px;border:1px solid transparent;}
+          .nav-search__item-link{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:12px;color:var(--nav-foreground,#0f172a);text-decoration:none;transition:background .15s ease,border-color .15s ease,color .15s ease;}
+          .nav-search__item-link:hover,.nav-search__item-link:focus{background:rgba(248,250,252,.92);border-color:rgba(148,163,184,.45);outline:none;}
+          .nav-search__item-title{font-size:.9rem;font-weight:600;}
+          .nav-search__item-subtitle{font-size:.78rem;color:var(--nav-muted,#64748b);}
+          .nav-search__empty{margin:0;font-size:.85rem;color:var(--nav-muted,#64748b);}
+          .nav-theme{display:flex;align-items:center;}
+          .nav-theme__toggle{display:inline-flex;align-items:center;gap:.45rem;padding:.45rem .85rem;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:var(--nav-button-bg,rgba(255,255,255,.85));color:var(--nav-foreground,#0f172a);cursor:pointer;box-shadow:0 10px 24px rgba(15,23,42,.12);font-size:.85rem;font-weight:600;transition:background .2s ease,color .2s ease,border-color .2s ease;}
+          .nav-theme__toggle:hover,.nav-theme__toggle:focus{background:var(--nav-button-hover,rgba(241,245,249,.95));border-color:rgba(148,163,184,.65);outline:none;}
+          .nav-theme__icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--nav-muted,#64748b);}
+          .nav-theme__label{white-space:nowrap;}
           .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
           .nav-notifications{position:relative;display:flex;align-items:center;}
           .nav-notifications__button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#475569;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 18px rgba(15,23,42,.08);}
@@ -2482,9 +2771,15 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .nav-notifications__panel{position:absolute;top:calc(100% + 12px);right:0;width:320px;max-width:80vw;background:#fff;border-radius:16px;border:1px solid rgba(148,163,184,.25);box-shadow:0 18px 40px rgba(15,23,42,.2);padding:16px;z-index:50;}
           .nav-notifications__panel[hidden]{display:none;}
           .nav-notifications__header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:.85rem;font-weight:600;color:#0f172a;}
+          .nav-notifications__header-actions{display:inline-flex;align-items:center;gap:8px;}
           .nav-notifications__counter{background:#f1f5f9;color:#475569;font-size:.7rem;padding:3px 8px;border-radius:999px;font-weight:600;}
+          .nav-notifications__mark-read,.nav-notifications__refresh{border:none;background:rgba(248,250,252,.85);color:#475569;border-radius:10px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease,color .15s ease;}
+          .nav-notifications__mark-read:disabled{opacity:.45;cursor:not-allowed;}
+          .nav-notifications__mark-read:hover:not(:disabled),.nav-notifications__mark-read:focus{background:rgba(226,232,240,.85);color:var(--nav-link-hover,#1d4ed8);outline:none;}
+          .nav-notifications__refresh:hover,.nav-notifications__refresh:focus{background:rgba(226,232,240,.85);color:var(--nav-link-hover,#1d4ed8);outline:none;}
           .nav-notifications__list{margin:0;padding:0;list-style:none;display:grid;gap:12px;}
           .nav-notifications__item{border-left:3px solid rgba(148,163,184,.35);padding-left:12px;font-size:.85rem;color:#334155;line-height:1.4;}
+          .nav-notifications__item[data-notification-read="true"]{opacity:.75;}
           .nav-notifications__item--warning{border-color:#f59e0b;}
           .nav-notifications__item--danger{border-color:#ef4444;}
           .nav-notifications__item--success{border-color:#22c55e;}
@@ -2495,7 +2790,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .nav-notifications__message{margin-top:4px;color:#475569;font-size:.78rem;}
           .nav-notifications__meta{margin-top:4px;color:#94a3b8;font-size:.72rem;}
           .nav-notifications__empty{margin:0;font-size:.85rem;color:#475569;}
-          .nav-notifications__footer{margin-top:12px;text-align:right;}
+          .nav-notifications__footer{margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
           .nav-notifications__footer-link{font-size:.78rem;color:#64748b;text-decoration:none;}
           .nav-notifications__footer-link:hover{color:var(--nav-highlight,#1d4ed8);}
           .nav-user{position:relative;display:flex;align-items:center;}
@@ -3547,6 +3842,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
               <nav class="nav-links">
                 ${navLinks.join('')}
               </nav>
+              ${navSearchHtml}
               <div class="nav-actions">${navActionsHtml}</div>
             </div>
             <div class="nav-accent-bar"></div>
@@ -3558,6 +3854,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             <div class="footer-inner">(c) ${new Date().getFullYear()} ${esc(theme.brandName)} · Plataforma demo</div>
           </footer>
         </div>
+        <script defer src="/public/js/backoffice-ui.js"></script>
       </body>
     </html>`;
   }

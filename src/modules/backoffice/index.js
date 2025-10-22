@@ -17,30 +17,39 @@ const { aggregatePaymentData, computeOutstandingCents } = require('../../service
 
 const BACKOFFICE_NAV_GROUPS = [
   {
-    title: 'Operações',
+    titleKey: 'navigation.groups.operations',
+    defaultTitle: 'Operações',
     items: [
-      { label: 'Calendário', href: '/admin' },
-      { label: 'Reservas', href: '/admin/bookings' },
-      { label: 'Housekeeping', href: '/admin/limpeza' }
+      { labelKey: 'navigation.items.dashboard', defaultLabel: 'Dashboard', href: '/admin/dashboard' },
+      { labelKey: 'navigation.items.calendar', defaultLabel: 'Calendário', href: '/admin' },
+      { labelKey: 'navigation.items.bookings', defaultLabel: 'Reservas', href: '/admin/bookings' },
+      { labelKey: 'navigation.items.housekeeping', defaultLabel: 'Housekeeping', href: '/admin/limpeza' }
     ]
   },
   {
-    title: 'Finanças',
+    titleKey: 'navigation.groups.finance',
+    defaultTitle: 'Finanças',
     items: [
-      { label: 'Resumo financeiro', href: '/admin/finance' },
-      { label: 'Planos tarifários', href: '/admin/rates/plans' },
-      { label: 'Regras de tarifa', href: '/admin/rates/rules' },
-      { label: 'Extras', href: '/admin/extras' },
-      { label: 'Relatórios', href: '/admin/revenue-calendar' }
+      { labelKey: 'navigation.items.financeSummary', defaultLabel: 'Resumo financeiro', href: '/admin/finance' },
+      { labelKey: 'navigation.items.ratePlans', defaultLabel: 'Planos tarifários', href: '/admin/rates/plans' },
+      { labelKey: 'navigation.items.rateRules', defaultLabel: 'Regras de tarifa', href: '/admin/rates/rules' },
+      { labelKey: 'navigation.items.extras', defaultLabel: 'Extras', href: '/admin/extras' },
+      { labelKey: 'navigation.items.reports', defaultLabel: 'Relatórios', href: '/admin/revenue-calendar' }
     ]
   },
   {
-    title: 'Configuração',
+    titleKey: 'navigation.groups.configuration',
+    defaultTitle: 'Configuração',
     items: [
-      { label: 'Centros de conteúdo', href: '/admin/content-center' },
-      { label: 'UX API', href: '/admin/ux-api' },
-      { label: 'Administração', href: '/admin/utilizadores' }
+      { labelKey: 'navigation.items.contentCenters', defaultLabel: 'Centros de conteúdo', href: '/admin/content-center' },
+      { labelKey: 'navigation.items.uxApi', defaultLabel: 'UX API', href: '/admin/ux-api' },
+      { labelKey: 'navigation.items.admin', defaultLabel: 'Administração', href: '/admin/utilizadores' }
     ]
+  },
+  {
+    titleKey: 'navigation.groups.support',
+    defaultTitle: 'Suporte',
+    items: [{ labelKey: 'navigation.items.help', defaultLabel: 'Ajuda & FAQ', href: '/admin/ajuda' }]
   }
 ];
 
@@ -245,14 +254,8 @@ module.exports = function registerBackoffice(app, context) {
     modalTemplate = '';
   }
 
-  const navigationTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'navigation.ejs');
-  let navigationTemplateRenderer = null;
-  try {
-    const navigationTemplate = fs.readFileSync(navigationTemplatePath, 'utf8');
-    navigationTemplateRenderer = compileEjsTemplate(navigationTemplate);
-  } catch (err) {
-    navigationTemplateRenderer = null;
-  }
+  const viewsRoot = path.join(__dirname, '..', '..', 'views');
+  const templateCache = new Map();
 
   function sanitizeId(value, fallback) {
     const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
@@ -304,15 +307,342 @@ module.exports = function registerBackoffice(app, context) {
     }
   }
 
-  function renderNavigation(activeNav) {
+  function resolveIncludePath(fromPath, includeTarget) {
+    if (typeof includeTarget !== 'string' || !includeTarget.trim()) {
+      return null;
+    }
+    let target = includeTarget.trim();
+    if (!path.extname(target)) {
+      target += '.ejs';
+    }
+    if (path.isAbsolute(target)) {
+      const relative = target.replace(/^\/+/, '');
+      return path.join(viewsRoot, relative);
+    }
+    return path.resolve(path.dirname(fromPath), target);
+  }
+
+  function loadTemplateRenderer(templatePath) {
+    if (!templatePath) return null;
+    if (templateCache.has(templatePath)) {
+      return templateCache.get(templatePath);
+    }
+    let template = '';
+    try {
+      template = fs.readFileSync(templatePath, 'utf8');
+    } catch (err) {
+      templateCache.set(templatePath, null);
+      return null;
+    }
+    const compiled = compileEjsTemplate(template);
+    if (!compiled) {
+      templateCache.set(templatePath, null);
+      return null;
+    }
+    const renderer = (locals = {}) => {
+      const context = { ...locals };
+      context.include = (includeTarget, includeLocals = {}) => {
+        const resolvedPath = resolveIncludePath(templatePath, includeTarget);
+        if (!resolvedPath) return '';
+        const partialRenderer = loadTemplateRenderer(resolvedPath);
+        if (typeof partialRenderer !== 'function') return '';
+        const childContext = { ...context, ...includeLocals };
+        delete childContext.include;
+        return partialRenderer(childContext);
+      };
+      return compiled(context);
+    };
+    templateCache.set(templatePath, renderer);
+    return renderer;
+  }
+
+  const navigationTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'partials', 'navigation.ejs')
+  );
+  const dashboardTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'dashboard.ejs')
+  );
+  const tableTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'partials', 'table.ejs')
+  );
+  const propertiesTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'properties.ejs')
+  );
+  const unitsTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'units.ejs')
+  );
+  const usersTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'users.ejs')
+  );
+  const extrasTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'finance', 'extras.ejs')
+  );
+  const uxApiTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'ux-api.ejs')
+  );
+  const helpTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'help.ejs')
+  );
+
+  function renderNavigation(activeNav, req, res) {
     if (!navigationTemplateRenderer) return '';
     try {
+      const translator = resolveTranslator(req, res);
+      const groups = BACKOFFICE_NAV_GROUPS.map(group => {
+        const groupTitle = translator(group.titleKey) || group.defaultTitle || group.titleKey;
+        const items = Array.isArray(group.items)
+          ? group.items.map(item => ({
+              ...item,
+              label:
+                translator(item.labelKey) ||
+                item.defaultLabel ||
+                item.label ||
+                item.labelKey,
+            }))
+          : [];
+        return {
+          ...group,
+          title: groupTitle,
+          items,
+        };
+      });
       return navigationTemplateRenderer({
         activeNav: typeof activeNav === 'string' ? activeNav : '',
-        groups: BACKOFFICE_NAV_GROUPS,
-        esc
+        groups,
+        esc,
       });
     } catch (err) {
+      return '';
+    }
+  }
+
+  function escapeSqlLike(value) {
+    return String(value || '').replace(/[\\%_]/g, '\\$&');
+  }
+
+  function computeNotificationKey(item) {
+    if (!item) return '';
+    const parts = [item.title || '', item.message || '', item.meta || '', item.href || ''];
+    const raw = parts.join('|');
+    try {
+      return Buffer.from(raw).toString('base64');
+    } catch (err) {
+      return raw.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 64);
+    }
+  }
+
+  function getNotificationReadSet(req) {
+    if (!req || !req.session) return new Set();
+    const store = req.session;
+    if (!Array.isArray(store.notificationReadKeys)) {
+      store.notificationReadKeys = [];
+    }
+    return new Set(store.notificationReadKeys);
+  }
+
+  function storeNotificationReadSet(req, set) {
+    if (!req || !req.session) return;
+    req.session.notificationReadKeys = Array.from(set || []);
+  }
+
+  function loadNotifications(req, res) {
+    const base = buildUserNotifications({
+      user: req && req.user,
+      db,
+      dayjs,
+      userCan,
+      ensureAutomationFresh,
+      automationCache
+    });
+    const readSet = getNotificationReadSet(req);
+    const list = (Array.isArray(base) ? base : []).map(item => {
+      const key = computeNotificationKey(item);
+      return {
+        ...item,
+        key,
+        read: key ? readSet.has(key) : false
+      };
+    });
+    const unreadCount = list.filter(item => !item.read).length;
+    return { list, unreadCount, readSet };
+  }
+
+  function labelBookingStatus(statusRaw) {
+    const status = String(statusRaw || '').toUpperCase();
+    if (status === 'CONFIRMED') return 'Confirmada';
+    if (status === 'PENDING') return 'Pendente';
+    if (status === 'CANCELLED' || status === 'CANCELED') return 'Cancelada';
+    return status || 'Desconhecido';
+  }
+
+  app.get('/admin/search', requireLogin, requireBackofficeAccess, (req, res) => {
+    const queryRaw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!queryRaw) {
+      return res.json({ ok: true, query: '', groups: [] });
+    }
+    const normalized = queryRaw.slice(0, 120);
+    if (normalized.length < 2) {
+      return res.json({ ok: true, query: normalized, groups: [] });
+    }
+    const escaped = escapeSqlLike(normalized);
+    const likeTerm = `%${escaped}%`;
+    const numericTerm = queryRaw.replace(/[^0-9]/g, '');
+    const likeId = numericTerm ? `%${numericTerm}%` : likeTerm;
+
+    const bookingsStmt = db.prepare(
+      `SELECT b.id, b.guest_name, b.guest_email, b.status, b.checkin, b.checkout,
+              u.name AS unit_name, p.name AS property_name
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE b.guest_name LIKE ? ESCAPE '\\'
+           OR b.guest_email LIKE ? ESCAPE '\\'
+           OR p.name LIKE ? ESCAPE '\\'
+           OR u.name LIKE ? ESCAPE '\\'
+           OR CAST(b.id AS TEXT) LIKE ?
+        ORDER BY b.created_at DESC
+        LIMIT 6`
+    );
+    const bookingRows = bookingsStmt.all(likeTerm, likeTerm, likeTerm, likeTerm, likeId);
+    const bookingItems = bookingRows.map(row => {
+      const checkin = row.checkin ? dayjs(row.checkin).format('DD/MM') : '';
+      const checkout = row.checkout ? dayjs(row.checkout).format('DD/MM') : '';
+      const meta = checkin && checkout ? `${checkin} – ${checkout}` : '';
+      return {
+        title: `Reserva #${row.id} · ${row.guest_name || 'Sem hóspede'}`,
+        subtitle: [row.property_name, row.unit_name].filter(Boolean).join(' · '),
+        meta,
+        badge: labelBookingStatus(row.status),
+        href: `/admin/bookings/${row.id}`,
+        icon: 'calendar'
+      };
+    });
+
+    const unitStmt = db.prepare(
+      `SELECT u.id, u.name, u.capacity, p.name AS property_name
+         FROM units u
+         JOIN properties p ON p.id = u.property_id
+        WHERE u.name LIKE ? ESCAPE '\\'
+           OR p.name LIKE ? ESCAPE '\\'
+        ORDER BY p.name, u.name
+        LIMIT 5`
+    );
+    const unitRows = unitStmt.all(likeTerm, likeTerm);
+    const unitItems = unitRows.map(row => ({
+      title: row.name,
+      subtitle: row.property_name || '',
+      meta: Number.isFinite(row.capacity) ? `Capacidade ${row.capacity}` : '',
+      href: `/admin/units?search=${encodeURIComponent(row.name)}`,
+      icon: 'bed-double'
+    }));
+
+    const guestStmt = db.prepare(
+      `SELECT guest_name, guest_email, MAX(created_at) AS last_created_at, MAX(id) AS booking_id
+         FROM bookings
+        WHERE guest_name LIKE ? ESCAPE '\\'
+           OR guest_email LIKE ? ESCAPE '\\'
+        GROUP BY guest_email, guest_name
+        ORDER BY last_created_at DESC
+        LIMIT 5`
+    );
+    const guestRows = guestStmt.all(likeTerm, likeTerm);
+    const guestItems = guestRows.map(row => ({
+      title: row.guest_name || row.guest_email || 'Hóspede',
+      subtitle: row.guest_email || '',
+      meta: row.last_created_at ? dayjs(row.last_created_at).format('DD/MM/YYYY HH:mm') : '',
+      href: `/admin/bookings?search=${encodeURIComponent(row.guest_email || row.guest_name || '')}`,
+      icon: 'user'
+    }));
+
+    const contentStmt = db.prepare(
+      `SELECT id, title, locale, updated_at
+         FROM kb_articles
+        WHERE title LIKE ? ESCAPE '\\'
+           OR body LIKE ? ESCAPE '\\'
+        ORDER BY updated_at DESC
+        LIMIT 5`
+    );
+    const contentRows = contentStmt.all(likeTerm, likeTerm);
+    const contentItems = contentRows.map(row => ({
+      title: row.title,
+      subtitle: row.locale ? `Idioma ${row.locale.toUpperCase()}` : '',
+      meta: row.updated_at ? dayjs(row.updated_at).format('DD/MM/YYYY HH:mm') : '',
+      href: `/admin/content-center?search=${encodeURIComponent(row.title)}`,
+      icon: 'book-open'
+    }));
+
+    const groups = [];
+    if (bookingItems.length) groups.push({ type: 'bookings', label: 'Reservas', items: bookingItems });
+    if (unitItems.length) groups.push({ type: 'units', label: 'Unidades', items: unitItems });
+    if (guestItems.length) groups.push({ type: 'guests', label: 'Hóspedes', items: guestItems });
+    if (contentItems.length) groups.push({ type: 'content', label: 'Conteúdos', items: contentItems });
+
+    const total = groups.reduce((sum, group) => sum + (Array.isArray(group.items) ? group.items.length : 0), 0);
+    res.json({ ok: true, query: normalized, groups, total });
+  });
+
+  app.get('/admin/notifications', requireLogin, requireBackofficeAccess, (req, res) => {
+    const { list, unreadCount } = loadNotifications(req, res);
+    res.json({ ok: true, notifications: list, unreadCount });
+  });
+
+  app.post('/admin/notifications/read', requireLogin, requireBackofficeAccess, (req, res) => {
+    const body = req.body || {};
+    const keys = Array.isArray(body.keys) ? body.keys : [];
+    if (keys.length) {
+      const readSet = getNotificationReadSet(req);
+      keys.forEach(key => {
+        if (typeof key === 'string' && key.trim()) {
+          readSet.add(key.trim());
+        }
+      });
+      storeNotificationReadSet(req, readSet);
+    }
+    const { unreadCount } = loadNotifications(req, res);
+    res.json({ ok: true, unread: unreadCount });
+  });
+
+  function resolveTranslator(req, res, fallback) {
+    if (res && res.locals && typeof res.locals.t === 'function') {
+      return res.locals.t;
+    }
+    if (req && typeof req.t === 'function') {
+      return req.t;
+    }
+    if (i18n && typeof i18n.createTranslator === 'function') {
+      const language =
+        (res && res.locals && res.locals.language) ||
+        (req && req.language) ||
+        (typeof i18n.defaultLanguage === 'string' ? i18n.defaultLanguage : 'pt');
+      return i18n.createTranslator(language);
+    }
+    if (typeof fallback === 'function') {
+      return fallback;
+    }
+    return (key) => key;
+  }
+
+  function renderTable(config = {}, req, res) {
+    if (!tableTemplateRenderer) return '';
+    try {
+      const tableConfig = { ...config };
+      tableConfig.esc = esc;
+      if (!tableConfig.t) {
+        tableConfig.t = resolveTranslator(req, res, tableConfig.t);
+      }
+      if (!Object.prototype.hasOwnProperty.call(tableConfig, 'emptyMessage')) {
+        tableConfig.emptyMessage = undefined;
+      }
+      if (!Object.prototype.hasOwnProperty.call(tableConfig, 'hiddenInputs')) {
+        tableConfig.hiddenInputs = {};
+      }
+      if (typeof tableConfig.showActionsColumn !== 'boolean') {
+        const rows = Array.isArray(tableConfig.rows) ? tableConfig.rows : [];
+        tableConfig.showActionsColumn = rows.some(row => Array.isArray(row.actions) && row.actions.length);
+      }
+      return tableTemplateRenderer(tableConfig);
+    } catch (err) {
+      console.warn('Falha ao renderizar tabela:', err.message);
       return '';
     }
   }
@@ -450,6 +780,8 @@ module.exports = function registerBackoffice(app, context) {
     renderBreadcrumbs,
     serverRender,
     extrasManagerScript,
+    renderTable,
+    extrasTemplateRenderer,
   });
 
   // Registar rotas de reservas no backoffice.
@@ -752,2556 +1084,439 @@ module.exports = function registerBackoffice(app, context) {
     }
   );
 
-  app.get('/admin', requireLogin, requirePermission('dashboard.view'), (req, res) => {
-    res.locals.activeNav = '/admin';
-    const props = db.prepare('SELECT * FROM properties ORDER BY name').all();
-    const unitsRaw = db
-      .prepare(
-        `SELECT u.*, p.name as property_name, p.locality as property_locality, p.district as property_district
-         FROM units u
-         JOIN properties p ON p.id = u.property_id
-        ORDER BY p.name, u.name`
-      )
-      .all();
-    const units = unitsRaw.map(u => {
-      const lat = u.latitude != null ? Number.parseFloat(u.latitude) : NaN;
-      const lon = u.longitude != null ? Number.parseFloat(u.longitude) : NaN;
-      return {
-        ...u,
-        unit_type: deriveUnitType(u),
-        latitude: Number.isFinite(lat) ? lat : null,
-        longitude: Number.isFinite(lon) ? lon : null
-      };
-    });
-    const activeUnitBlocks = db
-      .prepare(
-        `SELECT unit_id, start_date, end_date, reason
-           FROM unit_blocks
-          WHERE end_date > ?
-            AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')
-          ORDER BY start_date`
-      )
-      .all(dayjs().format('YYYY-MM-DD'));
-    const unitBlockIndex = new Map();
-    activeUnitBlocks.forEach(block => {
-      if (!unitBlockIndex.has(block.unit_id)) unitBlockIndex.set(block.unit_id, []);
-      unitBlockIndex.get(block.unit_id).push(block);
-    });
-    const propertyUnitMap = new Map();
-    props.forEach(p => propertyUnitMap.set(p.id, []));
-    units.forEach(u => {
-      if (!propertyUnitMap.has(u.property_id)) propertyUnitMap.set(u.property_id, []);
-      propertyUnitMap.get(u.property_id).push(u);
-    });
-
-    const propertyRevenueRows = db
-      .prepare(
-        `SELECT p.id,
-                p.name,
-                p.locality,
-                p.district,
-                SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END) AS confirmed_revenue_cents,
-                SUM(CASE WHEN b.status = 'PENDING' THEN b.total_cents ELSE 0 END) AS pending_revenue_cents,
-                COUNT(DISTINCT u.id) AS unit_count
-           FROM properties p
-           LEFT JOIN units u ON u.property_id = p.id
-           LEFT JOIN bookings b ON b.unit_id = u.id
-          GROUP BY p.id
-          ORDER BY p.name`
-      )
-      .all();
-
-    const recentBookings = db
-      .prepare(
-        `SELECT b.*, u.name as unit_name, p.name as property_name
-           FROM bookings b
-           JOIN units u ON u.id = b.unit_id
-           JOIN properties p ON p.id = u.property_id
-          ORDER BY b.created_at DESC
-          LIMIT 12`
-      )
-      .all();
-
-    const automationData = ensureAutomationFresh(5) || automationCache;
-    const automationMetrics = automationData.metrics || {};
-    const automationNotifications = automationData.notifications || [];
-    const automationSuggestions = automationData.tariffSuggestions || [];
-    const automationBlocks = automationData.generatedBlocks || [];
-    const automationDaily = (automationData.summaries && automationData.summaries.daily) || [];
-    const automationWeekly = (automationData.summaries && automationData.summaries.weekly) || [];
-    const automationLastRun = automationData.lastRun ? dayjs(automationData.lastRun).format('DD/MM HH:mm') : '—';
-    const automationRevenue7 = automationData.revenue ? automationData.revenue.next7 || 0 : 0;
-    const automationRevenue30 = automationData.revenue ? automationData.revenue.next30 || 0 : 0;
-    const totalUnitsCount = automationMetrics.totalUnits || units.length || 0;
-
-    const unitTypeOptions = Array.from(new Set(units.map(u => u.unit_type).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b, 'pt', { sensitivity: 'base' })
-    );
-    const monthOptions = [];
-    const monthBase = dayjs().startOf('month');
-    for (let i = 0; i < 12; i++) {
-      const m = monthBase.subtract(i, 'month');
-      monthOptions.push({ value: m.format('YYYY-MM'), label: capitalizeMonth(m.format('MMMM YYYY')) });
-    }
-    const defaultMonthValue = monthOptions.length ? monthOptions[0].value : dayjs().format('YYYY-MM');
-    const operationalDefault = computeOperationalDashboard({ month: defaultMonthValue });
-    const operationalConfig = {
-      filters: {
-        months: monthOptions,
-        properties: props.map(p => ({ id: p.id, name: p.name })),
-        unitTypes: unitTypeOptions
-      },
-      defaults: {
-        month: operationalDefault.month,
-        propertyId: operationalDefault.filters.propertyId ? String(operationalDefault.filters.propertyId) : '',
-        unitType: operationalDefault.filters.unitType || ''
-      },
-      initialData: operationalDefault
-    };
-    const operationalConfigJson = jsonScriptPayload(operationalConfig);
-
-    const financialTotals =
-      db
-        .prepare(
-          `SELECT
-              SUM(CASE WHEN status = 'CONFIRMED' THEN total_cents ELSE 0 END) AS confirmed_cents,
-              SUM(CASE WHEN status = 'PENDING' THEN total_cents ELSE 0 END) AS pending_cents,
-              SUM(CASE WHEN status = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed_count,
-              SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count
-           FROM bookings`
-        )
-        .get() || {};
-    const confirmedRevenueCents = financialTotals.confirmed_cents || 0;
-    const pendingRevenueCents = financialTotals.pending_cents || 0;
-    const confirmedBookingsCount = financialTotals.confirmed_count || 0;
-    const pendingBookingsCount = financialTotals.pending_count || 0;
-    const averageTicketCents = confirmedBookingsCount ? Math.round(confirmedRevenueCents / confirmedBookingsCount) : 0;
-
-    const canManageProperties = userCan(req.user, 'properties.manage');
-    const canViewAutomation = userCan(req.user, 'automation.view');
-    const canManageHousekeeping = userCan(req.user, 'housekeeping.manage');
-    const canViewHousekeeping = userCan(req.user, 'housekeeping.view');
-    const canSeeHousekeeping = canManageHousekeeping || canViewHousekeeping;
-    const canManageUsers = userCan(req.user, 'users.manage');
-    const canManageEmailTemplates = userCan(req.user, 'bookings.edit');
-    const canManageIntegrations = canManageEmailTemplates;
-    const canViewCalendar = userCan(req.user, 'calendar.view');
-    const canViewRevenueCalendar = userCan(req.user, 'dashboard.view');
-    const isDevOperator = req.user && req.user.role === MASTER_ROLE;
-    const isDirectorOperator = req.user && req.user.role === 'direcao';
-    const canViewHistory = !!(isDevOperator || isDirectorOperator);
-
-    let housekeepingSummary = null;
-    let housekeepingCounts = null;
-    let housekeepingPending = [];
-    let housekeepingInProgress = [];
-    let housekeepingCompleted = [];
-    if (canSeeHousekeeping) {
-      housekeepingSummary = computeHousekeepingBoard({ horizonDays: 3, futureWindowDays: 21 });
-      const tasks = Array.isArray(housekeepingSummary.tasks) ? housekeepingSummary.tasks : [];
-      housekeepingCounts = {
-        pending: tasks.filter(task => task.status === 'pending').length,
-        inProgress: tasks.filter(task => task.status === 'in_progress').length,
-        highPriority: tasks.filter(task => task.priority === 'alta' && task.status !== 'completed').length,
-        completedRecent: 0
-      };
-      housekeepingPending = tasks.filter(task => task.status === 'pending').slice(0, 6);
-      housekeepingInProgress = tasks.filter(task => task.status === 'in_progress').slice(0, 6);
-      housekeepingCompleted = getHousekeepingTasks({
-        statuses: ['completed'],
-        includeCompleted: true,
-        limit: 40,
-        order: 'completed_desc'
-      })
-        .filter(task => task.completed_at && dayjs(task.completed_at).isAfter(dayjs().subtract(7, 'day')))
-        .slice(0, 6);
-      housekeepingCounts.completedRecent = housekeepingCompleted.length;
-    }
-
-    const userRows = canManageUsers
-      ? db
-          .prepare('SELECT id, username, role FROM users WHERE tenant_id = ? ORDER BY username')
-          .all(req.tenant && req.tenant.id ? Number(req.tenant.id) : 1)
-      : [];
-
-    const calendarPreview = canViewCalendar
-      ? db
-          .prepare(
-            `SELECT b.id, b.guest_name, b.checkin, b.checkout, b.status, u.name AS unit_name, p.name AS property_name
-               FROM bookings b
-               JOIN units u ON u.id = b.unit_id
-               JOIN properties p ON p.id = u.property_id
-              WHERE b.status IN ('CONFIRMED','PENDING')
-                AND b.checkout >= date('now')
-              ORDER BY b.checkin
-              LIMIT 12`
-          )
-          .all()
-      : [];
-
-    const historyLimit = 60;
-    let historyBookingLogs = [];
-    let historyTaskLogs = [];
-    if (canViewHistory) {
-      const historyStmt = db.prepare(
-        `SELECT cl.id,
-                cl.entity_type,
-                cl.entity_id,
-                cl.action,
-                cl.before_json,
-                cl.after_json,
-                cl.created_at,
-                u.username AS actor_username
-           FROM change_logs cl
-           LEFT JOIN users u ON u.id = cl.actor_id
-          WHERE cl.entity_type = ?
-          ORDER BY cl.created_at DESC
-          LIMIT ?`
-      );
-      historyBookingLogs = historyStmt.all('booking', historyLimit);
-      historyTaskLogs = historyStmt.all('housekeeping_task', historyLimit);
-    }
-
-    let historyBookingHtml = '';
-    let historyTaskHtml = '';
-    if (canViewHistory) {
-      const renderHistoryEntry = (log, label) => html`
-        <article class="bo-card p-4 space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <span class="text-sm text-slate-600">${dayjs(log.created_at).format('DD/MM/YYYY HH:mm')}</span>
-            <span class="text-xs uppercase tracking-wide text-amber-700">${esc(log.action)}</span>
-          </div>
-          <div class="flex flex-wrap gap-2 text-sm text-slate-700">
-            <span class="pill-indicator">${esc(label)}</span>
-            <span class="text-slate-500">por ${esc(log.actor_username || 'Utilizador removido')}</span>
-          </div>
-          <div class="bg-slate-50 rounded-lg p-3 overflow-x-auto">${renderAuditDiff(log.before_json, log.after_json)}</div>
-        </article>
-      `;
-      historyBookingHtml = historyBookingLogs.length
-        ? historyBookingLogs.map(log => renderHistoryEntry(log, `Reserva #${log.entity_id}`)).join('')
-        : '<p class="bo-empty">Sem alterações recentes às reservas.</p>';
-      historyTaskHtml = historyTaskLogs.length
-        ? historyTaskLogs.map(log => renderHistoryEntry(log, `Tarefa #${log.entity_id}`)).join('')
-        : '<p class="bo-empty">Sem alterações recentes às tarefas de limpeza.</p>';
-    }
-
-    const notifications = buildUserNotifications({
-      user: req.user,
-      db,
-      dayjs,
-      userCan,
-      automationData,
-      automationCache,
-      ensureAutomationFresh
-    });
-
-    const enableExportShortcuts = isFlagEnabled('FEATURE_NAV_EXPORT_SHORTCUTS');
-    const canExportBookings = enableExportShortcuts && userCan(req.user, 'bookings.export');
-    const canManageRates = userCan(req.user, 'rates.manage');
-    const canAccessAudit = userCan(req.user, 'audit.view') || userCan(req.user, 'logs.view');
-
-    const canViewBookings = userCan(req.user, 'bookings.view');
-    const quickLinks = [];
-    if (canManageHousekeeping) {
-      quickLinks.push({
-        title: 'Limpezas',
-        description: 'Planeia e acompanha tarefas de housekeeping avançadas.',
-        href: '/admin/limpeza',
-        cta: 'Abrir limpezas'
-      });
-    }
-    if (canExportBookings) {
-      quickLinks.push({
-        title: 'Exportar calendário',
-        description: 'Gera ficheiros Excel com reservas confirmadas.',
-        href: '/admin/export',
-        cta: 'Exportar reservas'
-      });
-    }
-    if (canManageRates) {
-      quickLinks.push({
-        title: 'Regras de tarifas',
-        description: 'Configura regras automáticas e ajustes dinâmicos de preço.',
-        href: '/admin/rates/rules',
-        cta: 'Gerir tarifas'
-      });
-    }
-    if (canManageProperties) {
-      const managedProperty =
-        props.find(p => userHasScope(req.user, 'properties.manage', p.id)) || props[0] || null;
-      if (managedProperty) {
-        quickLinks.push({
-          title: 'Propriedades',
-          description: `Abrir ${managedProperty.name}`,
-          href: `/admin/properties/${managedProperty.id}`,
-          cta: 'Abrir propriedade'
-        });
-      } else {
-        quickLinks.push({
-          title: 'Propriedades',
-          description: 'Sem propriedades atribuídas. Adicione uma para começar.',
-          href: null,
-          locked: true
-        });
-      }
-    }
-    if (canManageUsers) {
-      quickLinks.push({
-        title: 'Utilizadores',
-        description: 'Gerir contas internas, perfis e permissões.',
-        href: '/admin/utilizadores',
-        cta: 'Gerir utilizadores'
-      });
+  app.get('/admin', requireLogin, requireBackofficeAccess, (req, res) => {
+    if (userCan(req.user, 'dashboard.view')) {
+      return res.redirect('/admin/dashboard');
     }
     if (userCan(req.user, 'bookings.view')) {
-      quickLinks.push({
-        title: 'Pagamentos',
-        description: 'Consulta cobranças registadas e estado de reconciliação.',
-        href: '/admin/pagamentos',
-        cta: 'Ver pagamentos'
-      });
+      return res.redirect('/admin/bookings');
     }
-    if (isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit) {
-      quickLinks.push({
-        title: 'Auditoria',
-        description: 'Consulta logs de alterações, sessões e acessos sensíveis.',
-        href: '/admin/auditoria',
-        cta: 'Abrir auditoria'
-      });
+    if (userCan(req.user, 'calendar.view')) {
+      return res.redirect('/calendar');
     }
-    let quickAccessHtml = '';
-
-    const channelRecords = channelIntegrations.listIntegrations();
-    const channelNameMap = new Map(channelRecords.map(record => [record.key, record.name]));
-    const channelRecentImports = channelIntegrations.listRecentImports(12);
-    const manualChannelOptions = channelRecords
-      .filter(record => record.supportsManual)
-      .map(record => `<option value="${record.key}">${esc(record.name)}</option>`)
-      .join('');
-    const manualFormatsLegend = channelRecords
-      .filter(record => record.supportsManual && record.manualFormats && record.manualFormats.length)
-      .map(
-        record => `
-          <li class="flex items-center justify-between gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-3 py-2 text-xs">
-            <span class="font-medium text-slate-700">${esc(record.name)}</span>
-            <span class="text-[11px] uppercase tracking-wide text-slate-500">${esc(record.manualFormats.join(', '))}</span>
-          </li>`
-      )
-      .join('');
-    const channelNoticeRaw = typeof req.query.channel_notice === 'string' ? req.query.channel_notice : '';
-    const buildChannelNotice = (tone, text) => {
-      const toneClass =
-        tone === 'success'
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : tone === 'warning'
-          ? 'border-amber-200 bg-amber-50 text-amber-700'
-          : 'border-rose-200 bg-rose-50 text-rose-700';
-      return `<div class="rounded-2xl border px-4 py-3 text-sm leading-relaxed ${toneClass}">${esc(text)}</div>`;
-    };
-    let channelNoticeHtml = '';
-    if (channelNoticeRaw) {
-      if (channelNoticeRaw.startsWith('imported:')) {
-        const parts = channelNoticeRaw.split(':');
-        const inserted = Number(parts[1] || 0);
-        const unmatched = Number(parts[2] || 0);
-        const duplicates = Number(parts[3] || 0);
-        const conflicts = Number(parts[4] || 0);
-        const errorsCount = Number(parts[5] || 0);
-        const fragments = [`${inserted} reserva${inserted === 1 ? '' : 's'} adicionada${inserted === 1 ? '' : 's'}`];
-        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
-        if (conflicts) fragments.push(`${conflicts} em conflito`);
-        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
-        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
-        channelNoticeHtml = buildChannelNotice(
-          errorsCount || conflicts ? 'warning' : 'success',
-          `Importação concluída: ${fragments.join(' · ')}.`
-        );
-      } else if (channelNoticeRaw.startsWith('sync:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const inserted = Number(parts[2] || 0);
-        const unmatched = Number(parts[3] || 0);
-        const duplicates = Number(parts[4] || 0);
-        const conflicts = Number(parts[5] || 0);
-        const errorsCount = Number(parts[6] || 0);
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        const fragments = [`${inserted} nova${inserted === 1 ? '' : 's'}`];
-        if (duplicates) fragments.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
-        if (conflicts) fragments.push(`${conflicts} em conflito`);
-        if (unmatched) fragments.push(`${unmatched} sem correspondência`);
-        if (errorsCount) fragments.push(`${errorsCount} erro${errorsCount === 1 ? '' : 's'}`);
-        channelNoticeHtml = buildChannelNotice(
-          errorsCount || conflicts ? 'warning' : 'success',
-          `Sincronização de ${channelName}: ${fragments.join(' · ')}.`
-        );
-      } else if (channelNoticeRaw.startsWith('settings:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        channelNoticeHtml = buildChannelNotice('success', `Definições de ${channelName} guardadas com sucesso.`);
-      } else if (channelNoticeRaw.startsWith('skipped:')) {
-        const parts = channelNoticeRaw.split(':');
-        const channelKey = parts[1] || '';
-        const channelName = channelNameMap.get(channelKey) || channelKey;
-        channelNoticeHtml = buildChannelNotice(
-          'warning',
-          `Sincronização ignorada. Verifique a configuração automática de ${channelName}.`
-        );
-      } else if (channelNoticeRaw.startsWith('error:')) {
-        const message = channelNoticeRaw.slice(6).trim() || 'Erro inesperado ao processar a integração.';
-        channelNoticeHtml = buildChannelNotice('danger', `Erro na integração: ${message}.`);
-      }
+    if (userCan(req.user, 'housekeeping.view') || userCan(req.user, 'housekeeping.manage')) {
+      return res.redirect('/admin/limpeza');
     }
+    return res.redirect('/');
+  });
 
-    const totalChannels = channelRecords.length;
-    const autoActiveCount = channelRecords.filter(record => {
-      const settings = record.settings || {};
-      return record.supportsAuto && settings.autoEnabled && settings.autoUrl;
-    }).length;
-    const manualEnabledCount = channelRecords.filter(record => record.supportsManual).length;
-    const channelsNeedingAttention = channelRecords.filter(record => {
-      const settings = record.settings || {};
-      const autoEnabled = record.supportsAuto && settings.autoEnabled;
-      return (autoEnabled && !settings.autoUrl) || record.last_status === 'failed' || record.last_error;
-    }).length;
+  app.get('/admin/dashboard', requireLogin, requireScope('dashboard.view'), (req, res) => {
+    ensureNoIndex(res);
+    res.locals.activeNav = '/admin/dashboard';
 
-    let lastSyncMoment = null;
-    channelRecords.forEach(record => {
-      if (record.last_synced_at) {
-        const candidate = dayjs(record.last_synced_at);
-        if (candidate.isValid() && (!lastSyncMoment || candidate.isAfter(lastSyncMoment))) {
-          lastSyncMoment = candidate;
-        }
-      }
+    const translator = resolveTranslator(req, res);
+    const languageInput =
+      (res.locals && res.locals.language) ||
+      req.language ||
+      'pt';
+    const normalizedLanguage = typeof languageInput === 'string' ? languageInput.toLowerCase() : 'pt';
+    const locale = normalizedLanguage.startsWith('en') ? 'en-US' : 'pt-PT';
+
+    const today = dayjs().format('YYYY-MM-DD');
+    const monthStart = dayjs().startOf('month').format('YYYY-MM-DD');
+    const monthEnd = dayjs().endOf('month').format('YYYY-MM-DD');
+
+    const numberFormatter = new Intl.NumberFormat(locale);
+    const percentFormatter = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1
     });
-    const lastSyncLabel = lastSyncMoment ? lastSyncMoment.format('DD/MM/YYYY HH:mm') : 'Sem registos';
-    const recentImportCount = channelRecentImports.length;
 
-    const channelAlerts = channelRecords
-      .map(record => {
-        const settings = record.settings || {};
-        const issues = [];
-        if (record.supportsAuto && settings.autoEnabled && !settings.autoUrl) {
-          issues.push('Auto-sync ativo sem URL configurado');
-        }
-        if (record.last_status === 'failed') {
-          issues.push('Última sincronização falhou');
-        }
-        if (record.last_error) {
-          issues.push(record.last_error);
-        }
-        return issues.length ? { name: record.name, issues } : null;
-      })
-      .filter(Boolean);
-    const channelAlertsHtml = channelAlerts.length
-      ? channelAlerts
-          .map(alert => {
-            const issuesList = alert.issues.map(issue => `<li>${esc(issue)}</li>`).join('');
-            return `
-              <li class="rounded-xl border border-rose-200/70 bg-rose-50/70 p-3 space-y-1">
-                <p class="text-sm font-semibold text-rose-700">${esc(alert.name)}</p>
-                <ul class="list-disc pl-4 text-xs text-rose-600 space-y-1">${issuesList}</ul>
-              </li>`;
-          })
-          .join('')
-      : '<p class="bo-empty text-sm">Sem alertas pendentes.</p>';
+    const totalUnitsRow = db.prepare('SELECT COUNT(*) AS count FROM units').get() || {};
+    const totalUnits = Number(totalUnitsRow.count || 0);
 
-    const channelCardsHtml = channelRecords.length
-      ? channelRecords
-          .map(channel => {
-            const autoSettings = channel.settings || {};
-            const autoEnabled = channel.supportsAuto && !!autoSettings.autoEnabled;
-            const autoConfigured = autoEnabled && !!autoSettings.autoUrl;
-            const autoBadgeLabel = autoConfigured
-              ? 'Auto-sync ativo'
-              : autoEnabled
-              ? 'Auto-sync incompleto'
-              : 'Auto-sync desligado';
-            const autoBadgeClass = autoConfigured
-              ? 'bg-emerald-100 text-emerald-700'
-              : autoEnabled
-              ? 'bg-amber-100 text-amber-700'
-              : 'bg-slate-100 text-slate-600';
-            const manualBadge = channel.supportsManual
-              ? '<span class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700">Upload manual</span>'
-              : '';
-            const needsAttention =
-              (autoEnabled && !autoSettings.autoUrl) || channel.last_status === 'failed' || !!channel.last_error;
-            const attentionBadge = needsAttention
-              ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700">Rever configuração</span>'
-              : '';
-            const lastSyncLabel = channel.last_synced_at
-              ? dayjs(channel.last_synced_at).format('DD/MM/YYYY HH:mm')
-              : 'Nunca sincronizado';
-            const statusLabel = channel.last_status
-              ? channel.last_status === 'processed'
-                ? 'Sincronização concluída'
-                : channel.last_status === 'partial'
-                ? 'Processada com avisos'
-                : channel.last_status === 'failed'
-                ? 'Falhou'
-                : channel.last_status
-              : autoConfigured
-              ? 'Aguardando próxima execução'
-              : '';
-            const statusClass =
-              channel.last_status === 'failed'
-                ? 'text-rose-600'
-                : channel.last_status === 'partial'
-                ? 'text-amber-600'
-                : channel.last_status === 'processed'
-                ? 'text-emerald-600'
-                : 'text-slate-500';
-            const summary = channel.last_summary || null;
-            const summaryBadges = summary
-              ? `
-                <div class="mt-3 flex flex-wrap gap-2 text-[11px] leading-tight">
-                  <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">${summary.insertedCount || 0} novas</span>
-                  ${summary.duplicateCount ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">${summary.duplicateCount} duplicadas</span>` : ''}
-                  ${summary.unmatchedCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.unmatchedCount} sem correspondência</span>` : ''}
-                  ${summary.conflictCount ? `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">${summary.conflictCount} conflitos</span>` : ''}
-                  ${summary.errorCount ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">${summary.errorCount} erros</span>` : ''}
-                </div>`
-              : '';
-            const manualInfo = channel.supportsManual
-              ? `<p class="text-xs text-slate-500">Ficheiros suportados: ${esc(
-                  (channel.manualFormats || []).map(format => format.toUpperCase()).join(', ') || '—'
-                )}. Utilize a área de upload manual para carregar exportações do canal.</p>`
-              : '<p class="text-xs text-slate-500">Este canal é gerido apenas através da sincronização automática.</p>';
-            const defaultStatusLabel = autoSettings.defaultStatus === 'PENDING' ? 'Pendente' : 'Confirmada';
-            const summaryDetails = summary
-              ? `<div class="border-t border-slate-200/70 pt-2">
-                  <p class="text-xs font-medium text-slate-600">Última execução</p>
-                  <p class="text-xs text-slate-500">${summary.insertedCount || 0} novas · ${summary.duplicateCount || 0} duplicadas · ${summary.conflictCount || 0} conflitos · ${summary.unmatchedCount || 0} sem correspondência · ${summary.errorCount || 0} erros</p>
-                </div>`
-              : '';
-            const infoPanel = `
-              <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
-                <p class="text-xs text-slate-500">Reservas importadas com estado <span class="font-semibold text-slate-700">${esc(
-                  defaultStatusLabel
-                )}</span>.</p>
-                ${manualInfo}
-                ${summaryDetails}
-              </div>`;
-            const autoForm = channel.supportsAuto
-              ? `<div class="rounded-xl border border-slate-200 bg-white/70 p-3">
-                  <h4 class="text-sm font-semibold text-slate-700">Configuração automática</h4>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/settings" class="bo-channel-form grid gap-3 mt-3">
-                    <label class="form-field">
-                      <span class="form-label">Ligação automática</span>
-                      <input name="autoUrl" class="input" placeholder="https://" value="${esc(autoSettings.autoUrl || '')}" />
-                    </label>
-                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-3 bo-channel-form__row--thirds">
-                      <label class="form-field">
-                        <span class="form-label">Formato</span>
-                        <select name="autoFormat" class="input">
-                          <option value="">Deteção automática</option>
-                          ${
-                            channel.autoFormats && channel.autoFormats.length
-                              ? channel.autoFormats
-                                  .map(
-                                    format =>
-                                      `<option value="${esc(format)}"${autoSettings.autoFormat === format ? ' selected' : ''}>${esc(
-                                        format.toUpperCase()
-                                      )}</option>`
-                                  )
-                                  .join('')
-                              : ''
-                          }
-                        </select>
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Estado das reservas</span>
-                        <select name="defaultStatus" class="input">
-                          <option value="CONFIRMED"${autoSettings.defaultStatus !== 'PENDING' ? ' selected' : ''}>Confirmada</option>
-                          <option value="PENDING"${autoSettings.defaultStatus === 'PENDING' ? ' selected' : ''}>Pendente</option>
-                        </select>
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Fuso horário</span>
-                        <input name="timezone" class="input" placeholder="Europe/Lisbon" value="${esc(autoSettings.timezone || '')}" />
-                      </label>
-                    </div>
-                    <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
-                      <label class="form-field">
-                        <span class="form-label">Utilizador (opcional)</span>
-                        <input name="autoUsername" class="input" value="${esc(channel.credentials.username || '')}" autocomplete="off" />
-                      </label>
-                      <label class="form-field">
-                        <span class="form-label">Palavra-passe (opcional)</span>
-                        <input name="autoPassword" type="password" class="input" placeholder="••••••" autocomplete="new-password" />
-                      </label>
-                    </div>
-                    <label class="form-field">
-                      <span class="form-label">Notas internas</span>
-                      <textarea name="notes" class="input" rows="3" placeholder="Instruções, contactos ou credenciais adicionais.">${esc(autoSettings.notes || '')}</textarea>
-                    </label>
-                    <label class="inline-flex items-center gap-2 text-sm">
-                      <input type="checkbox" name="autoEnabled" value="1"${autoSettings.autoEnabled ? ' checked' : ''} />
-                      <span>Ativar sincronização automática</span>
-                    </label>
-                    <div class="bo-channel-form__actions flex flex-wrap gap-2">
-                      <button class="btn btn-primary">Guardar integração</button>
-                    </div>
-                  </form>
-                  <form method="post" action="/admin/channel-integrations/${channel.key}/sync" class="bo-channel-sync mt-2 inline-flex">
-                    <button class="btn btn-light"${!autoSettings.autoEnabled || !autoSettings.autoUrl ? ' disabled' : ''}>Sincronizar agora</button>
-                  </form>
-                </div>`
-              : '<div class="rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">Este canal apenas suporta importação manual.</div>';
-            return `
-              <article class="rounded-2xl border border-amber-200 bg-white/90 p-4 space-y-4">
-                <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(channel.name)}</h3>
-                    ${channel.description ? `<p class="text-sm text-slate-500 mt-1">${esc(channel.description)}</p>` : ''}
-                    <p class="text-xs text-slate-500 mt-2">Última sincronização: <span class="${statusClass}">${esc(lastSyncLabel)}</span>${statusLabel ? ` · <span class="${statusClass}">${esc(statusLabel)}</span>` : ''}</p>
-                    ${channel.last_error ? `<p class="text-xs text-rose-600 mt-1">${esc(channel.last_error)}</p>` : ''}
-                    ${summaryBadges}
-                  </div>
-                  <div class="flex flex-wrap gap-2">
-                    <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${autoBadgeClass}">${esc(autoBadgeLabel)}</span>
-                    ${manualBadge}
-                    ${attentionBadge}
-                  </div>
-                </header>
-                <div class="bo-channel-card-grid grid gap-4 lg:grid-cols-2">
-                  ${autoForm}
-                  ${infoPanel}
-                </div>
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Nenhuma integração configurada.</p>';
-    const channelImportsRows = channelRecentImports.length
-      ? channelRecentImports
-          .map(batch => {
-            const createdLabel = batch.created_at ? dayjs(batch.created_at).format('DD/MM/YYYY HH:mm') : '—';
-            const sourceLabel =
-              batch.source === 'manual-upload'
-                ? 'Upload manual'
-                : batch.source === 'auto-fetch'
-                ? 'Sincronização automática'
-                : batch.source || '—';
-            const status = batch.status || '—';
-            const statusClass =
-              status === 'failed'
-                ? 'text-rose-600'
-                : status === 'partial'
-                ? 'text-amber-600'
-                : status === 'processed'
-                ? 'text-emerald-600'
-                : 'text-slate-500';
-            const summary = batch.summary || {};
-            const parts = [];
-            if (summary.insertedCount != null) parts.push(`${summary.insertedCount} novas`);
-            if (summary.duplicateCount) parts.push(`${summary.duplicateCount} duplicadas`);
-            if (summary.conflictCount) parts.push(`${summary.conflictCount} conflitos`);
-            if (summary.unmatchedCount) parts.push(`${summary.unmatchedCount} sem correspondência`);
-            if (summary.errorCount) parts.push(`${summary.errorCount} erros`);
-            const statsLabel = parts.length ? parts.join(' · ') : 'Sem detalhes';
-            const channelName = channelNameMap.get(batch.channel_key) || batch.channel_key;
-            return `
-              <tr>
-                <td data-label="Data"><span class="table-cell-value">${esc(createdLabel)}</span></td>
-                <td data-label="Canal"><span class="table-cell-value">${esc(channelName)}</span></td>
-                <td data-label="Origem"><span class="table-cell-value">${esc(sourceLabel)}</span></td>
-                <td data-label="Estado"><span class="table-cell-value ${statusClass}">${esc(status)}</span></td>
-                <td data-label="Resumo"><span class="table-cell-value">${esc(statsLabel)}</span></td>
-                <td data-label="Autor"><span class="table-cell-value">${esc(batch.username || '—')}</span></td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="6" class="py-6 text-center text-sm text-slate-500">Sem importações registadas.</td></tr>';
+    const occupiedRow =
+      db
+        .prepare(
+          `SELECT COUNT(DISTINCT b.unit_id) AS count
+             FROM bookings b
+            WHERE b.status = 'CONFIRMED'
+              AND b.checkin <= ?
+              AND b.checkout > ?`
+        )
+        .get(today, today) || {};
+    const occupiedUnits = Number(occupiedRow.count || 0);
+    const occupancyPercent = totalUnits > 0 ? (occupiedUnits / Math.max(1, totalUnits)) * 100 : 0;
+    const occupancyLabel = `${percentFormatter.format(occupancyPercent)}%`;
+    const occupancyCaption = totalUnits
+      ? translator('dashboard.kpis.occupancy.caption', {
+          occupied: numberFormatter.format(occupiedUnits),
+          total: numberFormatter.format(totalUnits),
+        })
+      : translator('dashboard.kpis.occupancy.empty');
 
-    const manualUploadSection = manualChannelOptions
-      ? `
-        <form method="post" action="/admin/channel-imports/upload" enctype="multipart/form-data" class="bo-channel-form grid gap-3">
-          <div class="bo-channel-form__row grid gap-3 md:grid-cols-2 bo-channel-form__row--split">
-            <label class="form-field">
-              <span class="form-label">Canal</span>
-              <select name="channel_key" class="input" required>
-                <option value="" disabled selected hidden>Seleciona um canal</option>
-                ${manualChannelOptions}
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="form-label">Estado das reservas</span>
-              <select name="target_status" class="input">
-                <option value="CONFIRMED">Confirmada</option>
-                <option value="PENDING">Pendente</option>
-              </select>
-            </label>
-          </div>
-          <label class="form-field">
-            <span class="form-label">Ficheiro de reservas</span>
-            <input type="file" name="file" class="input" required accept=".csv,.tsv,.xlsx,.xls,.ics,.ical,.json" />
-          </label>
-          <div class="bo-channel-form__actions">
-            <button class="btn btn-primary">Importar reservas</button>
-          </div>
-        </form>`
-      : '<p class="bo-empty">Nenhum canal com importação manual disponível.</p>';
+    const revenueRow =
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(total_cents), 0) AS cents
+             FROM bookings
+            WHERE status = 'CONFIRMED'
+              AND checkin BETWEEN ? AND ?`
+        )
+        .get(monthStart, monthEnd) || {};
+    const revenueCents = Number(revenueRow.cents || 0);
+    const monthLabel = capitalizeMonth(
+      dayjs(monthStart)
+        .locale(normalizedLanguage.startsWith('en') ? 'en' : 'pt')
+        .format('MMMM YYYY')
+    );
 
-    const emailTemplateRecords = emailTemplates.listTemplates();
-    const emailTemplateCards = emailTemplateRecords.length
-      ? emailTemplateRecords
-          .map(t => {
-            const updatedLabel = t.updated_at ? dayjs(t.updated_at).format('DD/MM/YYYY HH:mm') : '';
-            const updatedMeta = updatedLabel
-              ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${t.updated_by ? ` por ${esc(t.updated_by)}` : ''}</p>`
-              : '';
-            const placeholderList = t.placeholders && t.placeholders.length
-              ? `
-                <div class="text-xs text-slate-500 space-y-1">
-                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
-                  <ul class="flex flex-wrap gap-2">
-                    ${t.placeholders
-                      .map(
-                        p => `
-                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
-                            <code>${esc(`{{${p.key}}}`)}</code>
-                            <span>${esc(p.label)}</span>
-                          </li>`
-                      )
-                      .join('')}
-                  </ul>
-                </div>
-              `
-              : '';
-            return `
-              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-3">
-                <header>
-                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
-                  ${t.description ? `<p class="text-sm text-slate-500 mt-1">${esc(t.description)}</p>` : ''}
-                  ${updatedMeta}
-                </header>
-                <form method="post" action="/admin/emails/templates/${t.key}" class="grid gap-3">
-                  <label class="form-field">
-                    <span class="form-label">Assunto</span>
-                    <input name="subject" class="input" value="${esc(t.subject)}" required maxlength="160"/>
-                  </label>
-                  <label class="form-field">
-                    <span class="form-label">Mensagem</span>
-                    <textarea name="body" class="input" rows="6" required>${esc(t.body)}</textarea>
-                  </label>
-                  ${placeholderList}
-                  <div>
-                    <button class="btn btn-primary">Guardar modelo</button>
-                  </div>
-                </form>
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Sem modelos de email configurados.</p>';
+    const futureBookingsRow =
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM bookings
+            WHERE status = 'CONFIRMED'
+              AND checkin > ?`
+        )
+        .get(today) || {};
+    const futureBookingsCount = Number(futureBookingsRow.count || 0);
 
-    const messageTemplateRecords = messageTemplates.listTemplates();
-    const messageTemplateCards = messageTemplateRecords.length
-      ? messageTemplateRecords
-          .map(t => {
-            const placeholderList = t.placeholders && t.placeholders.length
-              ? `
-                <div class="text-xs text-slate-500 space-y-1">
-                  <p class="font-medium text-slate-600">Variáveis disponíveis</p>
-                  <ul class="flex flex-wrap gap-2">
-                    ${t.placeholders
-                      .map(
-                        p => `
-                          <li class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5">
-                            <code>${esc(`{{${p.key}}}`)}</code>
-                            <span>${esc(p.label)}</span>
-                          </li>`
-                      )
-                      .join('')}
-                  </ul>
-                </div>
-              `
-              : '';
+    const housekeepingRow =
+      db.prepare("SELECT COUNT(*) AS count FROM housekeeping_tasks WHERE status = 'pending'").get() || {};
+    const housekeepingPending = Number(housekeepingRow.count || 0);
 
-            const languagesHtml = t.languages && t.languages.length
-              ? t.languages
-                  .map(lang => {
-                    const updatedLabel = lang.updated_at ? dayjs(lang.updated_at).format('DD/MM/YYYY HH:mm') : '';
-                    const updatedMeta = lang.updated_at
-                      ? `<p class="text-xs text-slate-400 mt-1">Atualizado ${esc(updatedLabel)}${lang.updated_by ? ` por ${esc(lang.updated_by)}` : ''}</p>`
-                      : '<p class="text-xs text-slate-400 mt-1">A usar texto padrão</p>';
-                    const statusTag = lang.is_default
-                      ? '<span class="text-xs font-semibold text-amber-600">Padrão</span>'
-                      : '<span class="text-xs font-semibold text-emerald-600">Personalizado</span>';
-                    const sampleVariables = lang.sampleVariables && Object.keys(lang.sampleVariables).length
-                      ? lang.sampleVariables
-                      : t.sampleVariables || {};
-                    const sampleJson = JSON.stringify(sampleVariables, null, 2);
-                    const guestPlaceholder = lang.language === 'pt'
-                      ? 'Ex.: Olá, podemos chegar mais cedo?'
-                      : 'Ex.: Hello, can we arrive earlier?';
-                    return `
-                      <form method="post" action="/admin/messages/templates/${t.key}/${lang.language}" class="grid gap-3 rounded-xl border border-amber-200 bg-white/80 p-4" data-message-template data-template-key="${esc(t.key)}" data-template-language="${esc(lang.language)}" data-template-language-label="${esc(lang.label)}">
-                        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <h4 class="font-semibold text-slate-800">${esc(lang.label)}</h4>
-                            ${updatedMeta}
-                          </div>
-                          ${statusTag}
-                        </div>
-                        <label class="form-field">
-                          <span class="form-label">Mensagem</span>
-                          <textarea name="body" class="input" rows="6" required>${esc(lang.body)}</textarea>
-                        </label>
-                        <label class="form-field">
-                          <span class="form-label">Mensagem recente do hóspede (opcional)</span>
-                          <textarea class="input" rows="2" data-template-sample placeholder="${esc(guestPlaceholder)}"></textarea>
-                        </label>
-                        <div class="grid gap-3 md:grid-cols-2">
-                          <label class="form-field">
-                            <span class="form-label">Idioma preferido (opcional)</span>
-                            <input class="input" data-template-guest-language placeholder="Ex.: pt, en" />
-                          </label>
-                          <label class="form-field">
-                            <span class="form-label">Modo de pré-visualização</span>
-                            <select class="input" data-template-mode>
-                              <option value="auto" selected>Detetar automaticamente</option>
-                              <option value="language">Forçar ${esc(lang.label)}</option>
-                            </select>
-                          </label>
-                        </div>
-                        <label class="form-field">
-                          <span class="form-label">Dados de exemplo (JSON)</span>
-                          <textarea class="input font-mono text-xs" rows="4" data-template-vars>${esc(sampleJson)}</textarea>
-                          <p class="text-xs text-slate-500">Edite os dados para testar substituições diferentes.</p>
-                        </label>
-                        <div class="flex flex-wrap items-center gap-3">
-                          <button class="btn btn-primary">Guardar ${esc(lang.label)}</button>
-                          <button type="button" class="btn btn-light" data-template-test>Testar modelo</button>
-                          <span class="text-xs text-slate-500" data-template-status hidden></span>
-                        </div>
-                        <pre class="text-xs text-slate-700 bg-slate-100/80 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap" data-template-preview hidden></pre>
-                      </form>`;
-                  })
-                  .join('')
-              : '<p class="text-sm text-slate-500">Sem idiomas configurados.</p>';
+    const canViewCalendar = userCan(req.user, 'calendar.view');
+    const canViewBookings = userCan(req.user, 'bookings.view');
+    const canViewHousekeeping = userCan(req.user, 'housekeeping.view') || userCan(req.user, 'housekeeping.manage');
+    const canViewFinance = userCan(req.user, 'dashboard.view');
 
-            return `
-              <article class="rounded-xl border border-amber-200 bg-white/80 p-4 space-y-4">
-                <header class="space-y-1">
-                  <h3 class="font-semibold text-slate-800">${esc(t.name)}</h3>
-                  ${t.description ? `<p class="text-sm text-slate-500">${esc(t.description)}</p>` : ''}
-                </header>
-                <div class="space-y-4" data-message-templates>${languagesHtml}</div>
-                ${placeholderList}
-              </article>`;
-          })
-          .join('')
-      : '<p class="bo-empty">Sem modelos de mensagens configurados.</p>';
-
-    const broomIconSvg = `
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="M3 21h4l7-7"></path>
-        <path d="M14 14l5-5a3 3 0 0 0-4.24-4.24l-5 5"></path>
-        <path d="M11 11l2 2"></path>
-        <path d="M5 21l-1-4 4 1"></path>
-      </svg>
-    `.trim();
-
-    const navSections = [
+    const kpis = [
       {
-        id: 'operations',
-        title: 'Operações diárias',
-        items: [
-          { id: 'overview', label: 'Propriedades', icon: 'building-2', allowed: true },
-          { id: 'calendar', label: 'Calendário', icon: 'calendar-days', allowed: canViewCalendar },
-          { id: 'bookings-link', label: 'Reservas', icon: 'notebook-text', allowed: canViewBookings, href: '/admin/bookings' },
-          { id: 'housekeeping', label: 'Painel de limpezas', iconSvg: broomIconSvg, icon: 'broom', allowed: canSeeHousekeeping },
-          {
-            id: 'housekeeping-manage',
-            label: 'Gestão de limpezas',
-            icon: 'clipboard-check',
-            allowed: canManageHousekeeping,
-            href: '/admin/limpeza'
-          },
-          {
-            id: 'extras-link',
-            label: 'Extras & serviços',
-            icon: 'gift',
-            allowed: canManageProperties,
-            href: '/admin/extras'
-          },
-          { id: 'channel-manager', label: 'Channel Manager', icon: 'share-2', allowed: canManageIntegrations },
-          { id: 'content-center-link', label: 'Centro de Conteúdos', icon: 'notebook-pen', allowed: true, href: '/admin/content-center' }
-        ]
+        key: 'occupancy',
+        icon: 'bed-double',
+        title: translator('dashboard.kpis.occupancy.title'),
+        value: occupancyLabel,
+        caption: occupancyCaption,
+        href: canViewCalendar ? '/calendar' : null
       },
       {
-        id: 'finance',
-        title: 'Finanças e rendimento',
-        items: [
-          { id: 'finance', label: 'Financeiro', icon: 'piggy-bank', allowed: true },
-          {
-            id: 'revenue-calendar-link',
-            label: 'Calendário de receita',
-            icon: 'calendar-range',
-            allowed: canViewRevenueCalendar,
-            href: '/admin/revenue-calendar'
-          },
-          { id: 'exports-link', label: 'Exportações', icon: 'file-spreadsheet', allowed: canExportBookings, href: '/admin/export' },
-          { id: 'rates-link', label: 'Regras de tarifas', icon: 'wand-2', allowed: canManageRates, href: '/admin/rates/rules' }
-        ]
+        key: 'revenue',
+        icon: 'euro',
+        title: translator('dashboard.kpis.revenue.title'),
+        value: translator('dashboard.kpis.revenue.value', { amount: eur(revenueCents) }),
+        caption: translator('dashboard.kpis.revenue.caption', { month: monthLabel }),
+        href: canViewFinance ? '/admin/finance' : null
       },
       {
-        id: 'communication',
-        title: 'Comunicação',
-        items: [
-          { id: 'estatisticas', label: 'Estatísticas', icon: 'bar-chart-3', allowed: canViewAutomation },
-          { id: 'reviews', label: 'Reviews', icon: 'message-square', allowed: true },
-          { id: 'emails', label: 'Emails', icon: 'mail', allowed: canManageEmailTemplates },
-          { id: 'messages', label: 'Mensagens', icon: 'message-circle', allowed: canManageEmailTemplates }
-        ]
+        key: 'future-bookings',
+        icon: 'calendar-clock',
+        title: translator('dashboard.kpis.futureBookings.title'),
+        value: numberFormatter.format(futureBookingsCount),
+        caption: translator('dashboard.kpis.futureBookings.caption'),
+        href: canViewBookings ? '/admin/bookings?status=confirmada' : null
       },
       {
-        id: 'administration',
-        title: 'Administração',
-        items: [
-          ...(canViewHistory ? [{ id: 'history', label: 'Histórico', icon: 'history', allowed: true }] : []),
-          { id: 'users', label: 'Utilizadores', icon: 'users', allowed: canManageUsers },
-          { id: 'branding', label: 'Identidade', icon: 'palette', allowed: canManageUsers },
-          {
-            id: 'audit-link',
-            label: 'Auditoria',
-            icon: 'clipboard-list',
-            allowed: isFlagEnabled('FEATURE_NAV_AUDIT_LINKS') && canAccessAudit,
-            href: '/admin/auditoria'
-          }
-        ]
+        key: 'housekeeping',
+        icon: 'broom',
+        title: translator('dashboard.kpis.housekeeping.title'),
+        value: numberFormatter.format(housekeepingPending),
+        caption: translator('dashboard.kpis.housekeeping.caption'),
+        href: canViewHousekeeping ? '/admin/limpeza' : null
       }
     ];
-    const allNavItems = navSections.flatMap(section => section.items);
-    const defaultPane = allNavItems.find(item => item.allowed && !item.href)?.id || 'overview';
-    const navButtonsHtml = navSections
-      .map(section => {
-        const itemsHtml = section.items
-          .map(item => {
-            const classes = ['bo-tab'];
-            if (item.id === 'channel-manager') classes.push('bo-tab--compact');
-            if (!item.href && item.id === defaultPane) classes.push('is-active');
-            if (item.href) classes.push('bo-tab--link');
-            const iconMarkup = item.iconSvg
-              ? item.iconSvg
-              : `<i data-lucide="${item.icon}" class="w-5 h-5" aria-hidden="true"></i>`;
 
-            if (!item.allowed) {
-              return `<button type="button" class="${classes.join(' ')}" data-disabled="true" title="Sem permissões" disabled>${iconMarkup}<span>${esc(item.label)}</span></button>`;
-            }
+    const shortcuts = [];
+    if (canViewCalendar) {
+      shortcuts.push({ href: '/calendar', label: translator('dashboard.shortcuts.calendar'), icon: 'calendar' });
+    }
+    if (canViewBookings) {
+      shortcuts.push({ href: '/admin/bookings', label: translator('dashboard.shortcuts.bookings'), icon: 'clipboard-list' });
+    }
+    if (canViewHousekeeping) {
+      shortcuts.push({ href: '/admin/limpeza', label: translator('dashboard.shortcuts.housekeeping'), icon: 'broom' });
+    }
 
-            if (item.href) {
-              return `<a class="${classes.join(' ')}" href="${item.href}">${iconMarkup}<span>${esc(item.label)}</span></a>`;
-            }
+    const navigationHtml = renderNavigation(res.locals.activeNav, req, res);
+    const { list: notifications } = loadNotifications(req, res);
+    const header = {
+      title: translator('dashboard.title'),
+      subtitle: translator('dashboard.subtitle')
+    };
 
-            return `<button type="button" class="${classes.join(' ')}" data-bo-target="${item.id}">${iconMarkup}<span>${esc(item.label)}</span></button>`;
-          })
-          .join('');
-
-        if (!itemsHtml.trim()) {
-          return '';
-        }
-
-        const sectionItemsId = `bo-nav-items-${section.id}`;
-
-        return `
-          <div class="bo-nav__section is-collapsed" data-nav-section data-nav-start-collapsed="true">
-            <button
-              type="button"
-              class="bo-nav__section-toggle"
-              data-nav-toggle
-              aria-expanded="false"
-              aria-controls="${sectionItemsId}"
-            >
-              <span>${esc(section.title)}</span>
-              <i data-lucide="chevron-down" class="bo-nav__section-toggle-icon" aria-hidden="true"></i>
-            </button>
-            <div class="bo-nav__section-items" data-nav-items id="${sectionItemsId}" hidden>${itemsHtml}</div>
-          </div>
+    const fallbackKpiCards = kpis.length
+      ? kpis
+          .map(card =>
+            html`
+              <article class="bo-card dashboard-card">
+                <div class="dashboard-card__content">
+                  <p class="dashboard-card__title">${esc(card.title || '')}</p>
+                  <p class="dashboard-card__value">${esc(card.value || '—')}</p>
+                  ${card.caption ? html`<p class="dashboard-card__caption">${esc(card.caption)}</p>` : ''}
+                </div>
+              </article>
+            `
+          )
+          .join('')
+      : html`
+          <article class="bo-card dashboard-card dashboard-card--empty">
+            <p class="dashboard-card__title">${esc(translator('dashboard.emptyTitle'))}</p>
+            <p class="dashboard-card__caption">${esc(translator('dashboard.emptyCaption'))}</p>
+          </article>
         `;
-      })
-      .filter(Boolean)
-      .join('');
 
-    const navLinkTargets = new Set(allNavItems.filter(item => item.href).map(item => item.href));
-    const filteredQuickLinks = quickLinks.filter(link => !link.href || !navLinkTargets.has(link.href));
-    quickAccessHtml = filteredQuickLinks.length
-      ? html`<section class="bo-card space-y-4">
-          <div>
-            <h2 class="text-lg font-semibold text-slate-800">Atalhos rápidos</h2>
-            <p class="text-sm text-slate-600">Navega rapidamente para as áreas-chave do backoffice.</p>
-          </div>
-          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            ${filteredQuickLinks
-              .map(link => {
-                if (!link.href) {
-                  const desc = link.description ? `<p class="text-sm text-slate-500">${esc(link.description)}</p>` : '';
-                  return `<article class="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-                    <h3 class="font-semibold text-slate-700">${esc(link.title)}</h3>
-                    ${desc}
-                    <p class="text-xs text-slate-400">Atualize permissões ou dados para ativar este atalho.</p>
-                  </article>`;
-                }
-                return `<article class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3">
-                  <div>
-                    <h3 class="font-semibold text-slate-800">${esc(link.title)}</h3>
-                    <p class="text-sm text-slate-600">${esc(link.description)}</p>
-                  </div>
-                  <a class="btn btn-light" href="${esc(link.href)}">${esc(link.cta || 'Abrir')}</a>
-                </article>`;
-              })
-              .join('')}
-          </div>
-        </section>`
-      : '';
-
-    const propertiesListHtml = props.length
-      ? `<ul class="space-y-3">${props
-          .map(p => {
-            const location = propertyLocationLabel(p);
-            const propertyUnits = propertyUnitMap.get(p.id) || [];
-            const revenueRow = propertyRevenueRows.find(row => row.id === p.id);
-            const revenueLabel = revenueRow ? eur(revenueRow.confirmed_revenue_cents || 0) : '0,00';
-            return `
-              <li class="bo-property-card rounded-xl border border-amber-200 bg-white/80 p-3">
-                <div class="bo-property-card__header">
-                  <div class="bo-property-card__title">
-                    <div class="bo-property-card__name">${esc(p.name)}</div>
-                    ${location ? `<div class="bo-property-card__location">${esc(location)}</div>` : ''}
-                  </div>
-                  <a class="btn btn-light bo-property-card__cta" href="/admin/properties/${p.id}">Abrir</a>
-                </div>
-                <div class="bo-property-card__meta">
-                  <span class="bo-property-card__meta-item">Unidades: ${propertyUnits.length}</span>
-                  <span class="bo-property-card__meta-item">Receita: € ${revenueLabel}</span>
-                </div>
-              </li>`;
-          })
-          .join('')}</ul>`
-      : '<p class="bo-empty">Sem propriedades registadas.</p>';
-
-    const unitsTableRows = units.length
-      ? units
-          .map(u => {
-            const blocks = unitBlockIndex.get(u.id) || [];
-            const blockSummaries = blocks
-              .map(block => {
-                const endLabel = dayjs(block.end_date).subtract(1, 'day');
-                const endDisplay = endLabel.isValid() ? endLabel.format('DD/MM') : dayjs(block.end_date).format('DD/MM');
-                return `${dayjs(block.start_date).format('DD/MM')}–${endDisplay}`;
-              })
-              .join(', ');
-            const blockTitle = blocks.length
-              ? esc(`Bloqueado ${blockSummaries}${blocks[0].reason ? ` · ${blocks[0].reason}` : ''}`)
-              : '';
-            const blockBadge = blocks.length
-              ? `<span class="bo-status-badge bo-status-badge--warning" data-block-badge="${u.id}" title="${blockTitle}">Bloqueado</span>`
-              : `<span class="bo-status-badge bo-status-badge--warning hidden" data-block-badge="${u.id}" hidden>Bloqueado</span>`;
-            return `
-              <tr data-unit-row="${u.id}">
-                <td data-label="Propriedade"><span class="table-cell-value">${esc(u.property_name)}</span></td>
-                <td data-label="Unidade">
-                  <div class="table-cell-content">
-                    <span class="table-cell-value">${esc(u.name)}</span>
-                    ${blockBadge}
-                  </div>
-                </td>
-                <td data-label="Cap."><span class="table-cell-value">${u.capacity}</span></td>
-                <td data-label="Base €/noite"><span class="table-cell-value">€ ${eur(u.base_price_cents)}</span></td>
-                <td data-label="Ações">
-                  <div class="table-cell-actions" data-unit-actions>
-                    <button type="button" class="btn btn-light btn-compact" data-block-unit="${u.id}" data-unit-name="${esc(
-              u.property_name + ' · ' + u.name
-            )}">Bloquear unidade</button>
-                    <a class="btn btn-light btn-compact" href="/admin/units/${u.id}">Gerir</a>
-                  </div>
-                </td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="5" class="text-sm text-center text-slate-500">Sem unidades registadas.</td></tr>';
-
-    const propertiesRevenueTable = propertyRevenueRows.length
-      ? propertyRevenueRows
-          .map(row => {
-            const propertyUnits = propertyUnitMap.get(row.id) || [];
-            const unitList = propertyUnits.length
-              ? `<ul class="bo-property-units">${propertyUnits
-                  .map(
-                    unit => `
-                      <li class="bo-property-units__item">
-                        <span class="bo-property-unit-name">${esc(unit.name)}</span>
-                        <span class="bo-property-unit-price">€ ${eur(unit.base_price_cents)}</span>
-                      </li>`
-                  )
-                  .join('')}</ul>`
-              : '<div class="bo-empty bo-property-revenue__empty">Sem unidades associadas.</div>';
-            const locationLabel = row.locality || row.district ? `<span class="table-cell-muted bo-property-revenue__location">${esc(propertyLocationLabel(row))}</span>` : '';
-            return `
-              <tr>
-                <td data-label="Propriedade">
-                  <div class="bo-property-revenue">
-                    <span class="table-cell-value bo-property-revenue__name">${esc(row.name)}</span>
-                    ${locationLabel}
-                    ${unitList}
-                  </div>
-                </td>
-                <td data-label="Receita total"><span class="table-cell-value">€ ${eur(row.confirmed_revenue_cents || 0)}</span></td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem dados de receita.</td></tr>';
-
-    function normalizeChannelLabel(rawValue) {
-      const value = (rawValue || '').trim();
-      if (!value) return 'Direto';
-      const lower = value.toLowerCase();
-      if (lower === 'booking' || lower === 'booking.com') return 'Booking.com';
-      if (lower === 'airbnb') return 'Airbnb';
-      if (lower === 'expedia') return 'Expedia';
-      if (lower === 'vrbo') return 'Vrbo';
-      return value
-        .split(' ')
-        .map(part => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
-        .join(' ');
-    }
-
-    const revenueRangeDays = 30;
-    const revenueRangeEnd = dayjs().endOf('day');
-    const revenueRangeStart = revenueRangeEnd.subtract(revenueRangeDays - 1, 'day').startOf('day');
-    const revenueRangeEndExclusive = revenueRangeEnd.add(1, 'day');
-    const revenueDayCount = revenueRangeEnd.diff(revenueRangeStart, 'day') + 1;
-
-    const revenueBookings = db
-      .prepare(
-        `SELECT b.id,
-                b.checkin,
-                b.checkout,
-                b.total_cents,
-                b.agency,
-                b.created_at
-           FROM bookings b
-          WHERE b.status = 'CONFIRMED'
-            AND b.checkout > ?
-            AND b.checkin < ?`
-      )
-      .all(revenueRangeStart.format('YYYY-MM-DD'), revenueRangeEndExclusive.format('YYYY-MM-DD'));
-
-    const revenueDailyIndex = new Map();
-    const revenueDailyRaw = [];
-    for (let i = 0; i < revenueDayCount; i++) {
-      const day = revenueRangeStart.add(i, 'day');
-      const key = day.format('YYYY-MM-DD');
-      revenueDailyIndex.set(key, {
-        date: key,
-        label: day.format('DD/MM'),
-        display: day.format('DD MMM'),
-        revenueCents: 0,
-        nightsSold: 0,
-        bookingIds: new Set(),
-        createdCount: 0
-      });
-      revenueDailyRaw.push(revenueDailyIndex.get(key));
-    }
-
-    const bookingStayNights = new Map();
-    const channelRevenueCents = new Map();
-
-    revenueBookings.forEach(booking => {
-      const stayStart = dayjs(booking.checkin);
-      const stayEnd = dayjs(booking.checkout);
-      if (!stayStart.isValid() || !stayEnd.isValid()) return;
-      const totalNights = Math.max(1, dateRangeNights(booking.checkin, booking.checkout));
-      bookingStayNights.set(booking.id, totalNights);
-      const nightlyRate = totalNights ? (booking.total_cents || 0) / totalNights : booking.total_cents || 0;
-      const channelLabel = normalizeChannelLabel(booking.agency);
-
-      if (booking.created_at) {
-        const createdAt = dayjs(booking.created_at);
-        if (createdAt.isValid()) {
-          const createdKey = createdAt.format('YYYY-MM-DD');
-          const createdRecord = revenueDailyIndex.get(createdKey);
-          if (createdRecord) {
-            createdRecord.createdCount = (createdRecord.createdCount || 0) + 1;
-          }
-        }
-      }
-
-      let cursor = stayStart.isAfter(revenueRangeStart) ? stayStart : revenueRangeStart;
-      const cursorEnd = stayEnd.isBefore(revenueRangeEndExclusive) ? stayEnd : revenueRangeEndExclusive;
-      while (cursor.isBefore(cursorEnd)) {
-        const key = cursor.format('YYYY-MM-DD');
-        const record = revenueDailyIndex.get(key);
-        if (record) {
-          record.revenueCents += nightlyRate;
-          record.nightsSold += 1;
-          record.bookingIds.add(booking.id);
-          channelRevenueCents.set(channelLabel, (channelRevenueCents.get(channelLabel) || 0) + nightlyRate);
-        }
-        cursor = cursor.add(1, 'day');
-      }
-    });
-
-    const totalUnitsNights = totalUnitsCount * revenueDayCount;
-
-    const revenueDaily = revenueDailyRaw.map(record => {
-      const bookingIds = Array.from(record.bookingIds.values());
-      const revenueCents = Math.round(record.revenueCents || 0);
-      const nightsSold = Math.round(record.nightsSold || 0);
-      const bookingsCount = bookingIds.length;
-      const staysTotal = bookingIds.reduce((sum, id) => sum + (bookingStayNights.get(id) || 0), 0);
-      const averageStay = bookingsCount ? staysTotal / bookingsCount : 0;
-      const adrCents = nightsSold ? Math.round(revenueCents / nightsSold) : 0;
-      const revparCents = totalUnitsCount ? Math.round(revenueCents / Math.max(totalUnitsCount, 1)) : 0;
-      const occupancyRate = totalUnitsCount ? Math.min(1, nightsSold / Math.max(totalUnitsCount, 1)) : 0;
-      const bookingPaceCount = record.createdCount || 0;
-      return {
-        date: record.date,
-        label: record.label,
-        display: record.display,
-        revenueCents,
-        nightsSold,
-        bookingsCount,
-        createdCount: bookingPaceCount,
-        adrCents,
-        revparCents,
-        occupancyRate,
-        averageStay,
-        bookingPace: bookingPaceCount
-      };
-    });
-
-    const totalRevenueCents = revenueDaily.reduce((sum, row) => sum + (row.revenueCents || 0), 0);
-    const totalNightsSold = revenueDaily.reduce((sum, row) => sum + (row.nightsSold || 0), 0);
-    const totalReservations = revenueBookings.length;
-    const totalBookingCreations = revenueDaily.reduce((sum, row) => sum + (row.createdCount || 0), 0);
-
-    const revenueSummary = {
-      revenueCents: totalRevenueCents,
-      adrCents: totalNightsSold ? Math.round(totalRevenueCents / totalNightsSold) : 0,
-      revparCents: totalUnitsNights ? Math.round(totalRevenueCents / Math.max(totalUnitsNights, 1)) : 0,
-      occupancyRate: totalUnitsNights ? totalNightsSold / Math.max(totalUnitsNights, 1) : 0,
-      nights: totalNightsSold,
-      reservations: totalReservations,
-      averageStay: totalReservations ? totalNightsSold / Math.max(totalReservations, 1) : 0,
-      bookingPace: revenueDayCount ? totalBookingCreations / Math.max(revenueDayCount, 1) : 0,
-      createdTotal: totalBookingCreations
-    };
-
-    const channelTotals = Array.from(channelRevenueCents.entries()).map(([name, cents]) => ({
-      name,
-      revenueCents: Math.round(cents || 0)
-    }));
-    channelTotals.sort((a, b) => (b.revenueCents || 0) - (a.revenueCents || 0));
-    const channelTotalCents = channelTotals.reduce((sum, item) => sum + (item.revenueCents || 0), 0);
-    const revenueChannels = (channelTotals.length ? channelTotals : [{ name: 'Direto', revenueCents: 0 }]).map(item => ({
-      ...item,
-      percentage: channelTotalCents ? item.revenueCents / Math.max(channelTotalCents, 1) : 0
-    }));
-
-    const revenueRangeLabel = `${revenueRangeStart.format('DD/MM/YYYY')} – ${revenueRangeEnd.format('DD/MM/YYYY')}`;
-    const revenueAnalytics = {
-      range: {
-        start: revenueRangeStart.format('YYYY-MM-DD'),
-        end: revenueRangeEnd.format('YYYY-MM-DD'),
-        label: revenueRangeLabel,
-        dayCount: revenueDayCount
-      },
-      summary: revenueSummary,
-      daily: revenueDaily,
-      channels: revenueChannels
-    };
-    const revenueAnalyticsJson = jsonScriptPayload(revenueAnalytics);
-
-    const numberFormatter = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0 });
-    const decimalFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
-
-    const revenueSummaryLabels = {
-      revenue: `€ ${eur(revenueSummary.revenueCents || 0)}`,
-      adr: revenueSummary.adrCents ? `€ ${eur(revenueSummary.adrCents)}` : '€ 0,00',
-      revpar: revenueSummary.revparCents ? `€ ${eur(revenueSummary.revparCents)}` : '€ 0,00',
-      occupancy: percentFormatter.format(revenueSummary.occupancyRate || 0),
-      nights: numberFormatter.format(revenueSummary.nights || 0),
-      reservations: numberFormatter.format(revenueSummary.reservations || 0),
-      averageStay: decimalFormatter.format(revenueSummary.averageStay || 0),
-      bookingPace: decimalFormatter.format(revenueSummary.bookingPace || 0)
-    };
-
-    const unitsForPricing = units.map(u => ({
-      id: u.id,
-      name: u.name,
-      propertyId: u.property_id,
-      propertyName: u.property_name,
-      unitType: u.unit_type || null,
-      basePriceCents: u.base_price_cents
-    }));
-    const defaultWeekStart = dayjs().startOf('week');
-    const defaultWeekEnd = defaultWeekStart.add(6, 'day');
-    const uxDashboardConfig = {
-      units: unitsForPricing,
-      unitTypes: unitTypeOptions,
-      properties: props.map(p => ({ id: p.id, name: p.name })),
-      blocks: activeUnitBlocks,
-      weeklyDefaults: {
-        from: defaultWeekStart.format('YYYY-MM-DD'),
-        to: defaultWeekEnd.format('YYYY-MM-DD')
-      },
-      kpi: {
-        occupancyRate: revenueSummary.occupancyRate || 0,
-        adrCents: revenueSummary.adrCents || 0,
-        revparCents: revenueSummary.revparCents || 0
-      }
-    };
-    const uxDashboardConfigJson = jsonScriptPayload(uxDashboardConfig);
-
-    const revenueChannelsHtml = revenueChannels
-      .map(channel => {
-        const revenueLabel = `€ ${eur(channel.revenueCents || 0)}`;
-        const pctLabel = percentFormatter.format(channel.percentage || 0);
-        return `
-          <li class="flex items-center justify-between gap-3">
-            <div>
-              <div class="font-semibold text-slate-700">${esc(channel.name)}</div>
-              <div class="text-xs text-slate-500">${revenueLabel}</div>
+    const fallbackBody = html`
+      <div class="bo-page bo-page--wide">
+        <div class="bo-shell" data-bo-shell>
+          <aside class="bo-sidebar" data-bo-sidebar tabindex="-1">
+            <div class="bo-sidebar__header">
+              <div class="bo-sidebar__title">${esc(translator('dashboard.menu'))}</div>
             </div>
-            <div class="text-sm font-semibold text-slate-600">${pctLabel}</div>
-          </li>`;
-      })
-      .join('');
-
-    const revenueDailyTableRows = revenueDaily.length
-      ? revenueDaily
-          .map(row => {
-            const revenueLabel = `€ ${eur(row.revenueCents || 0)}`;
-            const adrLabel = row.nightsSold ? `€ ${eur(row.adrCents || 0)}` : '—';
-            const revparLabel = `€ ${eur(row.revparCents || 0)}`;
-            const occupancyLabel = row.nightsSold ? percentFormatter.format(row.occupancyRate || 0) : '—';
-            const nightsLabel = numberFormatter.format(row.nightsSold || 0);
-            const bookingsLabel = numberFormatter.format(row.bookingsCount || 0);
-            const averageStayLabel = row.bookingsCount ? decimalFormatter.format(row.averageStay || 0) : '—';
-            const bookingPaceLabel = row.createdCount ? numberFormatter.format(row.createdCount || 0) : '—';
-            return `
-              <tr>
-                <td data-label="Data"><span class="table-cell-value">${esc(row.display || row.label)}</span></td>
-                <td data-label="Receita">${revenueLabel}</td>
-                <td data-label="ADR">${adrLabel}</td>
-                <td data-label="RevPAR">${revparLabel}</td>
-                <td data-label="Ocupação">${occupancyLabel}</td>
-                <td data-label="Reservas">${bookingsLabel}</td>
-                <td data-label="Noites">${nightsLabel}</td>
-                <td data-label="Estadia média">${averageStayLabel}</td>
-                <td data-label="Booking pace">${bookingPaceLabel}</td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="9" class="text-sm text-center text-slate-500">Sem dados de revenue para o período analisado.</td></tr>';
-
-    const statisticsCard = html`
-      <div class="bo-card bo-span-all space-y-6">
-        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 class="text-lg font-semibold text-slate-800">Painel estatístico</h2>
-            <p class="text-sm text-slate-600">Analisa ocupação, receita e tendências operacionais.</p>
-            <div class="text-xs text-slate-400 mt-1">Última análise automática: ${automationLastRun}</div>
-          </div>
-          <form id="operational-filters" class="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
-            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
-              <span>Período</span>
-              <select name="month" id="operational-filter-month" class="input">
-                ${monthOptions.map(opt => `<option value="${opt.value}"${opt.value === operationalDefault.month ? ' selected' : ''}>${esc(opt.label)}</option>`).join('')}
-              </select>
-            </label>
-            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
-              <span>Propriedade</span>
-              <select name="property_id" id="operational-filter-property" class="input">
-                <option value="">Todas</option>
-                ${props
-                  .map(p => {
-                    const selected = operationalDefault.filters.propertyId === p.id ? ' selected' : '';
-                    return `<option value="${p.id}"${selected}>${esc(p.name)}</option>`;
-                  })
-                  .join('')}
-              </select>
-            </label>
-            <label class="text-xs uppercase tracking-wide text-slate-500 flex flex-col gap-1">
-              <span>Tipo de unidade</span>
-              <select name="unit_type" id="operational-filter-type" class="input">
-                <option value="">Todos</option>
-                ${unitTypeOptions
-                  .map(type => {
-                    const selected = operationalDefault.filters.unitType === type ? ' selected' : '';
-                    return `<option value="${esc(type)}"${selected}>${esc(type)}</option>`;
-                  })
-                  .join('')}
-              </select>
-            </label>
-          </form>
-        </div>
-
-        <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3" data-kpi-card>
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h3 class="text-base font-semibold text-slate-800">Ocupação &amp; ADR unificados</h3>
-              <p class="text-sm text-slate-600">Visão imediata do equilíbrio entre ocupação e preço médio diário.</p>
-            </div>
-            <div class="flex items-center gap-2 self-start">
-              <a
-                href="#operational-metrics"
-                class="text-sm font-medium text-sky-700 hover:text-sky-800 focus:outline-none focus-visible:ring focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                data-kpi-detail-link
-              >
-                Ver detalhe
-              </a>
-              <button type="button" class="btn btn-light btn-compact" data-kpi-info aria-describedby="kpi-tooltip-text">
-                <i data-lucide="info" class="w-4 h-4" aria-hidden="true"></i>
-                <span class="sr-only">Como interpretar os KPIs</span>
-              </button>
-            </div>
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-              <div class="text-xs uppercase tracking-wide text-emerald-600">Ocupação</div>
-              <div class="text-2xl font-semibold text-emerald-900" data-kpi-occupancy>${esc(revenueSummaryLabels.occupancy)}</div>
-              <div class="text-xs text-emerald-700">Percentagem de noites vendidas no período analisado.</div>
-            </div>
-            <div class="rounded-lg border border-sky-200 bg-sky-50 p-3">
-              <div class="text-xs uppercase tracking-wide text-sky-600">ADR</div>
-              <div class="text-2xl font-semibold text-sky-900" data-kpi-adr>${esc(revenueSummaryLabels.adr)}</div>
-              <div class="text-xs text-sky-700">Preço médio por noite confirmada.</div>
-            </div>
-          </div>
-          <div
-            class="rounded-lg border p-3 flex gap-2 items-start bg-amber-50 border-amber-200"
-            data-kpi-alert
-            hidden
-            role="status"
-            aria-live="polite"
-          >
-            <span class="mt-0.5 flex-shrink-0 text-amber-600" aria-hidden="true" data-kpi-alert-icon>
-              <i data-lucide="alert-triangle" class="w-5 h-5"></i>
-            </span>
-            <div class="space-y-1">
-              <p class="text-sm font-semibold text-slate-800" data-kpi-alert-title></p>
-              <p class="text-sm text-slate-600" data-kpi-alert-message></p>
-            </div>
-          </div>
-          <div class="text-xs text-slate-500">Dados combinados do período ${esc(revenueRangeLabel)}. RevPAR atual: <span data-kpi-revpar>${esc(revenueSummaryLabels.revpar)}</span>.</div>
-          <p id="kpi-tooltip-text" class="sr-only">Ocupação mede noites vendidas face à disponibilidade. ADR é a receita média por noite confirmada.</p>
-        </div>
-
-        <div class="rounded-xl border border-slate-200 bg-white/80 p-4 space-y-3" data-weekly-export aria-busy="false">
-          <div>
-            <h3 class="text-base font-semibold text-slate-800">Exportar semana (CSV/PDF)</h3>
-            <p class="text-sm text-slate-600">Gera um relatório com ocupação, ADR, RevPAR e receita da semana selecionada.</p>
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label class="form-field" data-field>
-              <span class="form-label">Início</span>
-              <input type="date" class="input" data-weekly-from />
-              <p class="form-error text-xs text-rose-600" data-error hidden></p>
-            </label>
-            <label class="form-field" data-field>
-              <span class="form-label">Fim</span>
-              <input type="date" class="input" data-weekly-to />
-              <p class="form-error text-xs text-rose-600" data-error hidden></p>
-            </label>
-            <div class="lg:col-span-2 flex flex-wrap items-center gap-2">
-              <button type="button" class="btn btn-light" data-weekly-export-action="csv">Exportar CSV</button>
-              <button type="button" class="btn btn-light" data-weekly-export-action="pdf">Exportar PDF</button>
-              <span class="text-xs text-slate-500" data-weekly-status role="status" aria-live="polite" tabindex="-1">
-                Seleciona o intervalo semanal e escolhe o formato para exportar.
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="operational-metrics">
-          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
-            <div class="text-xs uppercase tracking-wide text-slate-500">Ocupação atual</div>
-            <div class="text-2xl font-semibold text-slate-900" id="operational-occupancy">—</div>
-            <div class="text-xs text-slate-500">Noites ocupadas vs. disponíveis no período selecionado.</div>
-          </div>
-          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
-            <div class="text-xs uppercase tracking-wide text-slate-500">Receita total</div>
-            <div class="text-2xl font-semibold text-slate-900" id="operational-revenue">—</div>
-            <div class="text-xs text-slate-500">Receita proporcional das reservas confirmadas.</div>
-          </div>
-          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-2">
-            <div class="text-xs uppercase tracking-wide text-slate-500">Média de noites</div>
-            <div class="text-2xl font-semibold text-slate-900" id="operational-average">—</div>
-            <div class="text-xs text-slate-500">Duração média das reservas incluídas.</div>
-          </div>
-          <div class="md:col-span-3 text-xs text-slate-500" id="operational-context">
-            <span id="operational-period-label">—</span>
-            <span id="operational-filters-label" class="ml-1"></span>
-          </div>
-        </div>
-
-        <div class="grid gap-6 lg:grid-cols-3">
-          <div class="lg:col-span-2 space-y-6">
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
-                <h3 class="font-semibold text-slate-800">Top unidades por ocupação</h3>
-                <a id="operational-export" class="btn btn-light border border-slate-200 text-sm" href="#" download>Exportar CSV</a>
-              </div>
-              <div id="top-units-wrapper" class="space-y-3">
-                <p class="text-sm text-slate-500" id="top-units-empty">Sem dados para os filtros atuais.</p>
-                <ol id="top-units-list" class="space-y-3 hidden"></ol>
-              </div>
-              <p class="text-xs text-slate-500 mt-3" id="operational-summary">—</p>
-            </section>
-
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <div class="flex items-center justify-between mb-2">
-                <h3 class="font-semibold text-slate-800">Resumo diário (próximos 7 dias)</h3>
-                <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
-              </div>
-              <div class="responsive-table">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-left text-slate-500">
-                      <th>Dia</th><th>Ocup.</th><th>Reservas</th><th>Check-in</th><th>Check-out</th>
-                    </tr>
-                  </thead>
-                  <tbody>${automationDaily.length
-                    ? automationDaily
-                        .map(d => {
-                          const occPct = Math.round((d.occupancyRate || 0) * 100);
-                          const arrLabel = d.arrivalsPending
-                            ? `${d.arrivalsConfirmed} <span class="text-xs text-slate-500">(+${d.arrivalsPending} pend)</span>`
-                            : String(d.arrivalsConfirmed);
-                          const depLabel = d.departuresPending
-                            ? `${d.departuresConfirmed} <span class="text-xs text-slate-500">(+${d.departuresPending} pend)</span>`
-                            : String(d.departuresConfirmed);
-                          const pendingBadge = d.pendingCount
-                            ? `<span class="text-xs text-slate-500 ml-1">(+${d.pendingCount} pend)</span>`
-                            : '';
-                          return `
-                            <tr>
-                              <td class="py-2 text-sm" data-label="Dia"><span class="table-cell-value">${dayjs(d.date).format('DD/MM')}</span></td>
-                              <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
-                              <td class="py-2 text-sm" data-label="Reservas"><span class="table-cell-value">${d.confirmedCount}${pendingBadge}</span></td>
-                              <td class="py-2 text-sm" data-label="Check-in"><span class="table-cell-value">${arrLabel}</span></td>
-                              <td class="py-2 text-sm" data-label="Check-out"><span class="table-cell-value">${depLabel}</span></td>
-                            </tr>`;
-                        })
-                        .join('')
-                    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados para o período.</td></tr>'}</tbody>
-                </table>
-              </div>
-            </section>
-
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <div class="flex items-center justify-between mb-2">
-                <h3 class="font-semibold text-slate-800">Resumo semanal</h3>
-                <span class="text-xs text-slate-400">Atualizado ${automationLastRun}</span>
-              </div>
-              <div class="responsive-table">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-left text-slate-500">
-                      <th>Semana</th><th>Ocup.</th><th>Noites confirmadas</th>
-                    </tr>
-                  </thead>
-                  <tbody>${automationWeekly.length
-                    ? automationWeekly
-                        .map(w => {
-                          const occPct = Math.round((w.occupancyRate || 0) * 100);
-                          const pending = w.pendingNights ? ` <span class="text-xs text-slate-500">(+${w.pendingNights} pend)</span>` : '';
-                          const endLabel = dayjs(w.end).subtract(1, 'day').format('DD/MM');
-                          return `
-                            <tr>
-                              <td class="py-2 text-sm" data-label="Semana"><span class="table-cell-value">${dayjs(w.start).format('DD/MM')} - ${endLabel}</span></td>
-                              <td class="py-2 text-sm" data-label="Ocupação"><span class="table-cell-value">${occPct}%</span></td>
-                              <td class="py-2 text-sm" data-label="Noites confirmadas"><span class="table-cell-value">${w.confirmedNights}${pending}</span></td>
-                            </tr>`;
-                        })
-                        .join('')
-                    : '<tr><td class="py-2 text-sm text-slate-500" data-label="Info">Sem dados agregados.</td></tr>'}</tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-
-          <div class="space-y-6">
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Alertas operacionais</h3>
-              ${automationNotifications.length
-                ? `<ul class="space-y-3">${automationNotifications
-                    .map(n => {
-                      const styles = automationSeverityStyle(n.severity);
-                      const ts = n.created_at ? dayjs(n.created_at).format('DD/MM HH:mm') : automationLastRun;
-                      return `
-                        <li class="border-l-4 pl-3 ${styles.border} bg-white/40 rounded-sm">
-                          <div class="text-[11px] text-slate-400">${esc(ts)}</div>
-                          <div class="text-sm font-semibold text-slate-800">${esc(n.title || '')}</div>
-                          <div class="text-sm text-slate-600">${esc(n.message || '')}</div>
-                        </li>`;
-                    })
-                    .join('')}</ul>`
-                : '<p class="text-sm text-slate-500">Sem alertas no momento.</p>'}
-            </section>
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Sugestões de tarifa</h3>
-              ${automationSuggestions.length
-                ? `<ul class="space-y-2">${automationSuggestions
-                    .map(s => {
-                      const occPct = Math.round((s.occupancyRate || 0) * 100);
-                      const pendLabel = s.pendingCount ? ` <span class="text-xs text-slate-500">(+${s.pendingCount} pend)</span>` : '';
-                      return `
-                        <li class="border rounded-lg p-3 bg-slate-50">
-                          <div class="flex items-center justify-between text-sm font-semibold text-slate-700">
-                            <span>${dayjs(s.date).format('DD/MM')}</span>
-                            <span>${occPct}% ocup.</span>
-                          </div>
-                          <div class="text-sm text-slate-600">Sugerir +${s.suggestedIncreasePct}% no preço base · ${s.confirmedCount}/${totalUnitsCount} confirmadas${pendLabel}</div>
-                        </li>`;
-                    })
-                    .join('')}</ul>`
-                : '<p class="text-sm text-slate-500">Sem datas de alta procura.</p>'}
-            </section>
-            <section class="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2">Bloqueios automáticos</h3>
-              ${automationBlocks.length
-                ? `<ul class="space-y-2">${automationBlocks
-                    .slice(-6)
-                    .reverse()
-                    .map(evt => {
-                      const label = evt.type === 'minstay' ? 'Estadia mínima' : 'Sequência cheia';
-                      const extra = evt.extra_nights ? ` · +${evt.extra_nights} noite(s)` : '';
-                      return `
-                        <li class="border rounded-lg p-3 bg-white/40">
-                          <div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(label)}</div>
-                          <div class="text-sm font-semibold text-slate-800">${esc(evt.property_name)} · ${esc(evt.unit_name)}</div>
-                          <div class="text-sm text-slate-600">${esc(formatDateRangeShort(evt.start, evt.end))}${extra}</div>
-                        </li>`;
-                    })
-                    .join('')}</ul>`
-                : '<p class="text-sm text-slate-500">Nenhum bloqueio automático recente.</p>'}
+            ${navigationHtml}
+          </aside>
+          <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
+          <div class="bo-main" data-bo-main>
+            <header class="bo-header dashboard-header">
+              <h1>${esc(header.title)}</h1>
+              <p>${esc(header.subtitle)}</p>
+            </header>
+            <section class="dashboard-grid" aria-label="${esc(translator('dashboard.kpiSectionLabel'))}">
+              ${fallbackKpiCards}
             </section>
           </div>
         </div>
       </div>
-      <script type="application/json" id="operational-dashboard-data">${operationalConfigJson}</script>
-      <script>
-        document.addEventListener('DOMContentLoaded', function () {
-          const configEl = document.getElementById('operational-dashboard-data');
-          if (!configEl) return;
-          let config;
-          try {
-            config = JSON.parse(configEl.textContent);
-          } catch (err) {
-            console.error('Dashboard operacional: configuração inválida', err);
-            return;
-          }
-          const form = document.getElementById('operational-filters');
-          if (form) form.addEventListener('submit', function (ev) { ev.preventDefault(); });
-          const monthSelect = document.getElementById('operational-filter-month');
-          const propertySelect = document.getElementById('operational-filter-property');
-          const typeSelect = document.getElementById('operational-filter-type');
-          const occupancyEl = document.getElementById('operational-occupancy');
-          const revenueEl = document.getElementById('operational-revenue');
-          const averageEl = document.getElementById('operational-average');
-          const periodLabelEl = document.getElementById('operational-period-label');
-          const filtersLabelEl = document.getElementById('operational-filters-label');
-          const summaryEl = document.getElementById('operational-summary');
-          const listEl = document.getElementById('top-units-list');
-          const emptyEl = document.getElementById('top-units-empty');
-          const wrapperEl = document.getElementById('top-units-wrapper');
-          const exportBtn = document.getElementById('operational-export');
-          const currencyFormatter = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' });
-          const percentFormatter = new Intl.NumberFormat('pt-PT', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 0 });
-          const nightsFormatter = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-          const dateFormatter = new Intl.DateTimeFormat('pt-PT', { day: '2-digit', month: '2-digit' });
-          let pendingController = null;
-
-          function escHtml(value) {
-            return String(value ?? '')
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;')
-              .replace(/'/g, '&#39;');
-          }
-
-          function slug(value) {
-            return String(value || '')
-              .normalize('NFD')
-              .replace(/[̀-ͯ]/g, '')
-              .replace(/[^a-z0-9]+/gi, '-')
-              .replace(/^-+|-+$/g, '')
-              .toLowerCase();
-          }
-
-          function formatRange(range) {
-            if (!range || !range.start || !range.end) return '';
-            const startDate = new Date(range.start + 'T00:00:00');
-            const endDate = new Date(range.end + 'T00:00:00');
-            endDate.setDate(endDate.getDate() - 1);
-            return dateFormatter.format(startDate) + ' - ' + dateFormatter.format(endDate);
-          }
-
-          function describeFilters(data) {
-            if (!data || !data.filters) return '';
-            const labels = [];
-            if (data.filters.propertyLabel) labels.push(data.filters.propertyLabel);
-            if (data.filters.unitType) labels.push(data.filters.unitType);
-            return labels.join(' · ');
-          }
-
-          function renderTopUnits(units, totalNights) {
-            if (!Array.isArray(units) || !units.length) return '';
-            const nightsLabel = Math.max(1, Number(totalNights) || 0);
-            return units
-              .map((unit, index) => {
-                const occPct = percentFormatter.format(unit.occupancyRate || 0);
-                const revenueLabel = currencyFormatter.format((unit.revenueCents || 0) / 100);
-                const bookingsText = unit.bookingsCount === 1 ? '1 reserva' : (unit.bookingsCount || 0) + ' reservas';
-                const nightsText = (unit.occupiedNights || 0) + ' / ' + nightsLabel + ' noites';
-                const typeLabel = unit.unitType ? ' · ' + unit.unitType : '';
-                return '<li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-slate-200 rounded-lg px-3 py-2">' +
-                  '<div>' +
-                  '<div class="text-sm font-semibold text-slate-800">' + escHtml((index + 1) + '. ' + unit.propertyName + ' · ' + unit.unitName) + '</div>' +
-                  '<div class="text-xs text-slate-500">' + escHtml(bookingsText + ' · ' + nightsText + typeLabel) + '</div>' +
-                  '</div>' +
-                  '<div class="text-right space-y-1">' +
-                  '<div class="text-sm font-semibold text-slate-900">' + occPct + '</div>' +
-                  '<div class="text-xs text-slate-500">' + escHtml(revenueLabel) + '</div>' +
-                  '</div>' +
-                  '</li>';
-              })
-              .join('');
-          }
-
-          function buildExportUrl(data) {
-            const params = new URLSearchParams();
-            if (data && data.month) params.set('month', data.month);
-            if (data && data.filters && data.filters.propertyId) params.set('property_id', data.filters.propertyId);
-            if (data && data.filters && data.filters.unitType) params.set('unit_type', data.filters.unitType);
-            return '/admin/automation/export.csv?' + params.toString();
-          }
-
-          function buildExportFilename(data) {
-            const month = data && data.month ? data.month : dayjs().format('YYYY-MM');
-            const propertySlug = data && data.filters && data.filters.propertyLabel ? slug(data.filters.propertyLabel) : 'todas';
-            const unitTypeSlug = data && data.filters && data.filters.unitType ? slug(data.filters.unitType) : 'todos';
-            return 'dashboard-operacional-' + month + '-' + propertySlug + '-' + unitTypeSlug + '.csv';
-          }
-
-          function setLoading(isLoading) {
-            if (wrapperEl) wrapperEl.dataset.loading = isLoading ? 'true' : 'false';
-          }
-
-          function applyData(data) {
-            setLoading(false);
-            if (!data || !data.summary) return;
-            const summary = data.summary;
-            if (occupancyEl) occupancyEl.textContent = percentFormatter.format(summary.occupancyRate || 0);
-            if (revenueEl) revenueEl.textContent = currencyFormatter.format((summary.revenueCents || 0) / 100);
-            if (averageEl) averageEl.textContent = nightsFormatter.format(summary.averageNights || 0);
-            if (periodLabelEl) periodLabelEl.textContent = formatRange(data.range);
-            if (filtersLabelEl) filtersLabelEl.textContent = describeFilters(data);
-            if (summaryEl) {
-              summaryEl.textContent =
-                'Unidades analisadas: ' +
-                (summary.totalUnits || 0) +
-                ' · Reservas confirmadas: ' +
-                summary.bookingsCount +
-                ' · Noites ocupadas: ' +
-                summary.occupiedNights +
-                '/' +
-                (summary.availableNights || summary.occupiedNights);
-            }
-            if (Array.isArray(data.topUnits) && data.topUnits.length) {
-              if (listEl) {
-                listEl.innerHTML = renderTopUnits(data.topUnits, summary.availableNights);
-                listEl.classList.remove('hidden');
-              }
-              if (emptyEl) emptyEl.classList.add('hidden');
-            } else {
-              if (listEl) {
-                listEl.innerHTML = '';
-                listEl.classList.add('hidden');
-              }
-              if (emptyEl) emptyEl.classList.remove('hidden');
-            }
-            if (monthSelect && data.month) monthSelect.value = data.month;
-            if (propertySelect) propertySelect.value = data.filters && data.filters.propertyId ? String(data.filters.propertyId) : '';
-            if (typeSelect) typeSelect.value = data.filters && data.filters.unitType ? data.filters.unitType : '';
-            if (exportBtn) {
-              exportBtn.href = buildExportUrl(data);
-              exportBtn.setAttribute('download', buildExportFilename(data));
-            }
-          }
-
-          function requestData() {
-            if (!monthSelect) return;
-            const params = new URLSearchParams();
-            if (monthSelect.value) params.set('month', monthSelect.value);
-            if (propertySelect && propertySelect.value) params.set('property_id', propertySelect.value);
-            if (typeSelect && typeSelect.value) params.set('unit_type', typeSelect.value);
-            setLoading(true);
-            if (pendingController) pendingController.abort();
-            pendingController = new AbortController();
-            fetch('/admin/automation/operational.json?' + params.toString(), { signal: pendingController.signal })
-              .then(resp => {
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                return resp.json();
-              })
-              .then(data => applyData(data))
-              .catch(err => {
-                if (err.name !== 'AbortError') {
-                  console.error('Dashboard operacional: falha ao carregar métricas', err);
-                  setLoading(false);
-                }
-              })
-              .finally(() => {
-                if (pendingController && pendingController.signal.aborted) return;
-                pendingController = null;
-              });
-          }
-
-          if (config && config.defaults) {
-            if (monthSelect && config.defaults.month) monthSelect.value = config.defaults.month;
-            if (propertySelect) propertySelect.value = config.defaults.propertyId || '';
-            if (typeSelect) typeSelect.value = config.defaults.unitType || '';
-          }
-          if (config && config.initialData) {
-            applyData(config.initialData);
-          }
-          [monthSelect, propertySelect, typeSelect].forEach(select => {
-            if (!select) return;
-            select.addEventListener('change', requestData);
-          });
-          configEl.textContent = '';
-        });
-      </script>
     `;
 
-    const housekeepingPendingHtml = housekeepingPending.length
-      ? `<ul class="space-y-3">${housekeepingPending
-          .map(task => `
-            <li class="rounded-xl border border-amber-200 bg-white/70 p-3">
-              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
-              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
-              <div class="text-xs text-amber-600 mt-1">Previsto: ${task.due_date ? dayjs(task.due_date).format('DD/MM') : '—'}${task.due_time ? ' às ' + task.due_time : ''}</div>
-            </li>`)
-          .join('')}</ul>`
-      : '<p class="bo-empty">Sem tarefas pendentes.</p>';
-
-    const housekeepingInProgressHtml = housekeepingInProgress.length
-      ? `<ul class="space-y-3">${housekeepingInProgress
-          .map(task => `
-            <li class="rounded-xl border border-amber-200 bg-white/70 p-3">
-              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
-              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
-              <div class="text-xs text-amber-600 mt-1">Em curso por ${task.started_by_username ? esc(task.started_by_username) : '—'}</div>
-            </li>`)
-          .join('')}</ul>`
-      : '<p class="bo-empty">Sem tarefas em curso.</p>';
-
-    const housekeepingCompletedHtml = housekeepingCompleted.length
-      ? `<ul class="space-y-3">${housekeepingCompleted
-          .map(task => `
-            <li class="rounded-xl border border-amber-200 bg-white/60 p-3">
-              <div class="font-semibold text-amber-900">${esc(task.title)}</div>
-              <div class="text-xs text-amber-700">${task.property_name ? esc(task.property_name) + ' · ' : ''}${task.unit_name ? esc(task.unit_name) : ''}</div>
-              <div class="text-xs text-amber-600 mt-1">Concluída ${task.completed_at ? dayjs(task.completed_at).format('DD/MM HH:mm') : '—'}</div>
-            </li>`)
-          .join('')}</ul>`
-      : '<p class="bo-empty">Sem tarefas concluídas nos últimos dias.</p>';
-
-    const usersTableRows = userRows.length
-      ? userRows
-          .map(u => {
-            const role = ROLE_LABELS[normalizeRole(u.role)] || u.role;
-            return `
-              <tr>
-                <td data-label="Utilizador"><span class="table-cell-value">${esc(u.username)}</span></td>
-                <td data-label="Perfil"><span class="table-cell-value">${esc(role)}</span></td>
-              </tr>`;
+    const bodyContent =
+      dashboardTemplateRenderer && typeof dashboardTemplateRenderer === 'function'
+        ? dashboardTemplateRenderer({
+            navigation: navigationHtml,
+            kpis,
+            shortcuts,
+            header,
+            t: translator,
+            esc
           })
-          .join('')
-      : '<tr><td colspan="2" class="text-sm text-center text-slate-500">Sem utilizadores adicionais.</td></tr>';
-
-    const calendarPreviewRows = calendarPreview.length
-      ? calendarPreview
-          .map(b => {
-            return `
-              <tr>
-                <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
-                <td data-label="Propriedade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
-                <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name || '—')}</span></td>
-                <td data-label="Estado"><span class="table-cell-value">${b.status === 'PENDING' ? 'PENDENTE' : 'CONFIRMADA'}</span></td>
-              </tr>`;
-          })
-          .join('')
-      : '<tr><td colspan="4" class="text-sm text-center text-slate-500">Sem reservas futuras.</td></tr>';
+        : fallbackBody;
 
     const theme = resolveBrandingForRequest(req);
 
-    serverRender('route:/admin');
+    serverRender('route:/admin/dashboard');
     res.send(
       layout({
-        title: 'Backoffice',
+        title: translator('dashboard.title'),
         user: req.user,
         activeNav: 'backoffice',
         branding: theme,
         notifications,
-        pageClass: 'page-backoffice',
-        body: html`
-          <div class="bo-page bo-page--wide">
-            <div class="bo-shell" data-bo-shell>
-              <aside class="bo-sidebar" data-bo-sidebar tabindex="-1">
-                <div class="bo-sidebar__header">
-                  <div class="bo-sidebar__title">Menu principal</div>
-                  <button
-                    type="button"
-                    class="bo-sidebar__toggle"
-                    data-sidebar-toggle
-                    aria-expanded="true"
-                    aria-controls="bo-backoffice-nav"
-                    aria-label="Encolher menu"
-                  >
-                    <i data-lucide="chevron-left" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse" aria-hidden="true"></i>
-                    <i data-lucide="chevron-right" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand" aria-hidden="true"></i>
-                    <i data-lucide="x" class="bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close" aria-hidden="true"></i>
-                  </button>
-                </div>
-                ${navigationHtml}
-              </aside>
-              <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
-              <div class="bo-main" data-bo-main>
-                <button type="button" class="bo-main__menu" data-sidebar-open>
-                  <i data-lucide="menu" aria-hidden="true"></i>
-                  <span>Menu</span>
-                </button>
-                <header class="bo-header">
-                  <h1>Gestor Operacional</h1>
-                  <p>Todos os dados essenciais de gestão em formato compacto.</p>
-                </header>
+        pageClass: 'page-backoffice page-dashboard',
+        body: bodyContent
+      })
+    );
+  });
 
-                ${quickAccessHtml}
+  app.get('/admin/ux-api', requireLogin, requireBackofficeAccess, (req, res) => {
+    ensureNoIndex(res);
+    res.locals.activeNav = '/admin/ux-api';
+    const theme = resolveBrandingForRequest(req);
+    const translator = resolveTranslator(req, res);
+    const docsBase = 'https://docs.gestor.pt';
+    const academyBase = 'https://academy.gestor.pt';
+    const mainDocUrl = `${docsBase}/ux-api`;
+    const quickstartUrl = `${academyBase}/workshops/ux-api`;
+    const tokenDocUrl = `${docsBase}/ux-api/tokens`;
+    const quickLinks = [
+      {
+        label: translator('support.uxApi.quickLinks.endpointMap'),
+        href: `${docsBase}/ux-api/endpoints`,
+        icon: 'sitemap'
+      },
+      {
+        label: translator('support.uxApi.quickLinks.sdk'),
+        href: `${docsBase}/ux-api/sdk-js`,
+        icon: 'code'
+      },
+      {
+        label: translator('support.uxApi.quickLinks.status'),
+        href: 'https://status.gestor.pt',
+        icon: 'signal'
+      }
+    ];
+    const guides = [
+      {
+        icon: 'tags',
+        title: translator('support.uxApi.guides.rates.title'),
+        description: translator('support.uxApi.guides.rates.description'),
+        docUrl: `${docsBase}/ux-api/rates-bulk`,
+        exampleUrl: `${docsBase}/ux-api/exemplos/rates`
+      },
+      {
+        icon: 'calendar-minus',
+        title: translator('support.uxApi.guides.blocks.title'),
+        description: translator('support.uxApi.guides.blocks.description'),
+        docUrl: `${docsBase}/ux-api/unit-blocks`
+      },
+      {
+        icon: 'messages-square',
+        title: translator('support.uxApi.guides.reviews.title'),
+        description: translator('support.uxApi.guides.reviews.description'),
+        docUrl: `${docsBase}/ux-api/reviews`
+      },
+      {
+        icon: 'line-chart',
+        title: translator('support.uxApi.guides.reports.title'),
+        description: translator('support.uxApi.guides.reports.description'),
+        docUrl: `${docsBase}/ux-api/reports`
+      }
+    ];
+    const tokenGuidelines = [
+      {
+        label: translator('support.uxApi.guidelines.items.format.title'),
+        description: translator('support.uxApi.guidelines.items.format.description'),
+        tooltip: translator('support.uxApi.guidelines.items.format.tooltip')
+      },
+      {
+        label: translator('support.uxApi.guidelines.items.scopes.title'),
+        description: translator('support.uxApi.guidelines.items.scopes.description'),
+        tooltip: translator('support.uxApi.guidelines.items.scopes.tooltip')
+      },
+      {
+        label: translator('support.uxApi.guidelines.items.lifecycle.title'),
+        description: translator('support.uxApi.guidelines.items.lifecycle.description'),
+        tooltip: translator('support.uxApi.guidelines.items.lifecycle.tooltip')
+      }
+    ];
+    const tokens = [];
+    let integrationTips = [];
+    if (channelIntegrations && typeof channelIntegrations.listIntegrations === 'function') {
+      integrationTips = channelIntegrations.listIntegrations().map(item => ({
+        name: item.name || item.key,
+        description: translator('support.uxApi.integrations.description', { name: item.name || item.key }),
+        href: `${docsBase}/integracoes/${item.key}`
+      }));
+    }
+    const normalizedTokens = tokens.map(token => {
+      const status = typeof token.status === 'string' ? token.status.toLowerCase() : '';
+      let statusTone = token.statusTone || 'neutral';
+      if (statusTone === 'neutral') {
+        if (status === 'active' || status === 'ativo') {
+          statusTone = 'positive';
+        } else if (status === 'revoked' || status === 'revogado' || status === 'inativo') {
+          statusTone = 'warning';
+        }
+      }
+      let statusLabel = token.statusLabel;
+      if (!statusLabel) {
+        if (status === 'active' || status === 'ativo') {
+          statusLabel = translator('support.uxApi.tokens.status.active');
+        } else if (status === 'revoked' || status === 'revogado') {
+          statusLabel = translator('support.uxApi.tokens.status.revoked');
+        } else if (status === 'expired' || status === 'expirado') {
+          statusLabel = translator('support.uxApi.tokens.status.expired');
+        }
+      }
+      return {
+        ...token,
+        statusTone,
+        statusLabel: statusLabel || token.status || ''
+      };
+    });
+    const bodyContent = uxApiTemplateRenderer
+      ? uxApiTemplateRenderer({
+          guides,
+          tokens: normalizedTokens,
+          tokenGuidelines,
+          integrationTips,
+          quickLinks,
+          mainDocUrl,
+          quickstartUrl,
+          tokenDocUrl,
+          t: translator,
+          esc
+        })
+      : html`<div class="bo-page"><h1>${esc(translator('support.uxApi.title'))}</h1><p>${esc(
+            translator('support.uxApi.fallback', { docUrl: mainDocUrl })
+          )}</p></div>`;
+    res.send(
+      layout({
+        title: translator('support.uxApi.title'),
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        pageClass: 'page-backoffice page-ux-api',
+        body: bodyContent
+      })
+    );
+  });
 
-                <div class="bo-toast-stack" data-toast-container aria-live="polite" aria-atomic="true"></div>
-
-                <section class="bo-pane bo-pane--split is-active" data-bo-pane="overview">
-                <div class="bo-card bo-span-all space-y-4" data-rates-bulk aria-live="polite">
-                  <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                    <div>
-                      <h2 class="text-lg font-semibold text-slate-800">Gestão rápida de preços</h2>
-                      <p class="text-sm text-slate-600">Aplica tarifas por intervalo com filtros por unidade, tipologia e fins-de-semana.</p>
-                    </div>
-                    <div class="flex flex-col items-start gap-2 md:items-end md:text-right">
-                      <a class="btn btn-light" href="/admin/rates/rules">Abrir regras automáticas de tarifas</a>
-                      <div
-                        class="text-xs text-slate-500"
-                        data-rate-feedback
-                        role="status"
-                        aria-live="polite"
-                      >Seleciona datas e unidades para pré-visualizar o impacto.</div>
-                    </div>
-                  </div>
-                  <form class="grid gap-3 md:grid-cols-5" data-rates-form novalidate>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Data inicial</span>
-                      <input type="date" class="input" data-rate-start required />
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Data final</span>
-                      <input type="date" class="input" data-rate-end required />
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Preço €/noite</span>
-                      <input type="number" min="1" step="0.01" class="input" data-rate-price placeholder="Ex.: 165" required />
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Unidade</span>
-                      <select class="input" data-rate-unit>
-                        <option value="">Todas</option>
-                      </select>
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Tipologia</span>
-                      <select class="input" data-rate-type>
-                        <option value="">Todas</option>
-                      </select>
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <div class="md:col-span-5 flex flex-wrap items-center gap-3" data-field>
-                      <label class="inline-flex items-center gap-2 text-sm text-slate-600">
-                        <input type="checkbox" data-rate-weekends />
-                        <span>Aplicar apenas a noites de fim-de-semana</span>
-                      </label>
-                      <button type="button" class="btn btn-primary" data-rate-apply>Atualizar preços</button>
-                      <span class="text-xs text-slate-500" data-rate-loading hidden aria-live="assertive">A atualizar tarifas…</span>
-                    </div>
-                  </form>
-                  <div class="rounded-xl border border-slate-200 bg-white/80 p-3 space-y-3" data-rate-preview-wrapper hidden>
-                    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                      <h3 class="font-semibold text-slate-700">Pré-visualização</h3>
-                      <span class="text-xs text-slate-500" data-rate-summary></span>
-                    </div>
-                    <div class="bo-table responsive-table">
-                      <table class="w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-slate-500">
-                            <th>Unidade</th>
-                            <th>Noites</th>
-                            <th>Preço aplicado</th>
-                          </tr>
-                        </thead>
-                        <tbody data-rate-preview>
-                          <tr><td colspan="3" class="text-sm text-center text-slate-500">Seleciona um intervalo para visualizar o impacto.</td></tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  <p class="text-xs text-slate-500">Após confirmar, tens 5 segundos para anular a alteração.</p>
-                </div>
-                <div class="bo-pane__columns bo-span-all">
-                  <div class="bo-card">
-                    <h2>Propriedades</h2>
-                    <p class="bo-subtitle">Alojamentos atribuídos a este utilizador</p>
-                    ${propertiesListHtml}
-                    <hr class="my-4" />
-                    <h3 class="bo-section-title">Adicionar propriedade</h3>
-                    <form method="post" action="/admin/properties/create" class="grid gap-3">
-                      <fieldset class="grid gap-2"${canManageProperties ? '' : ' disabled'}>
-                        <input required name="name" class="input" placeholder="Nome" />
-                        <input required name="address" class="input" placeholder="Morada completa" />
-                        <div class="grid gap-2 sm:grid-cols-2">
-                          <input required name="locality" class="input" placeholder="Localidade" />
-                          <input required name="district" class="input" placeholder="Distrito" />
-                        </div>
-                        <textarea name="description" class="input" placeholder="Descrição"></textarea>
-                      </fieldset>
-                      ${canManageProperties ? '' : '<p class="bo-empty">Sem permissões para criar novas propriedades.</p>'}
-                      <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar propriedade</button>
-                    </form>
-                  </div>
-
-                  <div class="bo-card">
-                    <h2>Unidades</h2>
-                    <div class="bo-table responsive-table">
-                      <table class="w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-slate-500">
-                            <th>Propriedade</th><th>Unidade</th><th>Cap.</th><th>Base €/noite</th><th></th>
-                          </tr>
-                        </thead>
-                        <tbody>${unitsTableRows}</tbody>
-                      </table>
-                    </div>
-                    <hr class="my-4" />
-                    <h3 class="bo-section-title">Adicionar unidade</h3>
-                    <form method="post" action="/admin/units/create" class="grid gap-3">
-                      <fieldset class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"${canManageProperties ? '' : ' disabled'}>
-                        <label class="form-field md:col-span-2 lg:col-span-2">
-                          <span class="form-label">Propriedade</span>
-                          <select required name="property_id" class="input">
-                            <option value="" disabled selected hidden>Seleciona um alojamento</option>
-                            ${props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-                          </select>
-                        </label>
-                        <label class="form-field md:col-span-2 lg:col-span-2">
-                          <span class="form-label">Nome da unidade</span>
-                          <input required name="name" class="input" placeholder="Ex.: Suite Vista Rio" />
-                        </label>
-                        <label class="form-field">
-                          <span class="form-label">Capacidade</span>
-                          <input required type="number" min="1" name="capacity" class="input" placeholder="Número de hóspedes" />
-                        </label>
-                        <label class="form-field">
-                          <span class="form-label">Preço base €/noite</span>
-                          <input required type="number" step="0.01" min="0" name="base_price_eur" class="input" placeholder="Valor por noite" />
-                        </label>
-                        <div class="md:col-span-2 lg:col-span-4">
-                          ${renderFeatureBuilderField({
-                            name: 'features_raw',
-                            label: 'Características',
-                            helperText: 'Seleciona uma característica, escreve o detalhe pretendido e adiciona à lista.'
-                          })}
-                        </div>
-                      </fieldset>
-                      <div>
-                        <button class="btn btn-primary"${canManageProperties ? '' : ' disabled'}>Adicionar unidade</button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-
-                <div class="bo-card bo-span-all">
-                  <h2>Listagem de propriedades</h2>
-                  <div class="bo-table responsive-table">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-left text-slate-500">
-                          <th>Propriedade · Unidades</th><th>Receita total</th>
-                        </tr>
-                      </thead>
-                      <tbody>${propertiesRevenueTable}</tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="finance">
-                <div class="bo-pane__columns">
-                  <div class="bo-card">
-                    <h2>Resumo financeiro</h2>
-                    <div class="bo-metrics">
-                      <div class="bo-metric"><strong>€ ${eur(confirmedRevenueCents)}</strong><span>Receita confirmada (histórico)</span></div>
-                      <div class="bo-metric"><strong>€ ${eur(pendingRevenueCents)}</strong><span>Receita pendente (${pendingBookingsCount} reservas)</span></div>
-                      <div class="bo-metric"><strong>€ ${eur(automationRevenue7)}</strong><span>Receita prevista (próximos 7 dias)</span></div>
-                      <div class="bo-metric"><strong>€ ${eur(automationRevenue30)}</strong><span>Receita prevista (próximos 30 dias)</span></div>
-                      <div class="bo-metric"><strong>€ ${eur(averageTicketCents)}</strong><span>Ticket médio confirmado</span></div>
-                    </div>
-                  </div>
-                  <div class="bo-card">
-                    <h2>Reservas recentes</h2>
-                    <div class="bo-table responsive-table">
-                      <table class="w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-slate-500">
-                            <th>Quando</th><th>Propriedade / Unidade</th><th>Hóspede</th><th>Contacto</th><th>Ocupação</th><th>Datas</th><th>Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>${recentBookings
-                          .map(b => `
-                            <tr>
-                              <td data-label="Quando"><span class="table-cell-value">${dayjs(b.created_at).format('DD/MM HH:mm')}</span></td>
-                              <td data-label="Propriedade / Unidade"><span class="table-cell-value">${esc(b.property_name)} · ${esc(b.unit_name)}</span></td>
-                              <td data-label="Hóspede"><span class="table-cell-value">${esc(b.guest_name)}</span></td>
-                              <td data-label="Contacto"><span class="table-cell-value">${esc(b.guest_phone || '-')}${b.guest_email ? `<span class="table-cell-muted">${esc(b.guest_email)}</span>` : ''}</span></td>
-                              <td data-label="Ocupação"><span class="table-cell-value">${b.adults}A+${b.children}C</span></td>
-                              <td data-label="Datas"><span class="table-cell-value">${dayjs(b.checkin).format('DD/MM')} - ${dayjs(b.checkout).format('DD/MM')}</span></td>
-                              <td data-label="Total"><span class="table-cell-value">€ ${eur(b.total_cents)}</span></td>
-                            </tr>`)
-                          .join('')}</tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="revenue">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
-                    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                      <div>
-                        <h2>Painel de revenue</h2>
-                        <p class="bo-subtitle">Desempenho dos últimos ${revenueRangeDays} dias com foco em receita e ocupação.</p>
-                      </div>
-                      <div class="text-xs text-slate-500">Período analisado: <span data-revenue-range>${esc(revenueRangeLabel)}</span></div>
-                    </div>
-                    <div class="bo-metrics bo-metrics--wrap mt-4" data-revenue-summary>
-                      <div class="bo-metric"><strong data-revenue-metric="revenue">${esc(revenueSummaryLabels.revenue)}</strong><span>Receita total</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="adr">${esc(revenueSummaryLabels.adr)}</strong><span>ADR médio</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="revpar">${esc(revenueSummaryLabels.revpar)}</strong><span>RevPAR</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="occupancy">${esc(revenueSummaryLabels.occupancy)}</strong><span>Ocupação</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="nights">${esc(revenueSummaryLabels.nights)}</strong><span>Noites vendidas</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="reservations">${esc(revenueSummaryLabels.reservations)}</strong><span>Reservas</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="averageStay">${esc(revenueSummaryLabels.averageStay)}</strong><span>Estadia média (noites)</span></div>
-                      <div class="bo-metric"><strong data-revenue-metric="bookingPace">${esc(revenueSummaryLabels.bookingPace)}</strong><span>Booking pace (média diária)</span></div>
-                    </div>
-                  </div>
-
-                  <div class="grid gap-6 lg:grid-cols-3 bo-span-all">
-                    <div class="bo-card lg:col-span-2">
-                      <div class="flex items-start justify-between gap-3 mb-4">
-                        <div>
-                          <h3 class="bo-section-title">Receita vs noites</h3>
-                          <p class="bo-subtitle">Comparativo diário entre receita gerada e noites vendidas.</p>
-                        </div>
-                      </div>
-                      <div style="height:260px">
-                        <canvas id="revenue-line-chart" aria-label="Gráfico de receita e noites"></canvas>
-                      </div>
-                    </div>
-                    <div class="bo-card">
-                      <div class="flex items-start justify-between gap-3 mb-4">
-                        <div>
-                          <h3 class="bo-section-title">Canais de venda</h3>
-                          <p class="bo-subtitle">Distribuição da receita confirmada.</p>
-                        </div>
-                      </div>
-                      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-1">
-                        <div style="height:220px">
-                          <canvas id="revenue-channel-chart" aria-label="Gráfico de canais de revenue"></canvas>
-                        </div>
-                        <ul class="space-y-3" id="revenue-channel-legend">${revenueChannelsHtml || '<li class="text-sm text-slate-500">Sem dados de canais disponíveis.</li>'}</ul>
-                      </div>
-                    </div>
-                    <div class="bo-card lg:col-span-3">
-                      <div class="flex items-start justify-between gap-3 mb-4">
-                        <div>
-                          <h3 class="bo-section-title">Ocupação diária</h3>
-                          <p class="bo-subtitle">Percentual de ocupação ao longo do período.</p>
-                        </div>
-                      </div>
-                      <div style="height:260px">
-                        <canvas id="revenue-occupancy-chart" aria-label="Gráfico de barras de ocupação diária"></canvas>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p class="bo-empty bo-span-all" data-revenue-chart-fallback hidden>Não foi possível carregar os gráficos de revenue neste navegador.</p>
-
-                  <div class="bo-card bo-span-all">
-                    <h3 class="bo-section-title">Resumo diário detalhado</h3>
-                    <p class="bo-subtitle">Tabela com todos os indicadores financeiros e operacionais por data.</p>
-                    <div class="bo-table responsive-table mt-3">
-                      <table class="w-full text-sm">
-                        <thead>
-                          <tr class="text-left text-slate-500">
-                            <th>Data</th><th>Receita</th><th>ADR</th><th>RevPAR</th><th>Ocupação</th><th>Reservas</th><th>Noites</th><th>Estadia média</th><th>Booking pace</th>
-                          </tr>
-                        </thead>
-                        <tbody id="revenue-daily-table">${revenueDailyTableRows}</tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="channel-manager">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
-                    <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                      <div>
-                        <h2>Channel Manager</h2>
-                        <p class="bo-subtitle">Centralize as integrações com Booking.com, Airbnb, i-escape e Splendia numa única área de controlo.</p>
-                      </div>
-                      <div class="text-xs text-slate-500">Última sincronização registada: <span class="font-medium text-slate-700">${esc(lastSyncLabel)}</span></div>
-                    </div>
-                    ${channelNoticeHtml ? `<div class="mt-4">${channelNoticeHtml}</div>` : ''}
-                    <div class="bo-metrics bo-metrics--wrap mt-4">
-                      <div class="bo-metric"><strong>${totalChannels}</strong><span>Canais disponíveis</span></div>
-                      <div class="bo-metric"><strong>${autoActiveCount}</strong><span>Auto-sync ativos</span></div>
-                      <div class="bo-metric"><strong>${manualEnabledCount}</strong><span>Importações manuais</span></div>
-                      <div class="bo-metric"><strong>${channelsNeedingAttention}</strong><span>Alertas a resolver</span></div>
-                      <div class="bo-metric"><strong>${recentImportCount}</strong><span>Importações recentes</span></div>
-                    </div>
-                  </div>
-
-                  <div class="bo-channel-layout grid gap-6 xl:grid-cols-[2fr_1fr] bo-span-all">
-                    <div class="bo-channel-stack space-y-6">
-                      <div class="bo-card">
-                        <h3 class="bo-section-title">Conexões de canais</h3>
-                        <p class="bo-subtitle">Revê e ajusta as credenciais, URLs e notas operacionais de cada integração.</p>
-                        <div class="bo-channel-card-list mt-4 space-y-4">${channelCardsHtml}</div>
-                      </div>
-
-                      <div class="bo-card">
-                        <h3 class="bo-section-title">Upload manual de reservas</h3>
-                        <p class="bo-subtitle">Carrega ficheiros exportados das plataformas quando precisares de um reforço manual ou recuperação rápida.</p>
-                        ${manualFormatsLegend ? `<ul class="bo-channel-upload-legend mt-4 grid gap-2">${manualFormatsLegend}</ul>` : ''}
-                        <div class="mt-4">${manualUploadSection}</div>
-                      </div>
-                    </div>
-
-                    <div class="bo-channel-stack space-y-6">
-                      <div class="bo-card">
-                        <h3 class="bo-section-title">Alertas do Channel Manager</h3>
-                        <p class="bo-subtitle">Pendências de configuração ou falhas recentes que exigem atenção.</p>
-                        <div class="bo-channel-alerts mt-3 space-y-3">${channelAlertsHtml}</div>
-                      </div>
-
-                      <div class="bo-card">
-                        <h3 class="bo-section-title">Histórico de importações</h3>
-                        <div class="bo-table responsive-table mt-3">
-                          <table class="w-full text-sm">
-                            <thead>
-                              <tr class="text-left text-slate-500">
-                                <th>Data</th><th>Canal</th><th>Origem</th><th>Estado</th><th>Resumo</th><th>Autor</th>
-                              </tr>
-                            </thead>
-                            <tbody>${channelImportsRows}</tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="estatisticas" id="estatisticas">
-                <div class="bo-pane__columns">
-                  ${canViewAutomation ? statisticsCard : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para visualizar o painel estatístico.</p></div>'}
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="reviews" data-reviews-pane>
-                <div class="bo-pane__columns">
-                  <div class="bo-card space-y-4" data-reviews-root aria-live="polite">
-                    <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 class="text-lg font-semibold text-slate-800">Avaliações dos hóspedes</h2>
-                        <p class="text-sm text-slate-600">Filtra rapidamente as reviews recentes ou negativas e responde com confirmação imediata.</p>
-                      </div>
-                      <div class="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600" data-reviews-counter>—</div>
-                    </header>
-                    <div class="flex flex-wrap items-center gap-2" role="tablist">
-                      <button type="button" class="btn btn-light btn-compact is-active" data-review-filter="all" role="tab" aria-selected="true">Todas</button>
-                      <button type="button" class="btn btn-light btn-compact" data-review-filter="negative" role="tab" aria-selected="false">Negativas</button>
-                      <button type="button" class="btn btn-light btn-compact" data-review-filter="recent" role="tab" aria-selected="false">Recentes</button>
-                    </div>
-                    <div class="space-y-3" data-reviews-list aria-busy="true">
-                      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
-                        <div class="h-4 bg-slate-200 rounded w-1/3 mb-2"></div>
-                        <div class="h-3 bg-slate-200 rounded w-2/3"></div>
-                      </div>
-                      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 animate-pulse" data-review-skeleton>
-                        <div class="h-4 bg-slate-200 rounded w-1/2 mb-2"></div>
-                        <div class="h-3 bg-slate-200 rounded w-3/4"></div>
-                      </div>
-                    </div>
-                    <p class="text-sm text-slate-500" data-reviews-empty hidden role="status" aria-live="polite">
-                      Sem novas avaliações esta semana.
-                    </p>
-                  </div>
-                  <div class="bo-card space-y-3" data-review-composer hidden>
-                    <header>
-                      <h3 class="text-base font-semibold text-slate-800">Responder à avaliação</h3>
-                      <p class="text-xs text-slate-500">A resposta ficará visível no portal após sincronização com o canal.</p>
-                    </header>
-                    <article class="rounded-lg border border-slate-200 bg-white/70 p-3 space-y-1" data-selected-review aria-live="polite"></article>
-                    <label class="form-field" data-field>
-                      <span class="form-label">Resposta</span>
-                      <textarea class="input" rows="3" maxlength="1000" data-review-response placeholder="Obrigado pela partilha..." required></textarea>
-                      <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
-                        <span data-review-hint>Máx. 1000 caracteres.</span>
-                        <span data-review-count>0 / 1000</span>
-                      </div>
-                      <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                    </label>
-                    <div class="flex items-center gap-3">
-                      <button type="button" class="btn btn-primary" data-review-submit>Enviar resposta</button>
-                      <button type="button" class="btn btn-light" data-review-cancel>Cancelar</button>
-                      <span class="text-xs text-slate-500" data-review-loading hidden aria-live="assertive">A enviar resposta…</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="housekeeping">
-                <div class="bo-pane__columns">
-                  ${canSeeHousekeeping
-                    ? html`
-                        <div class="bo-card">
-                          <h2>Resumo de limpeza</h2>
-                          <div class="bo-metrics">
-                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.pending : 0}</strong><span>Tarefas pendentes</span></div>
-                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.inProgress : 0}</strong><span>Em curso</span></div>
-                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.highPriority : 0}</strong><span>Prioridade alta</span></div>
-                            <div class="bo-metric"><strong>${housekeepingCounts ? housekeepingCounts.completedRecent : 0}</strong><span>Concluídas 7 dias</span></div>
-                          </div>
-                        </div>
-                        <div class="bo-card">
-                          <h2>Tarefas pendentes</h2>
-                          ${housekeepingPendingHtml}
-                        </div>
-                        <div class="bo-card">
-                          <h2>Em curso</h2>
-                          ${housekeepingInProgressHtml}
-                        </div>
-                        <div class="bo-card">
-                          <h2>Concluídas recentemente</h2>
-                          ${housekeepingCompletedHtml}
-                        </div>
-                        <div class="bo-card">
-                          <a class="btn btn-primary" href="/admin/limpeza">Abrir gestão de limpezas</a>
-                        </div>
-                      `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar tarefas de limpeza.</p></div>'}
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="emails">
-                <div class="bo-pane__columns">
-                  ${canManageEmailTemplates
-                    ? html`
-                        <div class="bo-card bo-span-all">
-                          <h2>Emails de reserva</h2>
-                          <p class="bo-subtitle">Personaliza as mensagens automáticas enviadas aos hóspedes.</p>
-                          <div class="space-y-6">${emailTemplateCards}</div>
-                        </div>
-                      `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de email.</p></div>'}
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="messages">
-                <div class="bo-pane__columns">
-                  ${canManageEmailTemplates
-                    ? html`
-                        <div class="bo-card bo-span-all" data-message-templates-root>
-                          <h2>Mensagens automáticas</h2>
-                          <p class="bo-subtitle">Personalize respostas rápidas para WhatsApp, SMS ou chat com os hóspedes.</p>
-                          <div class="space-y-6">${messageTemplateCards}</div>
-                        </div>
-                      `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para editar modelos de mensagens.</p></div>'}
-                </div>
-              </section>
-
-              ${canViewHistory
-                ? html`
-                    <section class="bo-pane" data-bo-pane="history">
-                      <div class="bo-pane__columns">
-                        <div class="bo-card bo-span-all space-y-6">
-                          <div>
-                            <h2>Histórico de alterações</h2>
-                            <p class="bo-subtitle">
-                              Acompanhe as edições efetuadas pela equipa em reservas e tarefas de limpeza.
-                            </p>
-                          </div>
-                          <div class="grid gap-6 lg:grid-cols-2">
-                            <div class="space-y-3">
-                              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Reservas</h3>
-                              <div class="space-y-4">${historyBookingHtml}</div>
-                            </div>
-                            <div class="space-y-3">
-                              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Tarefas de limpeza</h3>
-                              <div class="space-y-4">${historyTaskHtml}</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-                  `
-                : ''}
-
-              <section class="bo-pane" data-bo-pane="branding">
-                <div class="bo-pane__columns">
-                  <div class="bo-card bo-span-all">
-                    <h2>Identidade visual</h2>
-                    <p class="bo-subtitle">Cores e imagem aplicadas ao portal</p>
-                    <div class="grid gap-3 sm:grid-cols-2">
-                      <div class="rounded-xl border border-amber-200 p-4">
-                        <div class="text-xs uppercase text-amber-600">Nome</div>
-                        <div class="text-lg font-semibold text-amber-900">${esc(theme.brandName)}</div>
-                        ${theme.tagline ? `<div class="text-sm text-amber-700 mt-2">${esc(theme.tagline)}</div>` : ''}
-                      </div>
-                      <div class="rounded-xl border border-amber-200 p-4 flex gap-3 items-center">
-                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.primaryColor)}"></span>
-                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.secondaryColor)}"></span>
-                        <span class="w-10 h-10 rounded-full" style="background:${esc(theme.highlightColor)}"></span>
-                      </div>
-                    </div>
-                    ${canManageUsers
-                      ? '<div class="mt-4"><a class="btn btn-primary" href="/admin/identidade-visual">Gerir identidade visual</a></div>'
-                      : '<p class="bo-empty mt-4">Sem permissões para editar a identidade.</p>'}
-                  </div>
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="users">
-                <div class="bo-pane__columns">
-                  ${canManageUsers
-                    ? html`
-                        <div class="bo-card bo-span-all">
-                          <h2>Utilizadores</h2>
-                          <div class="bo-table responsive-table">
-                            <table class="w-full text-sm">
-                              <thead>
-                                <tr class="text-left text-slate-500">
-                                  <th>Utilizador</th><th>Perfil</th>
-                                </tr>
-                              </thead>
-                              <tbody>${usersTableRows}</tbody>
-                            </table>
-                          </div>
-                          <div class="mt-4 flex gap-3 flex-wrap">
-                            <a class="btn btn-primary" href="/admin/utilizadores">Gerir utilizadores</a>
-                          </div>
-                        </div>
-                      `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para gerir utilizadores.</p></div>'}
-                </div>
-              </section>
-
-              <section class="bo-pane" data-bo-pane="calendar">
-                <div class="bo-pane__columns">
-                  ${canViewCalendar
-                    ? html`
-                        <div class="bo-card bo-span-all">
-                          <h2>Agenda de reservas</h2>
-                          <p class="bo-subtitle">Próximas reservas confirmadas ou pendentes</p>
-                          <div class="bo-table responsive-table">
-                            <table class="w-full text-sm">
-                              <thead>
-                                <tr class="text-left text-slate-500">
-                                  <th>Datas</th><th>Propriedade</th><th>Hóspede</th><th>Estado</th>
-                                </tr>
-                              </thead>
-                              <tbody>${calendarPreviewRows}</tbody>
-                            </table>
-                          </div>
-                          <div class="mt-4"><a class="btn btn-primary" href="/calendar">Abrir calendário completo</a></div>
-                        </div>
-                      `
-                    : '<div class="bo-card bo-span-all"><p class="bo-empty">Sem permissões para consultar o calendário de reservas.</p></div>'}
-                </div>
-              </section>
-              </div>
-            </div>
-          </div>
-          <div class="bo-modal hidden" data-block-modal aria-hidden="true" role="dialog" aria-modal="true">
-            <div class="bo-modal__backdrop" data-block-dismiss tabindex="-1"></div>
-            <div class="bo-modal__content" role="document">
-              <header class="bo-modal__header">
-                <h2 class="text-lg font-semibold text-slate-800" data-block-title>Bloquear unidade</h2>
-                <button type="button" class="bo-modal__close" data-block-dismiss aria-label="Fechar">×</button>
-              </header>
-              <form class="bo-modal__body space-y-3" data-block-form novalidate>
-                <p class="text-sm text-slate-600">Seleciona o intervalo e descreve o motivo visível para a equipa.</p>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label class="form-field" data-field>
-                    <span class="form-label">Data inicial</span>
-                    <input type="date" class="input" data-block-start required />
-                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                  </label>
-                  <label class="form-field" data-field>
-                    <span class="form-label">Data final</span>
-                    <input type="date" class="input" data-block-end required />
-                    <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                  </label>
-                </div>
-                <label class="form-field" data-field>
-                  <span class="form-label">Motivo</span>
-                  <textarea class="input" rows="3" maxlength="240" data-block-reason placeholder="Ex.: Manutenção preventiva nas casas de banho" required></textarea>
-                  <div class="flex items-center justify-between text-xs text-slate-500 mt-1">
-                    <span data-block-hint>Máx. 240 caracteres.</span>
-                    <span data-block-count>0 / 240</span>
-                  </div>
-                  <p class="form-error text-xs text-rose-600" data-error hidden></p>
-                </label>
-                <p class="text-xs text-slate-500" data-block-conflict hidden role="alert"></p>
-                <div class="flex items-center gap-3">
-                  <button type="submit" class="btn btn-primary" data-block-submit>Confirmar bloqueio</button>
-                  <button type="button" class="btn btn-light" data-block-dismiss>Cancelar</button>
-                  <span class="text-xs text-slate-500" data-block-loading hidden aria-live="assertive">A criar bloqueio…</span>
-                </div>
-              </form>
-            </div>
-          </div>
-          <script type="application/json" id="ux-dashboard-config">${uxDashboardConfigJson}</script>
-          <script type="application/json" id="revenue-analytics-data">${revenueAnalyticsJson}</script>
-          <script>${sidebarControlsScript}</script>
-          <script>${featureBuilderScript}</script>
-          <script>${revenueDashboardScript}</script>
-          <script>${renderDashboardTabsScript(defaultPane)}</script>
-          <script>${uxEnhancementsScript}</script>
-        `
+  app.get('/admin/ajuda', requireLogin, requireBackofficeAccess, (req, res) => {
+    ensureNoIndex(res);
+    res.locals.activeNav = '/admin/ajuda';
+    const theme = resolveBrandingForRequest(req);
+    const docsBase = 'https://docs.gestor.pt';
+    const translator = resolveTranslator(req, res);
+    const resources = [
+      {
+        label: translator('support.help.sections.resources.items.onboarding.label'),
+        description: translator('support.help.sections.resources.items.onboarding.description'),
+        href: `${docsBase}/guia/backoffice`
+      },
+      {
+        label: translator('support.help.sections.resources.items.bookings.label'),
+        description: translator('support.help.sections.resources.items.bookings.description'),
+        href: `${docsBase}/operacoes/reservas`
+      },
+      {
+        label: translator('support.help.sections.resources.items.housekeeping.label'),
+        description: translator('support.help.sections.resources.items.housekeeping.description'),
+        href: `${docsBase}/operacoes/housekeeping`
+      }
+    ];
+    const faqs = [
+      {
+        question: translator('support.help.sections.faq.items.resetPassword.question'),
+        answer: translator('support.help.sections.faq.items.resetPassword.answer')
+      },
+      {
+        question: translator('support.help.sections.faq.items.monthlyReports.question'),
+        answer: translator('support.help.sections.faq.items.monthlyReports.answer')
+      },
+      {
+        question: translator('support.help.sections.faq.items.shareCalendar.question'),
+        answer: translator('support.help.sections.faq.items.shareCalendar.answer')
+      }
+    ];
+    const channels = [
+      {
+        label: translator('support.help.sections.channels.items.email.label'),
+        value: translator('support.help.sections.channels.items.email.value'),
+        description: translator('support.help.sections.channels.items.email.description'),
+        icon: 'mail'
+      },
+      {
+        label: translator('support.help.sections.channels.items.phone.label'),
+        value: translator('support.help.sections.channels.items.phone.value'),
+        description: translator('support.help.sections.channels.items.phone.description'),
+        icon: 'phone'
+      },
+      {
+        label: translator('support.help.sections.channels.items.emergencyChat.label'),
+        value: translator('support.help.sections.channels.items.emergencyChat.value'),
+        description: translator('support.help.sections.channels.items.emergencyChat.description'),
+        icon: 'message-circle'
+      }
+    ];
+    const statusTips = [
+      translator('support.help.sections.status.tips.contextDetails'),
+      translator('support.help.sections.status.tips.evidence'),
+      translator('support.help.sections.status.tips.escalateCritical')
+    ];
+    const bodyContent = helpTemplateRenderer
+      ? helpTemplateRenderer({ resources, faqs, channels, statusTips, t: translator, esc })
+      : html`<div class="bo-page"><h1>${esc(translator('support.help.title'))}</h1><p>${esc(
+            translator('support.help.fallback', {
+              email: translator('support.help.sections.channels.items.email.value')
+            })
+          )}</p></div>`;
+    res.send(
+      layout({
+        title: translator('support.help.title'),
+        user: req.user,
+        activeNav: 'backoffice',
+        branding: theme,
+        pageClass: 'page-backoffice page-help',
+        body: bodyContent
       })
     );
   });
@@ -3687,6 +1902,220 @@ app.get('/admin/automation/export.csv', requireLogin, requirePermission('automat
     }
   });
 
+app.get('/admin/properties', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  const query = req.query || {};
+  const search = typeof query.search === 'string' ? query.search.trim() : '';
+  const allowedStatus = ['active', 'no_units'];
+  const statusValue = typeof query.status === 'string' && allowedStatus.includes(query.status)
+    ? query.status
+    : 'all';
+  const allowedSort = ['name', 'units', 'revenue', 'occupancy'];
+  const sortKey = typeof query.sort === 'string' && allowedSort.includes(query.sort) ? query.sort : 'name';
+  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const requestedPage = Number.parseInt(query.page, 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = 20;
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const properties = db.prepare('SELECT id, name, locality, district FROM properties ORDER BY name').all();
+  const unitCounts = db.prepare('SELECT property_id, COUNT(*) AS unit_count FROM units GROUP BY property_id').all();
+  const revenueByProperty = db
+    .prepare(
+      `SELECT u.property_id AS property_id,
+              SUM(CASE WHEN b.status = 'CONFIRMED' THEN b.total_cents ELSE 0 END) AS revenue_cents
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+        GROUP BY u.property_id`
+    )
+    .all();
+  const occupancyToday = db
+    .prepare(
+      `SELECT u.property_id AS property_id,
+              COUNT(DISTINCT u.id) AS occupied_units
+         FROM bookings b
+         JOIN units u ON u.id = b.unit_id
+        WHERE b.status = 'CONFIRMED'
+          AND b.checkin <= ?
+          AND b.checkout > ?
+        GROUP BY u.property_id`
+    )
+    .all(today, today);
+
+  const unitCountMap = new Map(unitCounts.map(row => [row.property_id, Number(row.unit_count) || 0]));
+  const revenueMap = new Map(revenueByProperty.map(row => [row.property_id, Number(row.revenue_cents) || 0]));
+  const occupancyMap = new Map(occupancyToday.map(row => [row.property_id, Number(row.occupied_units) || 0]));
+
+  const list = properties.map(property => {
+    const unitCount = unitCountMap.get(property.id) || 0;
+    const revenueCents = revenueMap.get(property.id) || 0;
+    const occupiedUnits = occupancyMap.get(property.id) || 0;
+    const occupancyRate = unitCount > 0 ? Math.round((occupiedUnits / unitCount) * 100) : 0;
+    const statusKey = unitCount > 0 ? 'active' : 'no_units';
+    return {
+      id: property.id,
+      name: property.name,
+      location: propertyLocationLabel(property),
+      unitCount,
+      revenueCents,
+      occupiedUnits,
+      occupancyRate,
+      statusKey,
+      statusLabel: statusKey === 'active' ? 'Ativa' : 'Sem unidades'
+    };
+  });
+
+  const filtered = list.filter(row => {
+    if (statusValue !== 'all' && row.statusKey !== statusValue) {
+      return false;
+    }
+    if (!search) return true;
+    const haystack = `${row.name} ${row.location || ''}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+
+  const sorted = filtered.sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'units':
+        result = a.unitCount - b.unitCount;
+        break;
+      case 'revenue':
+        result = a.revenueCents - b.revenueCents;
+        break;
+      case 'occupancy':
+        result = a.occupancyRate - b.occupancyRate;
+        break;
+      case 'name':
+      default:
+        result = a.name.localeCompare(b.name, 'pt', { sensitivity: 'base' });
+        break;
+    }
+    return sortOrder === 'desc' ? -result : result;
+  });
+
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageRows = sorted.slice(startIndex, startIndex + pageSize);
+
+  const modals = [];
+
+  const tableRows = pageRows.map(row => {
+    const modalId = `property-${row.id}-delete`;
+    modals.push({
+      id: modalId,
+      title: `Eliminar ${row.name}`,
+      message: 'Tem a certeza que deseja eliminar este item? Esta ação não pode ser anulada.',
+      action: `/admin/properties/${row.id}/delete`,
+      confirmLabel: 'Eliminar',
+      confirmIcon: 'trash-2'
+    });
+
+    const occupancyLabel = row.unitCount
+      ? `<span class="table-cell-value">${row.occupiedUnits}/${row.unitCount}</span><span class="table-cell-meta">${row.occupancyRate}% ocupação</span>`
+      : '<span class="table-cell-value">—</span><span class="table-cell-meta">Sem unidades</span>';
+
+    const statusBadge = row.statusKey === 'active'
+      ? '<span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Ativa</span>'
+      : '<span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Sem unidades</span>';
+
+    const locationHtml = row.location
+      ? `<span class="table-cell-meta">${esc(row.location)}</span>`
+      : '';
+
+    return {
+      id: row.id,
+      cells: {
+        name: { html: `<span class="table-cell-value">${esc(row.name)}</span>${locationHtml}` },
+        units: { text: String(row.unitCount) },
+        occupancy: { html: occupancyLabel },
+        revenue: { className: 'text-right', html: `<span class="table-cell-value">€ ${eur(row.revenueCents)}</span>` },
+        status: { html: statusBadge }
+      },
+      actions: [
+        { type: 'link', href: `/admin/properties/${row.id}`, label: 'Editar', icon: 'pencil' },
+        { type: 'button', modalId, label: 'Eliminar', icon: 'trash-2' }
+      ]
+    };
+  });
+
+  const statusOptions = [
+    { value: 'all', label: 'Todos os estados' },
+    { value: 'active', label: 'Ativas' },
+    { value: 'no_units', label: 'Sem unidades' }
+  ];
+
+  const table = {
+    id: 'properties-table',
+    formAction: '/admin/properties',
+    searchValue: search,
+    searchPlaceholder: 'Pesquisar propriedades ou localidade…',
+    statusOptions,
+    statusValue,
+    columns: [
+      { key: 'name', label: 'Propriedade', sortable: true },
+      { key: 'units', label: 'Unidades', sortable: true, className: 'text-center' },
+      { key: 'occupancy', label: 'Ocupação hoje', sortable: true, className: 'text-center' },
+      { key: 'revenue', label: 'Receita confirmada', sortable: true, className: 'text-right' },
+      { key: 'status', label: 'Estado' }
+    ],
+    rows: tableRows,
+    actionsLabel: 'Ações',
+    sortKey,
+    sortOrder,
+    resetUrl: '/admin/properties',
+    buildSortUrl: key => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', key);
+      params.set('order', sortKey === key && sortOrder === 'asc' ? 'desc' : 'asc');
+      params.set('page', '1');
+      return `/admin/properties?${params.toString()}`;
+    },
+    buildPageUrl: targetPage => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
+      params.set('page', String(targetPage));
+      return `/admin/properties?${params.toString()}`;
+    },
+    pagination: {
+      page: currentPage,
+      totalPages
+    },
+    emptyMessage: 'Nenhuma propriedade corresponde aos filtros aplicados.',
+    modals
+  };
+
+  const theme = resolveBrandingForRequest(req);
+  res.locals.activeNav = '/admin/properties';
+
+  const renderTableWithContext = (config) => renderTable(config, req, res);
+  const bodyContent = propertiesTemplateRenderer
+    ? propertiesTemplateRenderer({ renderTable: renderTableWithContext, table, totalCount })
+    : html`
+        <div class="bo-page">
+          <h1>Propriedades</h1>
+          ${renderTable(table, req, res)}
+        </div>
+      `;
+
+  res.send(
+    layout({
+      title: 'Propriedades',
+      user: req.user,
+      activeNav: 'backoffice',
+      branding: theme,
+      pageClass: 'page-backoffice page-properties',
+      body: bodyContent
+    })
+  );
+});
+
 app.post('/admin/properties/create', requireLogin, requirePermission('properties.manage'), async (req, res) => {
   const { name, locality, district, address, description } = req.body;
   const trimmedLocality = String(locality || '').trim();
@@ -3722,7 +2151,7 @@ app.post('/admin/properties/create', requireLogin, requirePermission('properties
     latitude,
     longitude
   );
-  res.redirect('/admin');
+  res.redirect('/admin/properties');
 });
 
 app.post(
@@ -3734,7 +2163,7 @@ app.post(
     const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(id);
     if (!property) return res.status(404).send('Propriedade não encontrada');
     db.prepare('DELETE FROM properties WHERE id = ?').run(id);
-    res.redirect('/admin');
+    res.redirect('/admin/properties');
   }
 );
 
@@ -3925,6 +2354,208 @@ app.post(
   }
 );
 
+app.get('/admin/units', requireLogin, requirePermission('properties.manage'), (req, res) => {
+  const query = req.query || {};
+  const search = typeof query.search === 'string' ? query.search.trim() : '';
+  const allowedStatus = ['available', 'blocked'];
+  const statusValue = typeof query.status === 'string' && allowedStatus.includes(query.status)
+    ? query.status
+    : 'all';
+  const allowedSort = ['name', 'property', 'capacity', 'price', 'status'];
+  const sortKey = typeof query.sort === 'string' && allowedSort.includes(query.sort) ? query.sort : 'property';
+  const sortOrder = String(query.order || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const requestedPage = Number.parseInt(query.page, 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = 25;
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const units = db
+    .prepare(
+      `SELECT u.id,
+              u.name,
+              u.capacity,
+              u.base_price_cents,
+              u.property_id,
+              p.name AS property_name
+         FROM units u
+         JOIN properties p ON p.id = u.property_id`
+    )
+    .all();
+
+  const blockedModern = db
+    .prepare(
+      `SELECT unit_id
+         FROM unit_blocks
+        WHERE end_date > ?
+          AND (lock_type IS NULL OR lock_type <> 'HARD_LOCK')`
+    )
+    .all(today);
+
+  const blockedLegacy = db.prepare('SELECT unit_id FROM blocks WHERE end_date > ?').all(today);
+  const blockedSet = new Set([
+    ...blockedModern.map(entry => entry.unit_id),
+    ...blockedLegacy.map(entry => entry.unit_id)
+  ]);
+
+  const rows = units.map(unit => {
+    const blocked = blockedSet.has(unit.id);
+    return {
+      id: unit.id,
+      name: unit.name,
+      propertyName: unit.property_name,
+      capacity: Number(unit.capacity) || 0,
+      priceCents: Number(unit.base_price_cents) || 0,
+      statusKey: blocked ? 'blocked' : 'available',
+      statusLabel: blocked ? 'Bloqueado' : 'Disponível'
+    };
+  });
+
+  const filtered = rows.filter(row => {
+    if (statusValue !== 'all' && row.statusKey !== statusValue) {
+      return false;
+    }
+    if (!search) return true;
+    const haystack = `${row.name} ${row.propertyName}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+
+  const sorted = filtered.sort((a, b) => {
+    let result = 0;
+    switch (sortKey) {
+      case 'name':
+        result = a.name.localeCompare(b.name, 'pt', { sensitivity: 'base' });
+        break;
+      case 'capacity':
+        result = a.capacity - b.capacity;
+        break;
+      case 'price':
+        result = a.priceCents - b.priceCents;
+        break;
+      case 'status':
+        result = a.statusLabel.localeCompare(b.statusLabel, 'pt', { sensitivity: 'base' });
+        break;
+      case 'property':
+      default:
+        result = a.propertyName.localeCompare(b.propertyName, 'pt', { sensitivity: 'base' });
+        break;
+    }
+    return sortOrder === 'desc' ? -result : result;
+  });
+
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageRows = sorted.slice(startIndex, startIndex + pageSize);
+
+  const modals = [];
+
+  const tableRows = pageRows.map(row => {
+    const modalId = `unit-${row.id}-delete`;
+    modals.push({
+      id: modalId,
+      title: `Eliminar ${row.name}`,
+      message: 'Tem a certeza que deseja eliminar este item? Esta ação não pode ser anulada.',
+      action: `/admin/units/${row.id}/delete`,
+      confirmLabel: 'Eliminar',
+      confirmIcon: 'trash-2'
+    });
+
+    const statusBadge = row.statusKey === 'blocked'
+      ? '<span class="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Bloqueado</span>'
+      : '<span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Disponível</span>';
+
+    return {
+      id: row.id,
+      cells: {
+        property: { text: row.propertyName },
+        name: { text: row.name },
+        capacity: { text: `${row.capacity} hóspedes`, className: 'text-center' },
+        price: { className: 'text-right', html: `<span class="table-cell-value">€ ${eur(row.priceCents)}</span>` },
+        status: { html: statusBadge }
+      },
+      actions: [
+        { type: 'link', href: `/admin/units/${row.id}`, label: 'Editar', icon: 'pencil' },
+        { type: 'button', modalId, label: 'Eliminar', icon: 'trash-2' }
+      ]
+    };
+  });
+
+  const statusOptions = [
+    { value: 'all', label: 'Todos os estados' },
+    { value: 'available', label: 'Disponíveis' },
+    { value: 'blocked', label: 'Bloqueados' }
+  ];
+
+  const table = {
+    id: 'units-table',
+    formAction: '/admin/units',
+    searchValue: search,
+    searchPlaceholder: 'Pesquisar unidade ou propriedade…',
+    statusOptions,
+    statusValue,
+    columns: [
+      { key: 'property', label: 'Propriedade', sortable: true },
+      { key: 'name', label: 'Unidade', sortable: true },
+      { key: 'capacity', label: 'Capacidade', sortable: true, className: 'text-center' },
+      { key: 'price', label: 'Preço base', sortable: true, className: 'text-right' },
+      { key: 'status', label: 'Estado', sortable: true }
+    ],
+    rows: tableRows,
+    actionsLabel: 'Ações',
+    sortKey,
+    sortOrder,
+    resetUrl: '/admin/units',
+    buildSortUrl: key => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', key);
+      params.set('order', sortKey === key && sortOrder === 'asc' ? 'desc' : 'asc');
+      params.set('page', '1');
+      return `/admin/units?${params.toString()}`;
+    },
+    buildPageUrl: targetPage => {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (statusValue !== 'all') params.set('status', statusValue);
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
+      params.set('page', String(targetPage));
+      return `/admin/units?${params.toString()}`;
+    },
+    pagination: {
+      page: currentPage,
+      totalPages
+    },
+    emptyMessage: 'Nenhuma unidade corresponde aos filtros aplicados.',
+    modals
+  };
+
+  const theme = resolveBrandingForRequest(req);
+  res.locals.activeNav = '/admin/units';
+
+  const unitsRenderTable = (config) => renderTable(config, req, res);
+  const bodyContent = unitsTemplateRenderer
+    ? unitsTemplateRenderer({ renderTable: unitsRenderTable, table, totalCount })
+    : html`
+        <div class="bo-page">
+          <h1>Unidades</h1>
+          ${renderTable(table, req, res)}
+        </div>`;
+
+  res.send(
+    layout({
+      title: 'Unidades',
+      user: req.user,
+      activeNav: 'backoffice',
+      branding: theme,
+      pageClass: 'page-backoffice page-units',
+      body: bodyContent
+    })
+  );
+});
+
 app.post(
   '/admin/units/create',
   requireLogin,
@@ -3953,7 +2584,7 @@ app.post(
     null,
     null
   );
-  res.redirect('/admin');
+  res.redirect('/admin/units');
 }
 );
 
@@ -4309,7 +2940,7 @@ app.post(
   }),
   (req, res) => {
     db.prepare('DELETE FROM units WHERE id = ?').run(req.params.id);
-    res.redirect('/admin');
+    res.redirect('/admin/units');
   }
 );
 
@@ -5659,6 +4290,13 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                  COALESCE(p.name, '') COLLATE NOCASE`
     )
     .all(tenantId);
+  const scopeCountByUser = {};
+  scopeAssignments.forEach(scope => {
+    if (!scope || !scope.user_id) return;
+    const userId = Number(scope.user_id);
+    if (!Number.isInteger(userId)) return;
+    scopeCountByUser[userId] = (scopeCountByUser[userId] || 0) + 1;
+  });
   const query = req.query || {};
   let successMessage = null;
   if (query.updated === 'permissions') {
@@ -5690,6 +4328,15 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
       break;
   }
 
+  const overridesByUser = {};
+  selectAllPermissionOverridesStmt.all().forEach(row => {
+    if (!row || !row.user_id || !row.permission) return;
+    if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
+    overridesByUser[row.user_id].push({
+      permission: row.permission,
+      is_granted: row.is_granted ? 1 : 0
+    });
+  });
   let permissionGroupEntries = [];
   let permissionPayload = null;
   if (isDevOperator) {
@@ -5708,16 +4355,6 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
     permissionGroupEntries = Object.entries(grouped)
       .sort((a, b) => a[0].localeCompare(b[0], 'pt'))
       .map(([groupKey, permissions]) => ({ groupKey, permissions }));
-
-    const overridesByUser = {};
-    selectAllPermissionOverridesStmt.all().forEach(row => {
-      if (!row || !row.user_id || !row.permission) return;
-      if (!overridesByUser[row.user_id]) overridesByUser[row.user_id] = [];
-      overridesByUser[row.user_id].push({
-        permission: row.permission,
-        is_granted: row.is_granted ? 1 : 0
-      });
-    });
 
     const baseByUser = {};
     const effectiveByUser = {};
@@ -5981,6 +4618,9 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                         : scope.property_name
                         ? scope.property_name
                         : `Propriedade #${scope.property_id}`;
+                      const confirmMessage = JSON.stringify(
+                        `Revogar o escopo ${roleLabel} em ${propertyLabel}? O utilizador perderá o acesso imediato.`
+                      );
                       return `
                         <tr>
                           <td class="px-4 py-2" data-label="Utilizador"><span class="table-cell-value">${esc(scope.username)}</span></td>
@@ -5988,7 +4628,7 @@ app.get('/admin/utilizadores', requireAdmin, (req,res)=>{
                           <td class="px-4 py-2" data-label="Propriedade"><span class="table-cell-value">${esc(propertyLabel)}</span></td>
                           <td class="px-4 py-2" data-label="Ações">
                             <form method="post" action="/admin/user-roles/${scope.id}/delete" class="inline">
-                              <button class="btn btn-light btn-xs" onclick="return confirm('Remover este escopo?');">Remover</button>
+                              <button class="btn btn-light btn-xs" onclick="return confirm(${confirmMessage});">Remover</button>
                             </form>
                           </td>
                         </tr>
@@ -6555,6 +5195,39 @@ app.post('/admin/users/permissions', requireDev, (req, res) => {
   }
 
   res.redirect('/admin/utilizadores?updated=permissions');
+});
+
+app.post('/admin/users/:id/delete', requireAdmin, (req, res) => {
+  const tenantId = req.tenant && req.tenant.id ? Number(req.tenant.id) : 1;
+  const userId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(userId)) {
+    return res.redirect('/admin/utilizadores?error=delete_invalid');
+  }
+  if (req.user && Number(req.user.id) === userId) {
+    return res.redirect('/admin/utilizadores?error=delete_self');
+  }
+  const target = db
+    .prepare('SELECT id, username, role FROM users WHERE id = ? AND tenant_id = ?')
+    .get(userId, tenantId);
+  if (!target) {
+    return res.redirect('/admin/utilizadores?error=delete_missing');
+  }
+  const targetRole = normalizeRole(target.role);
+  if (targetRole === MASTER_ROLE && req.user && normalizeRole(req.user.role) !== MASTER_ROLE) {
+    return res.redirect('/admin/utilizadores?error=delete_missing');
+  }
+  const removeRoles = db.prepare('DELETE FROM user_roles WHERE user_id = ? AND tenant_id = ?');
+  const removeOwners = db.prepare('DELETE FROM property_owners WHERE user_id = ? AND tenant_id = ?');
+  const deleteUser = db.prepare('DELETE FROM users WHERE id = ? AND tenant_id = ?');
+  db.transaction(() => {
+    removeRoles.run(userId, tenantId);
+    removeOwners.run(userId, tenantId);
+    deletePermissionOverridesForUserStmt.run(userId);
+    deleteUser.run(userId, tenantId);
+  })();
+  revokeUserSessions(userId, req);
+  logActivity(req.user.id, 'user:delete', 'user', userId, { username: target.username });
+  res.redirect('/admin/utilizadores?deleted=1');
 });
 
 app.post('/admin/users/reveal-password', requireAdmin, (req,res)=>{

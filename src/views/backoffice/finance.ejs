@@ -6,6 +6,30 @@
     </p>
   </header>
 
+  <div
+    class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 mb-6"
+    role="group"
+    aria-labelledby="finance-exports-label"
+  >
+    <span id="finance-exports-label" class="text-sm text-slate-600">Exportar dados financeiros:</span>
+    <div class="flex flex-col sm:flex-row gap-2" role="presentation">
+      <a
+        class="btn btn-secondary"
+        href="/admin/finance/export?format=csv"
+        aria-label="Exportar resumo financeiro em formato CSV"
+      >
+        Exportar CSV
+      </a>
+      <a
+        class="btn btn-ghost"
+        href="/admin/finance/export?format=xlsx"
+        aria-label="Exportar resumo financeiro em formato Excel"
+      >
+        Exportar XLSX
+      </a>
+    </div>
+  </div>
+
   <section class="grid gap-4 md:grid-cols-2 mb-6">
     <div class="card p-4 flex flex-col gap-2">
       <span class="text-xs uppercase tracking-wide text-amber-600 font-semibold">Receita confirmada</span>
@@ -70,8 +94,9 @@
       <table class="w-full text-sm">
         <thead>
           <tr class="text-left text-slate-500">
-            <th>Mês</th>
-            <th>Receita confirmada</th>
+            <th scope="col">Mês</th>
+            <th scope="col">Receita confirmada</th>
+            <th scope="col">Taxa de ocupação</th>
           </tr>
         </thead>
         <tbody>
@@ -79,6 +104,7 @@
             <tr>
               <td data-label="Mês"><span class="table-cell-value"><%= esc(row.label) %></span></td>
               <td data-label="Receita"><span class="table-cell-value"><%= esc(row.formatted) %></span></td>
+              <td data-label="Ocupação"><span class="table-cell-value"><%= esc(row.occupancyLabel) %></span></td>
             </tr>
           <% }) %>
         </tbody>

@@ -1,0 +1,81 @@
+<%
+  const translate = typeof t === 'function' ? t : (key => key);
+  const safeEsc = typeof esc === 'function' ? esc : (value => (value == null ? '' : String(value)));
+%>
+<div class="bo-page bo-page--wide">
+  <a class="text-slate-600 underline" href="/admin">&larr; <%= translate('support.backofficeLink') %></a>
+  <header class="mb-8 space-y-3">
+    <h1 class="text-3xl font-semibold text-slate-900"><%= translate('support.help.title') %></h1>
+    <p class="lead text-slate-600"><%= translate('support.help.lead') %></p>
+  </header>
+
+  <% if (Array.isArray(resources) && resources.length) { %>
+    <section class="card p-6 space-y-4">
+      <div>
+        <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.help.sections.resources.title') %></h2>
+        <p class="text-sm text-slate-600"><%= translate('support.help.sections.resources.description') %></p>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <% resources.forEach(function(resource) { %>
+          <a class="border border-slate-200 rounded-xl p-4 hover:border-slate-400 transition" href="<%= safeEsc(resource.href) %>" target="_blank" rel="noopener">
+            <h3 class="text-base font-semibold text-slate-800 mb-1"><%= safeEsc(resource.label) %></h3>
+            <p class="text-sm text-slate-600"><%= safeEsc(resource.description) %></p>
+          </a>
+        <% }) %>
+      </div>
+    </section>
+  <% } %>
+
+  <% if (Array.isArray(faqs) && faqs.length) { %>
+    <section class="card p-6 mt-8">
+      <h2 class="text-xl font-semibold text-slate-900 mb-4"><%= translate('support.help.sections.faq.title') %></h2>
+      <dl class="space-y-4">
+        <% faqs.forEach(function(entry) { %>
+          <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+            <dt class="font-semibold text-slate-800"><%= safeEsc(entry.question) %></dt>
+            <dd class="mt-2 text-sm text-slate-600"><%- entry.answer %></dd>
+          </div>
+        <% }) %>
+      </dl>
+    </section>
+  <% } %>
+
+  <% if (Array.isArray(channels) && channels.length) { %>
+    <section class="card p-6 mt-8 space-y-4">
+      <div>
+        <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.help.sections.channels.title') %></h2>
+        <p class="text-sm text-slate-600"><%= translate('support.help.sections.channels.description') %></p>
+      </div>
+      <ul class="space-y-3">
+        <% channels.forEach(function(channel) { %>
+          <li class="border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p class="font-semibold text-slate-800 flex items-center gap-2">
+                <% if (channel.icon) { %>
+                  <span class="text-slate-500"><%- include('../partials/icon', { name: channel.icon }) %></span>
+                <% } %>
+                <span><%= safeEsc(channel.label) %></span>
+              </p>
+              <p class="text-sm text-slate-600 mt-1"><%= safeEsc(channel.description) %></p>
+            </div>
+            <div class="text-sm text-slate-700 font-mono"><%= safeEsc(channel.value) %></div>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+  <% } %>
+
+  <% if (Array.isArray(statusTips) && statusTips.length) { %>
+    <section class="card p-6 mt-8 space-y-3">
+      <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.help.sections.status.title') %></h2>
+      <ul class="space-y-2 text-sm text-slate-600">
+        <% statusTips.forEach(function(tip) { %>
+          <li class="flex items-start gap-2">
+            <span class="text-sky-600 mt-0.5"><%- include('../partials/icon', { name: 'info', className: 'help-tip__icon' }) %></span>
+            <span><%= safeEsc(tip) %></span>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+  <% } %>
+</div>

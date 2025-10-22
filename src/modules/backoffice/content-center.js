@@ -78,9 +78,12 @@ module.exports = function registerContentCenter(app, context) {
       if (!activeUnit) {
         const body = html`
           <div class="bo-page">
-            <section class="bg-white shadow-sm rounded-2xl p-8">
-              <h1 class="text-2xl font-semibold text-slate-900 mb-2">Centro de Conteúdos</h1>
-              <p class="text-slate-600">Ainda não existem unidades configuradas para este tenant. Crie uma unidade para começar a gerir conteúdos.</p>
+            <section class="bg-white shadow-sm rounded-2xl p-8 space-y-3">
+              <h1 class="text-2xl font-semibold text-slate-900">Centro de Conteúdos</h1>
+              <p class="lead text-slate-600">
+                Ainda não existem unidades configuradas para este tenant. Crie uma unidade para começar a gerir descrições, fotos e políticas antes de publicar.
+                Consulte o <a href="https://docs.gestor.pt/content-center" target="_blank" rel="noopener">guia passo a passo</a> para aprender a preparar o primeiro catálogo.
+              </p>
             </section>
           </div>
         `;
@@ -127,8 +130,10 @@ module.exports = function registerContentCenter(app, context) {
             <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
             <div>
               <h1 class="text-3xl font-semibold text-slate-900">Centro de Conteúdos</h1>
-              <p class="text-slate-600 mt-2 max-w-2xl">
+              <p class="lead text-slate-600 mt-3">
                 Centralize descrições, destaques, políticas e galerias de cada unidade antes de publicar rapidamente nas OTAs conectadas.
+                Consulte o <a href="https://docs.gestor.pt/content-center" target="_blank" rel="noopener">manual de boas práticas</a> ou veja o
+                <a href="https://academy.gestor.pt/videos/content-center" target="_blank" rel="noopener">tutorial em vídeo</a> para alinhar a equipa.
               </p>
             </div>
             <div class="w-full lg:w-80">

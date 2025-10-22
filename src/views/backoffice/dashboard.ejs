@@ -1,0 +1,87 @@
+<%
+  const translator = typeof t === 'function' ? t : (key => key);
+  const headerTitle = (header && header.title) || translator('dashboard.title');
+  const headerSubtitle =
+    header && typeof header.subtitle === 'string' && header.subtitle
+      ? header.subtitle
+      : translator('dashboard.subtitle');
+  const kpiSectionLabel = translator('dashboard.kpiSectionLabel');
+%>
+<div class="bo-page bo-page--wide">
+  <div class="bo-shell" data-bo-shell>
+    <aside class="bo-sidebar" data-bo-sidebar tabindex="-1">
+      <div class="bo-sidebar__header">
+        <div class="bo-sidebar__title"><%= esc(translator('dashboard.menu')) %></div>
+        <button
+          type="button"
+          class="bo-sidebar__toggle"
+          data-sidebar-toggle
+          aria-expanded="true"
+          aria-controls="bo-backoffice-nav"
+          aria-label="<%= esc(translator('dashboard.menu')) %>"
+        >
+          <%- include('../partials/icon', { name: 'chevron-left', className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--collapse' }) %>
+          <%- include('../partials/icon', { name: 'chevron-right', className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--expand' }) %>
+          <%- include('../partials/icon', { name: 'x', className: 'bo-sidebar__toggle-icon bo-sidebar__toggle-icon--close' }) %>
+        </button>
+      </div>
+      <%- navigation %>
+    </aside>
+    <div class="bo-sidebar__scrim" data-sidebar-scrim hidden></div>
+    <div class="bo-main" data-bo-main>
+      <button type="button" class="bo-main__menu" data-sidebar-open>
+        <%- include('../partials/icon', { name: 'menu' }) %>
+        <span><%= esc(translator('dashboard.menu')) %></span>
+      </button>
+      <header class="bo-header dashboard-header">
+        <h1><%= esc(headerTitle) %></h1>
+        <% if (headerSubtitle) { %>
+          <p><%= esc(headerSubtitle) %></p>
+        <% } %>
+      </header>
+      <% if (Array.isArray(shortcuts) && shortcuts.length) { %>
+        <nav class="dashboard-shortcuts" aria-label="<%= esc(translator('dashboard.shortcuts.label')) %>">
+          <% shortcuts.forEach(function(shortcut, index) { %>
+            <% if (shortcut && shortcut.href) { %>
+              <a class="dashboard-shortcut<%= index === 0 ? ' dashboard-shortcut--primary' : '' %>" href="<%= esc(shortcut.href) %>">
+                <span class="dashboard-shortcut__icon"><%- include('../partials/icon', { name: shortcut.icon || 'arrow-right' }) %></span>
+                <span><%= esc(shortcut.label || translator('dashboard.shortcuts.label')) %></span>
+              </a>
+            <% } %>
+          <% }) %>
+        </nav>
+      <% } %>
+      <section class="dashboard-grid" aria-label="<%= esc(kpiSectionLabel) %>">
+        <% if (Array.isArray(kpis) && kpis.length) { %>
+          <% kpis.forEach(function(card) { %>
+            <% if (card) { %>
+              <article class="bo-card dashboard-card">
+                <div class="dashboard-card__icon">
+                  <%- include('../partials/icon', { name: card.icon || 'gauge', className: 'dashboard-card__icon-inner', size: 'lg' }) %>
+                </div>
+                <div class="dashboard-card__content">
+                  <p class="dashboard-card__title"><%= esc(card.title || '') %></p>
+                  <p class="dashboard-card__value"><%= esc(card.value || '—') %></p>
+                  <% if (card.caption) { %>
+                    <p class="dashboard-card__caption"><%= esc(card.caption) %></p>
+                  <% } %>
+                  <% if (card.href) { %>
+                    <a class="dashboard-card__link" href="<%= esc(card.href) %>">
+                      <span><%= esc(translator('actions.viewSection') || 'Ver secção') %></span>
+                      <span class="dashboard-card__link-icon"><%- include('../partials/icon', { name: 'arrow-up-right' }) %></span>
+                    </a>
+                  <% } %>
+                </div>
+              </article>
+            <% } %>
+          <% }) %>
+        <% } else { %>
+          <article class="bo-card dashboard-card dashboard-card--empty">
+            <p class="dashboard-card__title"><%= esc(translator('dashboard.emptyTitle')) %></p>
+            <p class="dashboard-card__caption"><%= esc(translator('dashboard.emptyCaption')) %></p>
+          </article>
+        <% } %>
+      </section>
+    </div>
+  </div>
+</div>

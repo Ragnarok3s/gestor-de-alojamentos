@@ -1,0 +1,99 @@
+<%
+  const translator = typeof t === 'function' ? t : (key => key);
+  const summaryText = translator('extras.summaryCaption', {
+    visible: `<strong>${visibleCount}</strong>`,
+    total: `<strong>${totalCount}</strong>`
+  });
+%>
+<div class="bo-page bo-page--wide">
+  <% if (breadcrumbsHtml) { %>
+    <%- breadcrumbsHtml %>
+  <% } %>
+  <a class="text-slate-600 underline" href="/admin">&larr; <%= esc(translator('extras.back')) %></a>
+  <header class="space-y-2 mt-6">
+    <div class="flex flex-wrap items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
+      <span class="inline-flex items-center gap-1">
+        <span class="inline-flex items-center justify-center"><%- include('../../partials/icon', { name: 'building-2' }) %></span>
+        <span><%= esc(selectedProperty.name) %></span>
+      </span>
+    </div>
+    <h1 class="text-2xl font-semibold text-slate-900"><%= esc(translator('extras.headerTitle')) %></h1>
+    <p class="text-sm text-slate-600 max-w-3xl"><%= esc(translator('extras.headerDescription')) %></p>
+  </header>
+
+  <form method="get" class="card p-4 mt-6 mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div class="grid gap-2 md:grid-cols-2 md:gap-4 w-full">
+      <label class="grid gap-1 text-sm md:col-span-2 md:max-w-sm">
+        <span><%= esc(translator('extras.propertyLabel')) %></span>
+        <select class="input" name="propertyId">
+          <% propertyOptions.forEach(option => { %>
+            <option value="<%= esc(option.value) %>" <%= option.selected ? 'selected' : '' %>><%= esc(option.label) %></option>
+          <% }) %>
+        </select>
+      </label>
+    </div>
+    <div class="flex gap-2">
+      <button type="submit" class="bo-button bo-button--secondary self-start md:self-auto"><%= esc(translator('actions.changeProperty')) %></button>
+    </div>
+    <% if (searchValue) { %>
+      <input type="hidden" name="search" value="<%= esc(searchValue) %>" />
+    <% } %>
+    <% if (statusValue && statusValue !== 'all') { %>
+      <input type="hidden" name="status" value="<%= esc(statusValue) %>" />
+    <% } %>
+    <% if (sortKey) { %>
+      <input type="hidden" name="sort" value="<%= esc(sortKey) %>" />
+    <% } %>
+    <% if (sortOrder) { %>
+      <input type="hidden" name="order" value="<%= esc(sortOrder) %>" />
+    <% } %>
+  </form>
+
+  <% if (successMessage) { %>
+    <div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><%= esc(successMessage) %></div>
+  <% } %>
+  <% if (errorMessage) { %>
+    <div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><%= esc(errorMessage) %></div>
+  <% } %>
+
+  <section class="card p-4">
+    <div class="flex flex-col gap-2 mb-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-800"><%= esc(translator('extras.summaryTitle')) %></h2>
+        <p class="text-sm text-slate-500">
+          <%- summaryText %>
+        </p>
+      </div>
+    </div>
+    <%- renderTable(table) %>
+  </section>
+
+  <form method="post" action="/admin/extras" class="space-y-6 mt-6" data-extras-form>
+    <input type="hidden" name="property_id" value="<%= esc(String(selectedProperty.id)) %>" />
+    <input type="hidden" name="extras_json" data-extras-json />
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-800"><%= esc(translator('extras.configuredTitle')) %></h2>
+        <p class="text-sm text-slate-600"><%= esc(translator('extras.configuredDescription')) %></p>
+      </div>
+      <button type="button" class="bo-button bo-button--ghost" data-add-extra>
+        <span class="inline-flex items-center gap-2">
+          <%- include('../../partials/icon', { name: 'plus' }) %>
+          <span><%= esc(translator('actions.addExtra')) %></span>
+        </span>
+      </button>
+    </div>
+    <div class="space-y-4" data-extras-list></div>
+    <div class="border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-500" data-extras-empty>
+      <p class="font-medium text-slate-700 mb-1"><%= esc(translator('extras.emptyTitle')) %></p>
+      <p><%= esc(translator('extras.emptyDescription')) %></p>
+    </div>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 pt-4">
+      <div class="text-xs text-slate-500"><%= esc(translator('extras.helpText')) %></div>
+      <button type="submit" class="btn btn-primary"><%= esc(translator('extras.save')) %></button>
+    </div>
+  </form>
+
+  <script type="application/json" id="extras-data"><%- extrasPayloadJson %></script>
+  <script><%- extrasManagerScript %></script>
+</div>

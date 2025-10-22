@@ -1,0 +1,139 @@
+<%
+  const translate = typeof t === 'function' ? t : (key => key);
+  const safeEsc = typeof esc === 'function' ? esc : (value => (value == null ? '' : String(value)));
+%>
+<div class="bo-page bo-page--wide">
+  <a class="text-slate-600 underline" href="/admin">&larr; <%= translate('support.backofficeLink') %></a>
+  <header class="mb-8 space-y-3">
+    <h1 class="text-3xl font-semibold text-slate-900"><%= translate('support.uxApi.title') %></h1>
+    <p class="lead text-slate-600"><%- translate('support.uxApi.lead', { docUrl: safeEsc(mainDocUrl), quickstartUrl: safeEsc(quickstartUrl) }) %></p>
+    <% if (Array.isArray(quickLinks) && quickLinks.length) { %>
+      <div class="flex flex-wrap gap-3 text-sm">
+        <% quickLinks.forEach(function(link) { %>
+          <a class="btn btn-light inline-flex items-center gap-2" href="<%= safeEsc(link.href) %>" target="_blank" rel="noopener">
+            <% if (link.icon) { %>
+              <%- include('../partials/icon', { name: link.icon, className: 'text-slate-500' }) %>
+            <% } %>
+            <span><%= safeEsc(link.label) %></span>
+          </a>
+        <% }) %>
+      </div>
+    <% } %>
+  </header>
+
+  <% if (Array.isArray(guides) && guides.length) { %>
+    <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <% guides.forEach(function(guide) { %>
+        <article class="card p-5 space-y-3">
+          <div class="flex items-center gap-3 text-slate-600">
+            <% if (guide.icon) { %>
+              <%- include('../partials/icon', { name: guide.icon, size: 'lg', className: 'rounded-full bg-slate-100 text-slate-700' }) %>
+            <% } %>
+            <h2 class="text-lg font-semibold text-slate-800"><%= safeEsc(guide.title) %></h2>
+          </div>
+          <p class="text-sm text-slate-600"><%= safeEsc(guide.description) %></p>
+          <div class="flex flex-wrap gap-2 text-sm">
+            <% if (guide.docUrl) { %>
+              <a class="btn btn-light" href="<%= safeEsc(guide.docUrl) %>" target="_blank" rel="noopener"><%= translate('support.uxApi.actions.viewDocs') %></a>
+            <% } %>
+            <% if (guide.exampleUrl) { %>
+              <a class="btn btn-ghost" href="<%= safeEsc(guide.exampleUrl) %>" target="_blank" rel="noopener"><%= translate('support.uxApi.actions.viewExamples') %></a>
+            <% } %>
+          </div>
+        </article>
+      <% }) %>
+    </section>
+  <% } %>
+
+  <section class="card p-6 mt-8">
+    <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.uxApi.tokens.title') %></h2>
+        <p class="text-sm text-slate-600"><%= translate('support.uxApi.tokens.description') %></p>
+      </div>
+      <a class="btn btn-light" href="<%= safeEsc(tokenDocUrl) %>" target="_blank" rel="noopener"><%= translate('support.uxApi.tokens.cta') %></a>
+    </div>
+
+    <div class="responsive-table mt-4">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-500">
+            <th><%= translate('support.uxApi.tokens.table.identifier') %></th>
+            <th><%= translate('support.uxApi.tokens.table.scopes') %></th>
+            <th><%= translate('support.uxApi.tokens.table.environment') %></th>
+            <th><%= translate('support.uxApi.tokens.table.lastUsed') %></th>
+            <th><%= translate('support.uxApi.tokens.table.status') %></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!tokens.length) { %>
+            <tr>
+              <td colspan="5" class="px-4 py-3 text-slate-500 text-center"><%= translate('support.uxApi.tokens.table.empty') %></td>
+            </tr>
+          <% } else { %>
+            <% tokens.forEach(function(token) { %>
+              <tr>
+                <td class="px-4 py-2" data-label="<%= translate('support.uxApi.tokens.table.identifier') %>">
+                  <span class="table-cell-value font-mono"><%= safeEsc(token.label) %></span>
+                </td>
+                <td class="px-4 py-2" data-label="<%= translate('support.uxApi.tokens.table.scopes') %>">
+                  <span class="table-cell-value"><%= safeEsc(token.scope) %></span>
+                </td>
+                <td class="px-4 py-2" data-label="<%= translate('support.uxApi.tokens.table.environment') %>">
+                  <span class="table-cell-value"><%= safeEsc(token.environment) %></span>
+                </td>
+                <td class="px-4 py-2" data-label="<%= translate('support.uxApi.tokens.table.lastUsed') %>">
+                  <span class="table-cell-value"><%= safeEsc(token.lastUsed || '—') %></span>
+                </td>
+                <td class="px-4 py-2" data-label="<%= translate('support.uxApi.tokens.table.status') %>">
+                  <% const toneClass = token.statusTone === 'positive' ? 'text-emerald-600' : token.statusTone === 'warning' ? 'text-amber-600' : 'text-slate-600'; %>
+                  <span class="table-cell-value <%= toneClass %>"><%= safeEsc(token.statusLabel) %></span>
+                </td>
+              </tr>
+            <% }) %>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="mt-3 text-xs text-slate-500"><%= translate('support.uxApi.tokens.footnote') %></p>
+  </section>
+
+  <% if (Array.isArray(tokenGuidelines) && tokenGuidelines.length) { %>
+    <section class="card p-6 mt-8 space-y-4">
+      <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.uxApi.guidelines.title') %></h2>
+      <ul class="space-y-4">
+        <% tokenGuidelines.forEach(function(item) { %>
+          <li class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+            <div class="flex items-center gap-2 text-slate-800 font-semibold">
+              <span><%= safeEsc(item.label) %></span>
+              <% if (item.tooltip) { %>
+                <span class="text-slate-400" title="<%= safeEsc(item.tooltip) %>"><%- include('../partials/icon', { name: 'help-circle' }) %></span>
+              <% } %>
+            </div>
+            <p class="mt-2 text-sm text-slate-600"><%= safeEsc(item.description) %></p>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+  <% } %>
+
+  <% if (Array.isArray(integrationTips) && integrationTips.length) { %>
+    <section class="card p-6 mt-8 space-y-3">
+      <h2 class="text-xl font-semibold text-slate-900"><%= translate('support.uxApi.integrations.title') %></h2>
+      <ul class="space-y-2">
+        <% integrationTips.forEach(function(tip) { %>
+          <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-slate-200 rounded-lg px-4 py-3">
+            <div>
+              <p class="font-medium text-slate-800"><%= safeEsc(tip.name) %></p>
+              <p class="text-sm text-slate-600"><%= safeEsc(tip.description) %></p>
+            </div>
+            <% if (tip.href) { %>
+              <a class="btn btn-light btn-sm" href="<%= safeEsc(tip.href) %>" target="_blank" rel="noopener"><%= translate('support.uxApi.integrations.cta') %></a>
+            <% } %>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+  <% } %>
+</div>

@@ -1,6 +1,30 @@
 <div class="bo-page">
   <h1 class="text-2xl font-semibold mb-4">Reservas</h1>
 
+  <div
+    class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 mb-4"
+    role="group"
+    aria-labelledby="booking-exports-label"
+  >
+    <span id="booking-exports-label" class="text-sm text-slate-600">Exportar lista de reservas:</span>
+    <div class="flex flex-col sm:flex-row gap-2" role="presentation">
+      <a
+        class="btn btn-secondary"
+        href="/admin/bookings/export?format=csv"
+        aria-label="Exportar reservas em formato CSV"
+      >
+        Exportar CSV
+      </a>
+      <a
+        class="btn btn-ghost"
+        href="/admin/bookings/export?format=xlsx"
+        aria-label="Exportar reservas em formato Excel"
+      >
+        Exportar XLSX
+      </a>
+    </div>
+  </div>
+
   <form method="get" class="card p-4 grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 bo-bookings-filter">
     <label class="grid gap-1 text-sm">
       <span class="font-medium">Pesquisa</span>

@@ -1,0 +1,360 @@
+{
+  "language": {
+    "label": "Language",
+    "portuguese": "Portuguese",
+    "english": "English"
+  },
+  "actions": {
+    "apply": "Apply",
+    "clear": "Clear",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "duplicate": "Duplicate",
+    "viewSection": "View section",
+    "changeProperty": "Switch property",
+    "addExtra": "Add extra",
+    "saveExtras": "Save extras",
+    "back": "Back"
+  },
+  "table": {
+    "searchPlaceholder": "Search…",
+    "status": "Status",
+    "actions": "Actions",
+    "empty": "No results match the selected filters.",
+    "modalTitle": "Confirmation",
+    "modalMessage": "Are you sure you want to delete this item?",
+    "modalConfirm": "Delete",
+    "pagination": "Pagination"
+  },
+  "navigation": {
+    "groups": {
+      "operations": "Operations",
+      "finance": "Finance",
+      "configuration": "Configuration",
+      "support": "Support"
+    },
+    "items": {
+      "dashboard": "Dashboard",
+      "calendar": "Calendar",
+      "bookings": "Bookings",
+      "housekeeping": "Housekeeping",
+      "financeSummary": "Finance overview",
+      "ratePlans": "Rate plans",
+      "rateRules": "Rate rules",
+      "extras": "Extras",
+      "reports": "Reports",
+      "contentCenters": "Content centers",
+      "uxApi": "UX API",
+      "admin": "Administration",
+      "help": "Help & FAQ"
+    },
+    "toggle": {
+      "collapse": "Collapse menu",
+      "expand": "Expand menu",
+      "close": "Close menu",
+      "open": "Open menu"
+    }
+  },
+  "auth": {
+    "welcome": "Welcome",
+    "subtitle": "Welcome to the {brand} backoffice.",
+    "usernameLabel": "Username",
+    "passwordLabel": "Password",
+    "signIn": "Sign in",
+    "forgotPassword": "Forgot password",
+    "submit": "Sign in",
+    "placeholder": {
+      "username": "Enter your username",
+      "password": "Enter your password",
+      "twoFactor": "Enter the verification code"
+    },
+    "twofactor": {
+      "title": "Confirm your login",
+      "description": "Enter the verification code sent to {destination} to continue.",
+      "codeLabel": "Verification code",
+      "submit": "Validate code",
+      "resend": "Resend code",
+      "resentNotice": "We've sent you a new verification code."
+    },
+      "reset": {
+      "title": "Recover access",
+      "stepEmail": "Enter the email linked to your account to receive the recovery link.",
+      "submitEmail": "Send recovery link",
+      "stepPassword": "Set your new password to get back in.",
+      "emailLabel": "Email",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm password",
+      "submitPassword": "Update password",
+      "successTitle": "Password updated successfully",
+      "successDescription": "You can now sign in with your new password.",
+      "backToLogin": "Back to login",
+      "emailPlaceholder": "Enter the email for your account",
+      "newPasswordPlaceholder": "Create a new password (min. 8 characters)",
+      "confirmPasswordPlaceholder": "Repeat the new password",
+      "requestLink": "Need a new link?"
+    }
+  },
+  "errors": {
+    "auth": {
+      "invalidCredentials": "We couldn't sign you in. Please check your details and try again.",
+      "twoFactorInvalid": "The verification code is not valid. Please try again.",
+      "twoFactorMissing": "We need a valid verification code before continuing.",
+      "twoFactorSendFailed": "We couldn't send the verification code. Please contact the administrator.",
+      "twoFactorResendFailed": "We couldn't resend the code. Please try again shortly.",
+      "twoFactorUnavailable": "Two-factor authentication is temporarily unavailable. Please try again later.",
+      "challengeMissing": "We couldn't find your authentication session. Please sign in again.",
+      "twoFactorExpired": "The code has expired. Please sign in again.",
+      "accountNotFound": "We couldn't find that account.",
+      "recoveryEmailRequired": "Please provide a valid email address to continue the recovery.",
+      "recoveryNotFound": "We couldn't find an account with that email. Double-check it and try again.",
+      "recoveryEmailSent": "We've sent recovery instructions to the provided email.",
+      "recoveryCodeInvalid": "The recovery link is no longer valid. Request a new one to continue.",
+      "recoverySendFailed": "We couldn't send the recovery email. Please try again later.",
+      "recoveryPasswordInvalid": "Invalid password (minimum 8 characters).",
+      "recoveryPasswordMismatch": "The passwords do not match.",
+      "recoveryCompleted": "Your password has been updated. You can now sign in with the new credentials."
+    },
+    "extras": {
+      "invalidProperty": "Invalid property.",
+      "propertyNotFound": "We couldn't find that property.",
+      "invalidPayload": "Invalid data format.",
+      "saveFailed": "We couldn't save the extras. Please try again.",
+      "nameRequired": "Enter a name for extra #{index}.",
+      "codeInvalid": "The code for extra \"{name}\" is invalid.",
+      "codeDuplicate": "The code \"{code}\" is already in use.",
+      "priceInvalid": "The price for extra \"{name}\" is invalid.",
+      "minNightsInvalid": "The minimum nights for extra \"{name}\" are invalid.",
+      "discountInvalid": "The discount for extra \"{name}\" is invalid."
+    }
+  },
+  "dashboard": {
+    "menu": "Menu",
+    "title": "Dashboard",
+    "subtitle": "Track the key metrics that matter to your business.",
+    "kpiSectionLabel": "Key business indicators",
+    "shortcuts": {
+      "label": "Quick shortcuts",
+      "calendar": "Calendar",
+      "bookings": "Bookings",
+      "housekeeping": "Housekeeping"
+    },
+    "kpis": {
+      "occupancy": {
+        "title": "Current occupancy",
+        "caption": "{occupied} of {total} units occupied today.",
+        "empty": "No units registered yet."
+      },
+      "revenue": {
+        "title": "Revenue this month",
+        "caption": "Confirmed bookings with check-in in {month}.",
+        "value": "€ {amount}"
+      },
+      "futureBookings": {
+        "title": "Upcoming bookings",
+        "caption": "Confirmed arrivals starting tomorrow."
+      },
+      "housekeeping": {
+        "title": "Housekeeping tasks",
+        "caption": "Pending tasks yet to start."
+      }
+    },
+    "emptyTitle": "No indicators available",
+    "emptyCaption": "There isn't enough data yet to calculate these KPIs."
+  },
+  "extras": {
+    "back": "Back to backoffice",
+    "propertyLabel": "Property",
+    "headerTitle": "Extras & services",
+    "headerDescription": "Configure the extras available to guests, including pricing, long-stay discounts, and availability windows.",
+    "summaryTitle": "Extras summary",
+    "summaryCaption": "Showing {visible} of {total} configured extras.",
+    "configuredTitle": "Configured extras",
+    "configuredDescription": "Items listed here become available to guests for this property.",
+    "emptyTitle": "No extras configured yet.",
+    "emptyDescription": "Use the \"Add extra\" button to create the first available service.",
+    "helpText": "Changes become available to guests as soon as you save.",
+    "save": "Save extras",
+    "breadcrumb": {
+      "backoffice": "Backoffice",
+      "current": "Extras & services"
+    },
+    "alerts": {
+      "noPropertiesDescription": "You need at least one active property before configuring extras.",
+      "noPropertiesCta": "Go to the property dashboard"
+    },
+    "messages": {
+      "updated": "Extras updated successfully."
+    },
+    "table": {
+      "searchPlaceholder": "Search by extra or code…",
+      "statusAll": "All rules",
+      "statusStandard": "Fixed price",
+      "statusLongStay": "Long stays",
+      "columnName": "Extra",
+      "columnCode": "Code",
+      "columnPrice": "Price",
+      "columnRule": "Rule",
+      "columnAvailability": "Availability",
+      "noName": "Untitled",
+      "emptyMessage": "No extras match the selected filters.",
+      "priceValue": "€ {amount}",
+      "rules": {
+        "standard": "Fixed price",
+        "longStay": "Long stays"
+      }
+    }
+  },
+  "support": {
+    "backofficeLink": "Backoffice",
+    "help": {
+      "title": "Help center",
+      "lead": "Find quick answers to the most common questions and the right channels to contact support. We keep this page updated with recommended procedures, documentation links, and emergency contacts.",
+      "fallback": "Contact us via {email}.",
+      "sections": {
+        "resources": {
+          "title": "Essential documentation",
+          "description": "Complete guides to get started and dive into the most-used modules.",
+          "items": {
+            "onboarding": {
+              "label": "Backoffice onboarding guide",
+              "description": "Initial setup, branding, and permissions in under 30 minutes."
+            },
+            "bookings": {
+              "label": "Complete bookings workflow",
+              "description": "From quoting to financial reconciliation with alerts and automations."
+            },
+            "housekeeping": {
+              "label": "Digital housekeeping checklist",
+              "description": "Best practices to organise tasks, photos, and audits."
+            }
+          }
+        },
+        "faq": {
+          "title": "Frequently asked questions",
+          "items": {
+            "resetPassword": {
+              "question": "How do I reset a colleague's password?",
+              "answer": "Go to <a class=\"underline\" href=\"/admin/utilizadores\">Administration &rsaquo; Users</a>, select the account, and use the \"Change password\" form."
+            },
+            "monthlyReports": {
+              "question": "Where can I find the monthly reports?",
+              "answer": "Visit <a class=\"underline\" href=\"/admin/finance\">Finance &rsaquo; Financial overview</a> for monthly charts and exports."
+            },
+            "shareCalendar": {
+              "question": "How do I share the calendar with reception?",
+              "answer": "Grant the appropriate scope in \"Update privileges\" and share the direct calendar link (<code>/calendar</code>)."
+            }
+          }
+        },
+        "channels": {
+          "title": "Support contacts",
+          "description": "Choose the channel that best matches the urgency and the team involved.",
+          "items": {
+            "email": {
+              "label": "Support email",
+              "value": "support@gestor.pt",
+              "description": "Average response time under 4 business hours."
+            },
+            "phone": {
+              "label": "Phone line",
+              "value": "+351 910 000 000",
+              "description": "Available on business days from 9 a.m. to 7 p.m."
+            },
+            "emergencyChat": {
+              "label": "Emergency chat",
+              "value": "Speech bubble icon in the bottom-right corner",
+              "description": "Priority resolution for channel outages or critical failures."
+            }
+          }
+        },
+        "status": {
+          "title": "When to escalate to support",
+          "tips": {
+            "contextDetails": "Include booking ID, property, and steps already taken when opening a ticket.",
+            "evidence": "Collect screenshots and timestamps to speed up technical analysis.",
+            "escalateCritical": "Escalate critical incidents as soon as they affect guests or external partners."
+          }
+        }
+      }
+    },
+    "uxApi": {
+      "title": "UX API & integrations",
+      "lead": "Build secure automations on top of the backoffice services: bulk update rates, synchronise blocks, and export reports without manual work. Explore the <a href=\"{docUrl}\" target=\"_blank\" rel=\"noopener\">official documentation</a> or follow the <a href=\"{quickstartUrl}\" target=\"_blank\" rel=\"noopener\">getting started tutorial</a> to connect your system.",
+      "quickLinks": {
+        "endpointMap": "Endpoint map",
+        "sdk": "JavaScript SDK",
+        "status": "Platform status"
+      },
+      "guides": {
+        "rates": {
+          "title": "Rate management",
+          "description": "Bulk update prices via the PUT /admin/api/rates/bulk endpoint with validation and instant undo."
+        },
+        "blocks": {
+          "title": "Unit blocks",
+          "description": "Create availability blocks synced with OTAs using POST /admin/api/units/:id/blocks."
+        },
+        "reviews": {
+          "title": "Review management",
+          "description": "Fetch and reply to negative reviews via /admin/api/reviews with full telemetry."
+        },
+        "reports": {
+          "title": "Reports & exports",
+          "description": "Generate weekly snapshots in JSON, CSV, or PDF with GET /admin/api/reports/weekly."
+        }
+      },
+      "actions": {
+        "viewDocs": "View documentation",
+        "viewExamples": "Code examples"
+      },
+      "tokens": {
+        "title": "Access tokens",
+        "description": "Each token identifies external integrations and limits what they can read or change. Use distinct keys per environment and rotate them regularly to meet security policies.",
+        "cta": "Token management guide",
+        "table": {
+          "identifier": "Identifier",
+          "scopes": "Scopes",
+          "environment": "Environment",
+          "lastUsed": "Last used",
+          "status": "Status",
+          "empty": "No active tokens for this tenant."
+        },
+        "footnote": "Keep track of who created each token. If compromised, revoke it and create a new key to reduce impact.",
+        "status": {
+          "active": "Active",
+          "revoked": "Revoked",
+          "expired": "Expired"
+        }
+      },
+      "guidelines": {
+        "title": "Best practices & requirements",
+        "items": {
+          "format": {
+            "title": "Key format",
+            "description": "Use 40-character hexadecimal tokens and store them in secret vaults.",
+            "tooltip": "Example: 9f4b12c0a9c3… Only lowercase letters and numbers are accepted."
+          },
+          "scopes": {
+            "title": "Minimal scopes",
+            "description": "Grant only the scopes each integration needs, such as reservations:read or housekeeping:manage.",
+            "tooltip": "Combine scopes to create tailored profiles per integration."
+          },
+          "lifecycle": {
+            "title": "Lifecycle",
+            "description": "Rotate credentials every 90 days and revoke them immediately when switching providers.",
+            "tooltip": "Revoked tokens stop working right away."
+          }
+        }
+      },
+      "integrations": {
+        "title": "Configured integrations",
+        "description": "Integrate and sync data with the {name} connector.",
+        "cta": "Details"
+      },
+      "fallback": "Check the documentation at {docUrl}."
+    }
+  }
+}

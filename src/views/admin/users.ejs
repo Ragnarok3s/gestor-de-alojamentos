@@ -1,0 +1,118 @@
+<div class="bo-page bo-page--wide">
+  <a class="text-slate-600 underline" href="/admin">&larr; Backoffice</a>
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold">Gestão de utilizadores</h1>
+    <p class="text-sm text-slate-600 max-w-3xl">
+      Centraliza as ações de criação, atualização e revisão de permissões para toda a equipa. Utiliza o quadro abaixo para
+      localizar rapidamente uma conta e acede às ações rápidas para editar ou remover acessos.
+    </p>
+  </header>
+
+  <% if (errorMessage) { %>
+    <div class="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><%= errorMessage %></div>
+  <% } %>
+  <% if (successMessage) { %>
+    <div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><%= successMessage %></div>
+  <% } %>
+  <% if (deletedMessage) { %>
+    <div class="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"><%= deletedMessage %></div>
+  <% } %>
+
+  <section class="card p-4">
+    <div class="flex flex-col gap-2 mb-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-800">Utilizadores do backoffice</h2>
+        <p class="text-sm text-slate-500">Encontrados <strong><%= totalCount %></strong> utilizadores.</p>
+      </div>
+      <a class="btn btn-primary" href="#create-user">Criar novo utilizador</a>
+    </div>
+    <%- tableHtml %>
+  </section>
+
+  <div class="space-y-6 mt-6">
+    <%- formsHtml %>
+  </div>
+
+  <% if (permissionPayload) { %>
+    <script id="user-permissions-data" type="application/json"><%- permissionPayload %></script>
+    <script>
+      (function(){
+        const dataEl = document.getElementById('user-permissions-data');
+        const form = document.getElementById('user-permissions-form');
+        if (!dataEl || !form) return;
+        let payload = {};
+        try {
+          payload = JSON.parse(dataEl.textContent || '{}');
+        } catch (err) {
+          console.error('Permissões personalizadas: payload inválido', err);
+          return;
+        }
+        const userSelect = document.getElementById('user-permissions-user');
+        const checkboxes = Array.from(form.querySelectorAll('input[name="permissions"]'));
+        const summaryRole = form.querySelector('[data-summary-role]');
+        const summaryBaseCount = form.querySelector('[data-summary-base-count]');
+        const summaryAdded = form.querySelector('[data-summary-added]');
+        const summaryRemoved = form.querySelector('[data-summary-removed]');
+        const guardNotice = form.querySelector('[data-permission-guard]');
+        const submitButton = form.querySelector('[data-permission-submit]');
+
+        const baseSetFor = userId => new Set((payload.base && payload.base[userId]) || []);
+        const effectiveSetFor = userId => new Set((payload.effective && payload.effective[userId]) || []);
+        const isDevTarget = userId => payload.devUserId != null && String(payload.devUserId) === String(userId);
+
+        function applyStoredState() {
+          const userId = userSelect.value;
+          if (!userId) {
+            checkboxes.forEach(box => {
+              box.checked = false;
+              box.disabled = true;
+            });
+            if (summaryRole) summaryRole.textContent = '—';
+            if (summaryBaseCount) summaryBaseCount.textContent = '0';
+            if (summaryAdded) summaryAdded.textContent = '0 adicionadas';
+            if (summaryRemoved) summaryRemoved.textContent = '0 removidas';
+            if (guardNotice) guardNotice.classList.add('hidden');
+            if (submitButton) submitButton.disabled = true;
+            return;
+          }
+          const effective = effectiveSetFor(userId);
+          const devLocked = isDevTarget(userId);
+          checkboxes.forEach(box => {
+            box.checked = effective.has(box.value);
+            box.disabled = devLocked;
+          });
+          if (summaryRole) summaryRole.textContent = (payload.roleLabels && payload.roleLabels[userId]) || '—';
+          if (summaryBaseCount) summaryBaseCount.textContent = baseSetFor(userId).size || 0;
+          if (guardNotice) guardNotice.classList.toggle('hidden', !devLocked);
+          if (submitButton) submitButton.disabled = devLocked;
+        }
+
+        function updateSummary() {
+          const userId = userSelect.value;
+          if (!userId) return;
+          const base = baseSetFor(userId);
+          const selected = new Set(
+            checkboxes.filter(box => box.checked).map(box => box.value)
+          );
+          const added = Array.from(selected).filter(key => !base.has(key));
+          const removed = Array.from(base).filter(key => !selected.has(key));
+          if (summaryAdded) summaryAdded.textContent = `${added.length} adicionadas`;
+          if (summaryRemoved) summaryRemoved.textContent = `${removed.length} removidas`;
+        }
+
+        userSelect.addEventListener('change', () => {
+          applyStoredState();
+          updateSummary();
+          if (submitButton) submitButton.disabled = !userSelect.value || isDevTarget(userSelect.value);
+        });
+
+        checkboxes.forEach(box => {
+          box.addEventListener('change', updateSummary);
+        });
+
+        applyStoredState();
+        updateSummary();
+      })();
+    </script>
+  <% } %>
+</div>
