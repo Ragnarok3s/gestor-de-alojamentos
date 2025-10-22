@@ -11,6 +11,8 @@
   const cancelLabel = translator('actions.cancel') || 'Cancelar';
   const statusLabelText = (typeof statusLabel === 'string' && statusLabel) || translator('table.status');
   const paginationLabel = translator('table.pagination');
+  const hiddenInputEntries =
+    hiddenInputs && typeof hiddenInputs === 'object' ? Object.entries(hiddenInputs) : [];
 %>
 <div class="table-widget" <%= id ? `id="${id}"` : '' %>>
   <form method="get" action="<%= formAction || '' %>" class="table-widget__toolbar">
@@ -36,8 +38,8 @@
         </select>
       </label>
     <% } %>
-    <% if (hiddenInputs && typeof hiddenInputs === 'object') { %>
-      <% Object.entries(hiddenInputs).forEach(([name, value]) => { %>
+    <% if (hiddenInputEntries.length) { %>
+      <% hiddenInputEntries.forEach(([name, value]) => { %>
         <% if (value != null && value !== '') { %>
           <input type="hidden" name="<%= esc(name) %>" value="<%= esc(String(value)) %>" />
         <% } %>
