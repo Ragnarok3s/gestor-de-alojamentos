@@ -1,26 +1,15 @@
-node_modules/*
-!node_modules/dayjs/
-!node_modules/dayjs/**
-!node_modules/exceljs/
-!node_modules/exceljs/**
-!node_modules/better-sqlite3/
-!node_modules/better-sqlite3/**
-!node_modules/bcryptjs/
-!node_modules/bcryptjs/**
-!node_modules/multer/
-!node_modules/multer/**
-!node_modules/express/
-!node_modules/express/**
-!node_modules/cookie-parser/
-!node_modules/cookie-parser/**
+# Ignorar dependências e build
+node_modules/
 dist/
-!vendor/chart.js/dist/
-!vendor/chart.js/dist/**
-.env
-*.log
 coverage/
 .nyc_output/
 uploads/
+
+# Ignorar bases de dados locais
 booking_engine.db
 booking_engine.db-shm
 booking_engine.db-wal
+
+# Ignorar logs e configs locais
+*.log
+.env
