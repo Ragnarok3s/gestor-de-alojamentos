@@ -633,6 +633,9 @@ module.exports = function registerBackoffice(app, context) {
       if (!Object.prototype.hasOwnProperty.call(tableConfig, 'emptyMessage')) {
         tableConfig.emptyMessage = undefined;
       }
+      if (!Object.prototype.hasOwnProperty.call(tableConfig, 'hiddenInputs')) {
+        tableConfig.hiddenInputs = {};
+      }
       if (typeof tableConfig.showActionsColumn !== 'boolean') {
         const rows = Array.isArray(tableConfig.rows) ? tableConfig.rows : [];
         tableConfig.showActionsColumn = rows.some(row => Array.isArray(row.actions) && row.actions.length);
