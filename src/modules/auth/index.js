@@ -3,10 +3,12 @@ const path = require('path');
 const { setNoIndex } = require('../../middlewares/security');
 const { hashRecoveryCode } = require('../../services/twoFactor');
 
-const authViewsPath = path.join(__dirname, '..', '..', 'views', 'auth');
+const viewsRoot = path.join(__dirname, '..', '..', 'views');
+const authViewsPath = path.join(viewsRoot, 'auth');
 const loginTemplatePath = path.join(authViewsPath, 'login.ejs');
 const twoFactorTemplatePath = path.join(authViewsPath, 'twofactor.ejs');
 const resetTemplatePath = path.join(authViewsPath, 'reset.ejs');
+const templateCache = new Map();
 
 function compileEjsTemplate(template) {
   if (!template) return null;
@@ -53,13 +55,51 @@ function compileEjsTemplate(template) {
   }
 }
 
+function resolveIncludePath(fromPath, includeTarget) {
+  if (typeof includeTarget !== 'string' || !includeTarget.trim()) return null;
+  let target = includeTarget.trim();
+  if (!path.extname(target)) {
+    target += '.ejs';
+  }
+  if (path.isAbsolute(target)) {
+    const relative = target.replace(/^\/+/, '');
+    return path.join(viewsRoot, relative);
+  }
+  return path.resolve(path.dirname(fromPath), target);
+}
+
 function loadTemplateRenderer(templatePath) {
+  if (!templatePath) return null;
+  if (templateCache.has(templatePath)) {
+    return templateCache.get(templatePath);
+  }
+  let template = '';
   try {
-    const template = fs.readFileSync(templatePath, 'utf8');
-    return compileEjsTemplate(template);
+    template = fs.readFileSync(templatePath, 'utf8');
   } catch (err) {
+    templateCache.set(templatePath, null);
     return null;
   }
+  const compiled = compileEjsTemplate(template);
+  if (!compiled) {
+    templateCache.set(templatePath, null);
+    return null;
+  }
+  const renderer = (locals = {}) => {
+    const context = { ...locals };
+    context.include = (includeTarget, includeLocals = {}) => {
+      const resolved = resolveIncludePath(templatePath, includeTarget);
+      if (!resolved) return '';
+      const partialRenderer = loadTemplateRenderer(resolved);
+      if (typeof partialRenderer !== 'function') return '';
+      const childContext = { ...context, ...includeLocals };
+      delete childContext.include;
+      return partialRenderer(childContext);
+    };
+    return compiled(context);
+  };
+  templateCache.set(templatePath, renderer);
+  return renderer;
 }
 
 const loginTemplateRenderer = loadTemplateRenderer(loginTemplatePath);

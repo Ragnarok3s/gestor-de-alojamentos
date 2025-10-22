@@ -254,94 +254,8 @@ module.exports = function registerBackoffice(app, context) {
     modalTemplate = '';
   }
 
-  const navigationTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'navigation.ejs');
-  let navigationTemplateRenderer = null;
-  try {
-    const navigationTemplate = fs.readFileSync(navigationTemplatePath, 'utf8');
-    navigationTemplateRenderer = compileEjsTemplate(navigationTemplate);
-  } catch (err) {
-    navigationTemplateRenderer = null;
-  }
-
-  const dashboardTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'dashboard.ejs');
-  let dashboardTemplateRenderer = null;
-  try {
-    const dashboardTemplate = fs.readFileSync(dashboardTemplatePath, 'utf8');
-    dashboardTemplateRenderer = compileEjsTemplate(dashboardTemplate);
-  } catch (err) {
-    dashboardTemplateRenderer = null;
-  }
-
-  const tableTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'table.ejs');
-  let tableTemplateRenderer = null;
-  try {
-    const tableTemplate = fs.readFileSync(tableTemplatePath, 'utf8');
-    tableTemplateRenderer = compileEjsTemplate(tableTemplate);
-  } catch (err) {
-    tableTemplateRenderer = null;
-  }
-
-  const propertiesTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'properties.ejs');
-  let propertiesTemplateRenderer = null;
-  try {
-    const propertiesTemplate = fs.readFileSync(propertiesTemplatePath, 'utf8');
-    propertiesTemplateRenderer = compileEjsTemplate(propertiesTemplate);
-  } catch (err) {
-    propertiesTemplateRenderer = null;
-  }
-
-  const unitsTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'units.ejs');
-  let unitsTemplateRenderer = null;
-  try {
-    const unitsTemplate = fs.readFileSync(unitsTemplatePath, 'utf8');
-    unitsTemplateRenderer = compileEjsTemplate(unitsTemplate);
-  } catch (err) {
-    unitsTemplateRenderer = null;
-  }
-
-  const usersTemplatePath = path.join(__dirname, '..', '..', 'views', 'admin', 'users.ejs');
-  let usersTemplateRenderer = null;
-  try {
-    const usersTemplate = fs.readFileSync(usersTemplatePath, 'utf8');
-    usersTemplateRenderer = compileEjsTemplate(usersTemplate);
-  } catch (err) {
-    usersTemplateRenderer = null;
-  }
-
-  const extrasTemplatePath = path.join(
-    __dirname,
-    '..',
-    '..',
-    'views',
-    'backoffice',
-    'finance',
-    'extras.ejs'
-  );
-  let extrasTemplateRenderer = null;
-  try {
-    const extrasTemplate = fs.readFileSync(extrasTemplatePath, 'utf8');
-    extrasTemplateRenderer = compileEjsTemplate(extrasTemplate);
-  } catch (err) {
-    extrasTemplateRenderer = null;
-  }
-
-  const uxApiTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'ux-api.ejs');
-  let uxApiTemplateRenderer = null;
-  try {
-    const uxApiTemplate = fs.readFileSync(uxApiTemplatePath, 'utf8');
-    uxApiTemplateRenderer = compileEjsTemplate(uxApiTemplate);
-  } catch (err) {
-    uxApiTemplateRenderer = null;
-  }
-
-  const helpTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'help.ejs');
-  let helpTemplateRenderer = null;
-  try {
-    const helpTemplate = fs.readFileSync(helpTemplatePath, 'utf8');
-    helpTemplateRenderer = compileEjsTemplate(helpTemplate);
-  } catch (err) {
-    helpTemplateRenderer = null;
-  }
+  const viewsRoot = path.join(__dirname, '..', '..', 'views');
+  const templateCache = new Map();
 
   function sanitizeId(value, fallback) {
     const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
@@ -392,6 +306,83 @@ module.exports = function registerBackoffice(app, context) {
       return null;
     }
   }
+
+  function resolveIncludePath(fromPath, includeTarget) {
+    if (typeof includeTarget !== 'string' || !includeTarget.trim()) {
+      return null;
+    }
+    let target = includeTarget.trim();
+    if (!path.extname(target)) {
+      target += '.ejs';
+    }
+    if (path.isAbsolute(target)) {
+      const relative = target.replace(/^\/+/, '');
+      return path.join(viewsRoot, relative);
+    }
+    return path.resolve(path.dirname(fromPath), target);
+  }
+
+  function loadTemplateRenderer(templatePath) {
+    if (!templatePath) return null;
+    if (templateCache.has(templatePath)) {
+      return templateCache.get(templatePath);
+    }
+    let template = '';
+    try {
+      template = fs.readFileSync(templatePath, 'utf8');
+    } catch (err) {
+      templateCache.set(templatePath, null);
+      return null;
+    }
+    const compiled = compileEjsTemplate(template);
+    if (!compiled) {
+      templateCache.set(templatePath, null);
+      return null;
+    }
+    const renderer = (locals = {}) => {
+      const context = { ...locals };
+      context.include = (includeTarget, includeLocals = {}) => {
+        const resolvedPath = resolveIncludePath(templatePath, includeTarget);
+        if (!resolvedPath) return '';
+        const partialRenderer = loadTemplateRenderer(resolvedPath);
+        if (typeof partialRenderer !== 'function') return '';
+        const childContext = { ...context, ...includeLocals };
+        delete childContext.include;
+        return partialRenderer(childContext);
+      };
+      return compiled(context);
+    };
+    templateCache.set(templatePath, renderer);
+    return renderer;
+  }
+
+  const navigationTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'partials', 'navigation.ejs')
+  );
+  const dashboardTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'dashboard.ejs')
+  );
+  const tableTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'partials', 'table.ejs')
+  );
+  const propertiesTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'properties.ejs')
+  );
+  const unitsTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'units.ejs')
+  );
+  const usersTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'admin', 'users.ejs')
+  );
+  const extrasTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'finance', 'extras.ejs')
+  );
+  const uxApiTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'ux-api.ejs')
+  );
+  const helpTemplateRenderer = loadTemplateRenderer(
+    path.join(viewsRoot, 'backoffice', 'help.ejs')
+  );
 
   function renderNavigation(activeNav, req, res) {
     if (!navigationTemplateRenderer) return '';
@@ -638,6 +629,9 @@ module.exports = function registerBackoffice(app, context) {
       tableConfig.esc = esc;
       if (!tableConfig.t) {
         tableConfig.t = resolveTranslator(req, res, tableConfig.t);
+      }
+      if (!Object.prototype.hasOwnProperty.call(tableConfig, 'emptyMessage')) {
+        tableConfig.emptyMessage = undefined;
       }
       if (typeof tableConfig.showActionsColumn !== 'boolean') {
         const rows = Array.isArray(tableConfig.rows) ? tableConfig.rows : [];
@@ -1766,7 +1760,7 @@ module.exports = function registerBackoffice(app, context) {
           ${formsHtml}
         </div>`;
 
-  res.send(
+  return res.send(
     layout({
       title: 'Utilizadores',
       user: req.user,
@@ -1776,12 +1770,6 @@ module.exports = function registerBackoffice(app, context) {
       body: bodyContent
     })
   );
-    channelTotals.sort((a, b) => (b.revenueCents || 0) - (a.revenueCents || 0));
-    const channelTotalCents = channelTotals.reduce((sum, item) => sum + (item.revenueCents || 0), 0);
-    const revenueChannels = (channelTotals.length ? channelTotals : [{ name: 'Direto', revenueCents: 0 }]).map(item => ({
-      ...item,
-      percentage: channelTotalCents ? item.revenueCents / Math.max(channelTotalCents, 1) : 0
-    }));
 
     const revenueRangeLabel = `${revenueRangeStart.format('DD/MM/YYYY')} – ${revenueRangeEnd.format('DD/MM/YYYY')}`;
     const revenueAnalytics = {
