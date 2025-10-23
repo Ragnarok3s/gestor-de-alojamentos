@@ -1,5 +1,10 @@
 const { AsyncLocalStorage } = require('async_hooks');
-const { defaultTheme: defaultColorTheme, createTheme: createColorTheme, THEME_KEYS: THEME_COLOR_KEYS } = require('../src/theme/colors');
+const {
+  defaultTheme: defaultColorTheme,
+  createTheme: createColorTheme,
+  THEME_KEYS: THEME_COLOR_KEYS,
+  normalizeThemeOverrides
+} = require('../src/theme/colors');
 
 function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, logger, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
   // ===================== DB =====================
@@ -1295,19 +1300,28 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const tagline = merged.tagline || BRANDING_THEME_DEFAULT.tagline;
     const mode = merged.mode === 'manual' ? 'manual' : 'quick';
 
-    const paletteOverrides = {
+    let paletteOverrides = normalizeThemeOverrides({
       ...(BRANDING_THEME_DEFAULT.palette || {}),
       ...(merged.palette || {})
-    };
+    });
 
     if (merged.primaryColor) {
-      paletteOverrides.primary = merged.primaryColor;
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ primary: merged.primaryColor })
+      };
     }
     if (merged.secondaryColor) {
-      paletteOverrides.primaryDark = merged.secondaryColor;
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ primaryDark: merged.secondaryColor })
+      };
     }
     if (merged.highlightColor) {
-      paletteOverrides.accent = merged.highlightColor;
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ accent: merged.highlightColor })
+      };
     }
 
     const palette = createColorTheme(paletteOverrides);
@@ -2400,7 +2414,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       : resolveSupportedLanguageOptions();
     const theme = branding || getBranding();
     const baseTheme = computeBrandingTheme(BRANDING_THEME_DEFAULT);
-    const basePalette = createColorTheme(baseTheme.palette || {});
+    const basePalette = createColorTheme(normalizeThemeOverrides(baseTheme.palette || {}));
     const defaultThemeTokens = {
       primary: basePalette.primary,
       primaryDark: basePalette.primaryDark,
@@ -2430,6 +2444,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     };
     const themeBootstrap = JSON.stringify(defaultThemeTokens).replace(/</g, '\\u003C');
     const themeBootstrapRgb = JSON.stringify(defaultThemeRgbTokens).replace(/</g, '\\u003C');
+    const themeKeysLiteral = JSON.stringify(THEME_COLOR_KEYS).replace(/</g, '\\u003C');
     const brandPrimaryLight = mixColors(defaultThemeTokens.primary, '#ffffff', 0.25);
     const brandPrimaryTint = mixColors(defaultThemeTokens.primary, defaultThemeTokens.surface, 0.35);
     const brandAccentStrong = mixColors(defaultThemeTokens.accentDark, defaultThemeTokens.accent, 0.3);
@@ -2735,13 +2750,13 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             var STORAGE_KEY = 'ga.theme.tokens';
             var DEFAULT_THEME = ${themeBootstrap};
             var DEFAULT_RGB = ${themeBootstrapRgb};
-            var VALID_KEYS = ['primary','primaryDark','accent','accentDark','background','surface','textPrimary','textOnPrimary','textOnBackground'];
+            var VALID_KEYS = ${themeKeysLiteral};
             var listeners = [];
 
             function normalizeHex(value) {
               if (typeof value !== 'string') return null;
               var match = value.trim().match(/^#?([0-9a-f]{6})$/i);
-              return match ? '#' + match[1].toLowerCase() : null;
+              return match ? '#' + match[1].toUpperCase() : null;
             }
 
             function sanitize(overrides) {

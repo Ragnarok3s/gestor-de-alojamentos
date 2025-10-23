@@ -1,4 +1,8 @@
-const { createTheme: createColorTheme, defaultTheme: defaultColorTheme } = require('../../theme/colors');
+const {
+  createTheme: createColorTheme,
+  defaultTheme: defaultColorTheme,
+  normalizeThemeOverrides
+} = require('../../theme/colors');
 
 module.exports = function registerThemeSettings(app, context) {
   if (!app) throw new Error('registerThemeSettings: app é obrigatório');
@@ -18,7 +22,9 @@ module.exports = function registerThemeSettings(app, context) {
 
   app.get('/admin/settings/theme', requireAdmin, (req, res) => {
     const branding = resolveBrandingForRequest ? resolveBrandingForRequest(req) : null;
-    const paletteOverrides = branding && branding.palette ? branding.palette : {};
+    const paletteOverrides = branding && branding.palette
+      ? normalizeThemeOverrides(branding.palette)
+      : {};
     const activeTheme = createColorTheme(paletteOverrides);
     const previewStyle = [
       `--preview-primary:${activeTheme.primary}`,

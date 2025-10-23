@@ -1,3 +1,15 @@
+:root {
+  --color-primary: #FF8C42;
+  --color-primary-dark: #E66A32;
+  --color-accent: #C24C30;
+  --color-accent-dark: #8C2F2B;
+  --color-surface: #FFDBA0;
+  --color-background: #2B2B2B;
+  --color-text-primary: #2B2B2B;
+  --color-text-on-primary: #FFFFFF;
+  --color-text-on-background: #FFDBA0;
+}
+
 :root,
 .theme-light {
   color-scheme: light;

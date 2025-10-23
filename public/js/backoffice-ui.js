@@ -98,7 +98,7 @@
     function normalizeHex(value) {
       if (typeof value !== 'string') return null;
       var match = value.trim().match(/^#?([0-9a-f]{6})$/i);
-      return match ? ('#' + match[1].toLowerCase()) : null;
+      return match ? ('#' + match[1].toUpperCase()) : null;
     }
 
     function hexToRgba(hex, alpha) {
@@ -130,7 +130,7 @@
         if (!key) return;
         var value = theme[key];
         if (typeof value === 'string' && value) {
-          input.value = value;
+          input.value = value.toLowerCase();
         }
       });
     }
