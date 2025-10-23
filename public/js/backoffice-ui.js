@@ -82,6 +82,108 @@
     }
   }
 
+  function initThemeSettings() {
+    var manager = window.ThemeManager;
+    if (!manager) return;
+    var root = document.querySelector('[data-theme-settings]');
+    if (!root) return;
+    var form = root.querySelector('[data-theme-settings-form]');
+    if (!form) return;
+    var inputs = form.querySelectorAll('[data-theme-input]');
+    var preview = root.querySelector('[data-theme-preview]');
+    var applyButton = root.querySelector('[data-theme-apply]');
+    var resetButton = root.querySelector('[data-theme-reset]');
+    var pendingOverrides = Object.assign({}, manager.getOverrides());
+
+    function normalizeHex(value) {
+      if (typeof value !== 'string') return null;
+      var match = value.trim().match(/^#?([0-9a-f]{6})$/i);
+      return match ? ('#' + match[1].toLowerCase()) : null;
+    }
+
+    function hexToRgba(hex, alpha) {
+      var normalized = normalizeHex(hex);
+      if (!normalized) {
+        return 'rgba(0, 0, 0, ' + (Number(alpha) || 0) + ')';
+      }
+      var value = normalized.slice(1);
+      var r = parseInt(value.slice(0, 2), 16);
+      var g = parseInt(value.slice(2, 4), 16);
+      var b = parseInt(value.slice(4, 6), 16);
+      var a = Math.max(0, Math.min(1, Number(alpha) || 0));
+      return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a + ')';
+    }
+
+    function updatePreview(theme) {
+      if (!preview || !theme) return;
+      preview.style.setProperty('--preview-primary', theme.primary || '#FF8C42');
+      preview.style.setProperty('--preview-primary-contrast', theme.textOnPrimary || '#ffffff');
+      preview.style.setProperty('--preview-surface', theme.surface || '#FFDBA0');
+      preview.style.setProperty('--preview-surface-border', hexToRgba(theme.primary || '#FF8C42', 0.2));
+      preview.style.setProperty('--preview-text', theme.textPrimary || '#2B2B2B');
+    }
+
+    function updateInputs(theme) {
+      if (!theme) return;
+      inputs.forEach(function (input) {
+        var key = input.getAttribute('data-theme-input');
+        if (!key) return;
+        var value = theme[key];
+        if (typeof value === 'string' && value) {
+          input.value = value;
+        }
+      });
+    }
+
+    var initialTheme = manager.getTheme();
+    updateInputs(initialTheme);
+    updatePreview(initialTheme);
+
+    var unsubscribe = manager.subscribe(function (theme) {
+      updatePreview(theme);
+    });
+
+    function schedulePreview() {
+      manager.replace(pendingOverrides, { persist: false });
+    }
+
+    inputs.forEach(function (input) {
+      input.addEventListener('input', function () {
+        var key = input.getAttribute('data-theme-input');
+        if (!key) return;
+        var value = normalizeHex(input.value) || input.value;
+        pendingOverrides[key] = value;
+        schedulePreview();
+      });
+    });
+
+    if (applyButton) {
+      applyButton.addEventListener('click', function () {
+        manager.replace(pendingOverrides || {}, { persist: true });
+        pendingOverrides = Object.assign({}, manager.getOverrides());
+        updateInputs(manager.getTheme());
+      });
+    }
+
+    if (resetButton) {
+      resetButton.addEventListener('click', function () {
+        manager.reset();
+        pendingOverrides = {};
+        var theme = manager.getTheme();
+        updateInputs(theme);
+        updatePreview(theme);
+      });
+    }
+
+    root.addEventListener('submit', function (event) {
+      event.preventDefault();
+    });
+
+    root.addEventListener('theme:dispose', function () {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    });
+  }
+
   function debounce(fn, delay) {
     var timer = null;
     return function () {
@@ -637,6 +739,7 @@
 
   ready(function () {
     initThemeToggle();
+    initThemeSettings();
     initGlobalSearch();
     initNotifications();
     initLoadingObserver();

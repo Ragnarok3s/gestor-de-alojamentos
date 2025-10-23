@@ -15,7 +15,8 @@ function registerRoutes({
     registerOwnersPortal,
     registerInternalTelemetry,
     registerBackoffice,
-    registerTenantAdminModule
+    registerTenantAdminModule,
+    registerThemeSettings
   } = routes;
 
   registerAuthRoutes(app, context);
@@ -26,6 +27,7 @@ function registerRoutes({
   registerInternalTelemetry(app, context);
   registerBackoffice(app, context);
   registerTenantAdminModule(app, context);
+  registerThemeSettings(app, context);
 
   if (process.env.NODE_ENV !== 'production') {
     const { requireAdmin } = context;

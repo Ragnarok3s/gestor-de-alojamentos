@@ -35,6 +35,7 @@ const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
 const registerBackoffice = require('./src/modules/backoffice');
 const registerOwnersPortal = require('./src/modules/owners');
+const registerThemeSettings = require('./src/modules/settings/ThemeSettings');
 const registerInternalTelemetry = require('./src/modules/internal/telemetry');
 const registerAccountModule = require('./src/modules/account');
 const registerTenantAdminModule = require('./src/modules/admin/tenants');
@@ -184,7 +185,8 @@ registerRoutes({
     registerOwnersPortal,
     registerInternalTelemetry,
     registerBackoffice,
-    registerTenantAdminModule
+    registerTenantAdminModule,
+    registerThemeSettings
   }
 });
 

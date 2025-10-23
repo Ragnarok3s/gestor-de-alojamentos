@@ -45,7 +45,8 @@ const BACKOFFICE_NAV_GROUPS = [
     items: [
       { labelKey: 'navigation.items.contentCenters', defaultLabel: 'Centros de conteúdo', href: '/admin/content-center' },
       { labelKey: 'navigation.items.uxApi', defaultLabel: 'UX API', href: '/admin/ux-api' },
-      { labelKey: 'navigation.items.admin', defaultLabel: 'Administração', href: '/admin/utilizadores' }
+      { labelKey: 'navigation.items.admin', defaultLabel: 'Administração', href: '/admin/utilizadores' },
+      { labelKey: 'navigation.items.theme', defaultLabel: 'Tema da aplicação', href: '/admin/settings/theme' }
     ]
   },
   {
