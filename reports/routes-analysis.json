@@ -1,0 +1,2029 @@
+{
+  "generatedAt": "2025-10-23T13:48:48.754Z",
+  "routeCount": 129,
+  "linkCount": 111,
+  "routes": [
+    {
+      "path": "/",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1308"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/_routes",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "server/registerRoutes.js:32"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/security",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:366"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:366"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/2fa/cancelar",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:395"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/2fa/confirmar",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:408"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/2fa/desativar",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:449"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/2fa/iniciar",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:373"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/2fa/regenerar",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:463"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/account/seguranca/logs.csv",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/account/index.js:482"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1089"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/ajuda",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1445"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/api/kpis/summary",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:498"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rate-plans",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:127",
+        "src/modules/backoffice/ux-api.js:138"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rate-plans/:id",
+      "methods": [
+        "DELETE",
+        "PUT"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:148",
+        "src/modules/backoffice/ux-api.js:158"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rate-plans/:id/restrictions",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:168",
+        "src/modules/backoffice/ux-api.js:178"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rate-restrictions/:id",
+      "methods": [
+        "DELETE",
+        "PUT"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:188",
+        "src/modules/backoffice/ux-api.js:198"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rates/bulk",
+      "methods": [
+        "PUT"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:66"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/rates/bulk/undo",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:118"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/reports/weekly",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(AsyncFunction)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:438"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/revenue/calendar",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:208"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/reviews",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:301"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/reviews/:id/respond",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:313"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/reviews/request/:bookingId",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:345"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/templates/test",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:387"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/api/units/:unitId/blocks",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/backoffice/ux-api.js:244"
+      ],
+      "mounts": [
+        "src/modules/backoffice/ux-api.js:507"
+      ]
+    },
+    {
+      "path": "/admin/auditoria",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:4058"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/automation/export.csv",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1622"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/automation/operational.json",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1616"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/blocks/:blockId/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2966"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:426"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/:id",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:534"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/:id/cancel",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:792"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:809"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/:id/notes",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:781"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/:id/update",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:575"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/bookings/export",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/bookings.js:516"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/channel-imports/upload",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "multerMiddleware",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1842"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/channel-integrations/:key/settings",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1730"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/channel-integrations/:key/sync",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1763"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/channel-integrations/:key/test-connection",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1788"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/channel-sync/flush",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1814"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/content-center",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/content-center.js:61"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/content/:unitId",
+      "methods": [
+        "PUT"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/content-center.js:726"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/content/:unitId/publish",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/content-center.js:773"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/content/:unitId/rollback",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/content-center.js:815"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/dashboard",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1105"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/emails/templates/:key",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1875"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/export",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:3013"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/export/download",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "logExportAttempt",
+        "rateLimitedMiddleware",
+        "requireLogin",
+        "signedQueryMiddleware"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:3070"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/extras",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/extras.js:601",
+        "src/modules/backoffice/finance/extras.js:614",
+        "src/modules/backoffice/index.js:1000",
+        "src/modules/backoffice/index.js:989"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/finance",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance.js:233"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/finance/export",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance.js:288"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/housekeeping/:id/status",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1118"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/identidade-visual",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3493",
+        "src/modules/backoffice/index.js:3921"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/images/:imageId/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3053"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/images/:imageId/primary",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3089"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/limpeza",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1053"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/limpeza/tarefas",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1203"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/limpeza/tarefas/:id/reabrir",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1413",
+        "src/modules/backoffice/index.js:951"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/messages/templates/:key/:language",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1890"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/notifications",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:586"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/notifications/read",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:591"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/pagamentos",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3144"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/properties",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1907"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/properties/:id",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2172"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/properties/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2159"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/properties/:id/update",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2300"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/properties/create",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2121"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/rates/:rateId/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/ratePlans.js:17"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/rates/rules",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/rateRules.js:202"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/rates/rules/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/rateRules.js:512"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/rates/rules/save",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/rateRules.js:480"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/revenue-calendar",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1526"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/search",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:480"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/tenants",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/admin/tenants.js:22",
+        "src/modules/admin/tenants.js:27"
+      ],
+      "mounts": [
+        "src/modules/admin/tenants.js:78"
+      ]
+    },
+    {
+      "path": "/admin/tenants/:id",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PUT"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/admin/tenants.js:41",
+        "src/modules/admin/tenants.js:61",
+        "src/modules/admin/tenants.js:70"
+      ],
+      "mounts": [
+        "src/modules/admin/tenants.js:78"
+      ]
+    },
+    {
+      "path": "/admin/unit-blocks/:blockId/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2978"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2359"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2593"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/block",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2949"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2934"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/images",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)",
+        "multerMiddleware",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3005"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/images/reorder",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:3108"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/rates/create",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/finance/ratePlans.js:5"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/:id/update",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2900"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/units/create",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:2561"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/user-roles",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5044"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/user-roles/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5095"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/:id/delete",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5202"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/create",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:4897"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/email",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:4975"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/password",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5004"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/permissions",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireDev"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5122"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/reveal-password",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5235"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/users/role",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:5018"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/utilizadores",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireAdmin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:4245"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/admin/ux-api",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireBackofficeAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/index.js:1311"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/api/guest/booking",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:2720"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/api/guest/extras/checkout",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:2763"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/api/ota/webhooks/:channelKey",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)"
+      ],
+      "sources": [
+        "server/initServices.js:1738"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/book",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1671"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/book/:bookingId/ical",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1991"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/book/:unitId",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1315"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/book/confirmation/:bookingId",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1837"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/booking/:id",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:2903"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:40"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/block/:id",
+      "methods": [
+        "DELETE"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:933"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/block/:id/reschedule",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:861"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/booking/:id/cancel",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:836"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/booking/:id/reschedule",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:763"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/unit/:id/card",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:750"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/calendar/unit/:unitId/block",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/calendar.js:899"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/guest/:bookingId",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:2088"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/i18n/:lang.json",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "server/initServices.js:1652"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/i18n/set-language",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "server/initServices.js:1637"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/internal/telemetry/click",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/internal/telemetry.js:40"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/limpeza/tarefas",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:998"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/limpeza/tarefas/:id/concluir",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1371",
+        "src/modules/backoffice/index.js:909"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/limpeza/tarefas/:id/progresso",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/backoffice/housekeeping.js:1331",
+        "src/modules/backoffice/index.js:869"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:764",
+        "src/modules/auth/index.js:773"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login/2fa",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:840",
+        "src/modules/auth/index.js:897"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login/2fa/cancel",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:1020"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login/2fa/resend",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:975"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login/reset",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(AsyncFunction)",
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:1036",
+        "src/modules/auth/index.js:1049"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/login/reset/confirm",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:1086",
+        "src/modules/auth/index.js:1124"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/logout",
+      "methods": [
+        "POST"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/auth/index.js:1187"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/owners",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)",
+        "ensureOwnerPortalAccess",
+        "requireLogin"
+      ],
+      "sources": [
+        "src/modules/owners/index.js:64"
+      ],
+      "mounts": []
+    },
+    {
+      "path": "/search",
+      "methods": [
+        "GET"
+      ],
+      "handlers": [
+        "(Function)"
+      ],
+      "sources": [
+        "src/modules/frontoffice/index.js:1312"
+      ],
+      "mounts": []
+    }
+  ],
+  "links": {
+    "src/modules/account/index.js": [
+      "/account/seguranca/2fa/confirmar",
+      "/account/seguranca/2fa/cancelar",
+      "/account/seguranca/2fa/regenerar",
+      "/account/seguranca/2fa/desativar",
+      "/account/seguranca/2fa/iniciar",
+      "/account/seguranca/logs.csv"
+    ],
+    "src/modules/auth/index.js": [
+      "/login",
+      "/login/reset",
+      "/login/2fa",
+      "/login/2fa/resend",
+      "/login/2fa/cancel"
+    ],
+    "src/modules/backoffice/bookings.js": [
+      "/admin/bookings",
+      "/admin/bookings/${b.id}/update",
+      "/admin/bookings/${b.id}/notes",
+      "/admin/bookings/${b.id}/cancel"
+    ],
+    "src/modules/backoffice/calendar.js": [
+      "/admin/export",
+      "/calendar",
+      "/admin/bookings/${booking.id}",
+      "/admin/units/${u.id}"
+    ],
+    "src/modules/backoffice/finance/extras.js": [
+      "/admin",
+      "/admin/extras"
+    ],
+    "src/modules/backoffice/finance/rateRules.js": [
+      "/admin/rates/rules?edit=${rule.id}",
+      "/admin/rates/rules/${rule.id}/delete",
+      "/admin",
+      "/admin/rates/rules/save",
+      "/admin/rates/rules"
+    ],
+    "src/modules/backoffice/index.js": [
+      "/admin/units/${u.id}",
+      "/admin",
+      "/admin/properties/${p.id}/delete",
+      "/admin/properties/${p.id}/update",
+      "/admin/bookings/${b.id}",
+      "/admin/bookings/${b.id}/cancel",
+      "/admin/units/${u.id}/block",
+      "/admin/units/${u.id}/rates/create",
+      "/admin/rates/rules",
+      "/admin/units/${u.id}/update",
+      "/admin/rates/${r.id}/delete",
+      "/admin/units/${u.id}/images",
+      "/admin/bookings/${row.booking_id}",
+      "/admin/identidade-visual",
+      "/admin/auditoria",
+      "/admin/users/create",
+      "/admin/users/password",
+      "/admin/users/email",
+      "/admin/users/role",
+      "/admin/users/permissions",
+      "/admin/user-roles",
+      "/admin/user-roles/${scope.id}/delete",
+      "/admin/dashboard",
+      "/admin/bookings",
+      "/admin/limpeza",
+      "/admin/properties",
+      "/admin/pagamentos",
+      "/admin/finance",
+      "/admin/units",
+      "/admin/extras",
+      "/admin/revenue-calendar",
+      "/admin/content-center",
+      "/admin/ux-api",
+      "/admin/utilizadores",
+      "/admin/ajuda",
+      "/admin/bookings/${row.id}",
+      "/admin/units?search=${encodeURIComponent(row.name)}",
+      "/admin/content-center?search=${encodeURIComponent(row.title)}",
+      "/calendar",
+      "/admin/properties/${row.id}",
+      "/admin#overview",
+      "/admin/units/${row.id}",
+      "/admin/properties/${u.property_id}",
+      "/admin/properties/${u.property_id}#property-units",
+      "/admin/bookings?search=${encodeURIComponent(row.guest_email || row.guest_name || '')}"
+    ],
+    "src/modules/frontoffice/index.js": [
+      "/book",
+      "/",
+      "/calendar",
+      "/admin/export"
+    ],
+    "src/modules/owners/index.js": [
+      "/owners"
+    ],
+    "src/security/csrf.js": [
+      "/"
+    ],
+    "src/services/notifications.js": [
+      "/limpeza/tarefas",
+      "/admin/bookings/${bookingId}"
+    ],
+    "src/views/admin/properties.ejs": [
+      "/admin"
+    ],
+    "src/views/admin/units.ejs": [
+      "/admin"
+    ],
+    "src/views/admin/users.ejs": [
+      "/admin"
+    ],
+    "src/views/auth/login.ejs": [
+      "/login",
+      "/login/reset"
+    ],
+    "src/views/auth/reset.ejs": [
+      "/login/reset",
+      "/login",
+      "/login/reset/confirm"
+    ],
+    "src/views/auth/twofactor.ejs": [
+      "/login/2fa",
+      "/login/2fa/resend",
+      "/login/2fa/cancel"
+    ],
+    "src/views/backoffice/bookings.ejs": [
+      "/admin/bookings/export?format=csv",
+      "/admin/bookings/export?format=xlsx",
+      "/admin/bookings/<%= booking.id %>",
+      "/admin/bookings/<%= booking.id %>/cancel"
+    ],
+    "src/views/backoffice/finance/extras.ejs": [
+      "/admin",
+      "/admin/extras"
+    ],
+    "src/views/backoffice/finance.ejs": [
+      "/admin/finance/export?format=csv",
+      "/admin/finance/export?format=xlsx"
+    ],
+    "src/views/backoffice/help.ejs": [
+      "/admin"
+    ],
+    "src/views/backoffice/ux-api.ejs": [
+      "/admin"
+    ],
+    "server/initServices.js": [
+      "/admin/bookings",
+      "/account/seguranca",
+      "/logout",
+      "/login",
+      "/public/css/themes.css",
+      "/public/css/style.css",
+      "/css/responsive.css",
+      "/calendar",
+      "/admin/bookings/${b.id}"
+    ],
+    "tests/unit/smoke/backoffice-smoke.test.js": [
+      "/admin/bookings",
+      "/calendar"
+    ]
+  },
+  "unmatchedLinks": [],
+  "orphanRoutes": []
+}

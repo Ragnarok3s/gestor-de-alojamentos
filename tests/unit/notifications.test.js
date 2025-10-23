@@ -1,4 +1,4 @@
-const dayjs = require('dayjs');
+const { dayjs } = require('../../src/lib/dates');
 const { buildUserNotifications } = require('../../src/services/notifications');
 const { createDatabase } = require('../../src/infra/database');
 

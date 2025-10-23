@@ -1,4 +1,4 @@
-const dayjs = require('dayjs');
+const { dayjs } = require('../../src/lib/dates');
 const { createRatePlanService } = require('../../src/services/rate-plans');
 const { ValidationError } = require('../../src/services/errors');
 const { createDatabase } = require('../../src/infra/database');

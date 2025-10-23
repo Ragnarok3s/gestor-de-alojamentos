@@ -1,6 +1,4 @@
-const dayjs = require('dayjs');
-const minMax = require('dayjs/plugin/minMax');
-require('dayjs/locale/pt');
+const dayjs = require('./server/dayjs');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -19,18 +17,19 @@ try {
     );
   }
 }
-dayjs.extend(minMax);
-dayjs.locale('pt');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 
+const logger = require('./server/logger');
 const { configureMiddleware } = require('./server/configureMiddleware');
 const { createTenantResolver } = require('./server/resolveTenant');
 const { geocodeAddress } = require('./server/geocode');
 const { initServices } = require('./server/initServices');
 const { registerRoutes } = require('./server/registerRoutes');
 const { startServer } = require('./server/startServer');
+const { requestLogger } = require('./server/middleware/requestLogger');
+const { createErrorHandler } = require('./server/middleware/errorHandler');
 
 const registerAuthRoutes = require('./src/modules/auth');
 const registerFrontoffice = require('./src/modules/frontoffice');
@@ -82,7 +81,12 @@ const {
   ALL_PERMISSIONS
 } = require('./src/security/permissions');
 
+logger.bindConsole();
+
 const app = express();
+app.disable('x-powered-by');
+
+app.use(requestLogger);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const secureCookies =
   !!process.env.FORCE_SECURE_COOKIE || (!!process.env.SSL_KEY_PATH && !!process.env.SSL_CERT_PATH);
@@ -112,6 +116,7 @@ const services = initServices({
   ExcelJS,
   sharp,
   SKIP_SERVER_BOOT,
+  logger,
   featureFlags,
   isFeatureEnabled,
   createDatabase,
@@ -182,6 +187,11 @@ registerRoutes({
     registerTenantAdminModule
   }
 });
+
+app.use(createErrorHandler({
+  layout: context.layout,
+  logger
+}));
 
 // Arrancar servidor HTTP/HTTPS conforme configuração detectada.
 startServer({ app, fs, https });

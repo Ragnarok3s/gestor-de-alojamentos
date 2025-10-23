@@ -1,4 +1,4 @@
-const dayjs = require('dayjs');
+const dayjs = require('../dayjs');
 const { applyRateRules, normalizeRuleRow } = require('./pricing/rules');
 
 function clamp(value, min, max) {

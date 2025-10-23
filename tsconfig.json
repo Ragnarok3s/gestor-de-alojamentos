@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": false,
+    "skipLibCheck": false,
+    "baseUrl": "."
+  },
+  "include": [
+    "server.js",
+    "server/**/*.js",
+    "src/**/*.js",
+    "scripts/**/*.js",
+    "tests/**/*.js",
+    "config/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "legacy/_archive"
+  ]
+}

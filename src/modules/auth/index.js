@@ -360,7 +360,7 @@ module.exports = function registerAuthRoutes(app, context) {
       );
   }
 
-  
+
 
 
   function renderTwoFactorPage(req, res, options = {}) {
@@ -459,7 +459,7 @@ module.exports = function registerAuthRoutes(app, context) {
       );
   }
 
-  
+
 
   function renderResetPage(req, res, options = {}) {
     const {

@@ -5,54 +5,89 @@ const { collectFiles } = require('./utils');
 
 const ROOT = path.resolve(__dirname, '..');
 
-function loadPackageJson() {
-  const pkgPath = path.join(ROOT, 'package.json');
-  return JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+function readFileSafe(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return '';
+  }
 }
 
-function findDependencyUsage(dependency, files) {
-  const patterns = [
+function gatherCandidates() {
+  const targets = [
+    path.join(ROOT, 'server.js'),
+    path.join(ROOT, 'server'),
+    path.join(ROOT, 'src'),
+    path.join(ROOT, 'tests'),
+    path.join(ROOT, 'scripts'),
+    path.join(ROOT, 'config'),
+    path.join(ROOT, 'docs')
+  ];
+
+  const files = collectFiles(targets, { extensions: ['.js', '.cjs', '.mjs', '.json', '.ts'] });
+  const rootConfigs = ['jest.config.js', 'tsconfig.json', '.eslintrc.cjs', '.babelrc', 'webpack.config.js'];
+  rootConfigs.forEach(file => {
+    const full = path.join(ROOT, file);
+    if (fs.existsSync(full)) {
+      files.push(full);
+    }
+  });
+
+  return files;
+}
+
+function buildPatterns(dependency) {
+  return [
     `require('${dependency}')`,
     `require("${dependency}")`,
     `from '${dependency}'`,
     `from "${dependency}"`,
+    `'${dependency}'`,
+    `"${dependency}"`,
     `'${dependency}/`,
-    `"${dependency}/`
+    `"${dependency}/`,
+    `:${dependency}`,
+    `${dependency}(`,
+    `${dependency}.`
   ];
-
-  return files.some(file => {
-    const content = fs.readFileSync(file, 'utf8');
-    return patterns.some(pattern => content.includes(pattern));
-  });
 }
 
 function main() {
-  const pkg = loadPackageJson();
+  const pkgPath = path.join(ROOT, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
   const dependencies = Object.keys(pkg.dependencies || {});
-  const files = collectFiles([
-    path.join(ROOT, 'server.js'),
-    path.join(ROOT, 'src'),
-    path.join(ROOT, 'server'),
-    path.join(ROOT, 'tests'),
-    path.join(ROOT, 'scripts')
-  ], { extensions: ['.js'] });
+  const devDependencies = Object.keys(pkg.devDependencies || {});
+  const files = gatherCandidates();
 
-  const unused = [];
-  for (const dependency of dependencies) {
-    const used = findDependencyUsage(dependency, files);
-    if (!used) {
-      unused.push(dependency);
-    }
+  function isReferenced(dep) {
+    const patterns = buildPatterns(dep);
+    return files.some(file => {
+      const content = readFileSafe(file);
+      return patterns.some(pattern => content.includes(pattern));
+    });
   }
 
-  if (unused.length) {
-    console.warn('Potentially unused dependencies found:');
-    unused.forEach(dep => console.warn(` - ${dep}`));
-    console.warn('Revise manually to confirm dynamic usage before removal.');
-    process.exitCode = 1;
-  } else {
-    console.log('All dependencies appear to be referenced statically.');
+  const unusedDeps = dependencies.filter(dep => !isReferenced(dep));
+  const unusedDevDeps = devDependencies
+    .filter(dep => dep !== 'jest')
+    .filter(dep => !isReferenced(dep));
+
+  if (!unusedDeps.length && !unusedDevDeps.length) {
+    console.log('Depcheck: nenhuma dependência órfã encontrada.');
+    return;
   }
+
+  if (unusedDeps.length) {
+    console.warn('Dependências sem uso detectadas:');
+    unusedDeps.forEach(dep => console.warn(` - ${dep}`));
+  }
+
+  if (unusedDevDeps.length) {
+    console.warn('DevDependencies sem uso detectadas:');
+    unusedDevDeps.forEach(dep => console.warn(` - ${dep}`));
+  }
+
+  process.exitCode = 1;
 }
 
 if (require.main === module) {

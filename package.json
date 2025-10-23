@@ -4,12 +4,14 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "lint": "node scripts/lint.js",
+    "dev": "node server.js",
+    "build": "npm run lint && npm run typecheck && node scripts/build-check.js",
+    "start": "node server.js",
+    "lint": "node scripts/lint.js --max-warnings=0",
     "typecheck": "node scripts/typecheck.js",
-    "build": "node scripts/build-check.js",
-    "test": "node vendor/jest/bin/jest.js",
+    "test": "node scripts/run-tests.js && node vendor/jest/bin/jest.js --runInBand",
     "depcheck": "node scripts/depcheck.js",
-    "start": "node server.js"
+    "analyze:routes": "node scripts/analyze-routes.js"
   },
   "keywords": [],
   "author": "",
