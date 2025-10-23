@@ -20,7 +20,7 @@
     "better-sqlite3": "^12.4.1",
     "chart.js": "file:vendor/chart.js",
     "cookie-parser": "^1.4.7",
-    "dayjs": "file:vendor/dayjs",
+    "dayjs": "^1.11.18",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-rate-limit": "file:vendor/express-rate-limit",

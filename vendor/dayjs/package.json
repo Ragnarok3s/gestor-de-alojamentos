@@ -1,7 +1,0 @@
-{
-  "name": "dayjs",
-  "version": "1.11.18",
-  "description": "Local Day.js compatible subset for offline environments",
-  "main": "index.js",
-  "type": "commonjs"
-}
