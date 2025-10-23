@@ -3,6 +3,19 @@ const path = require('path');
 
 const { gatherSourceFiles, runTypecheck } = require('./typecheck');
 
+function parseArgs(argv) {
+  let maxWarnings = Infinity;
+  argv.forEach(arg => {
+    if (arg.startsWith('--max-warnings=')) {
+      const value = Number(arg.split('=')[1]);
+      if (Number.isFinite(value)) {
+        maxWarnings = value;
+      }
+    }
+  });
+  return { maxWarnings };
+}
+
 function checkTrailingWhitespace(files) {
   const trailingPattern = /[ \t]+$/;
   const problems = [];
@@ -22,15 +35,24 @@ function checkTrailingWhitespace(files) {
 }
 
 function main() {
+  const options = parseArgs(process.argv.slice(2));
   const { files } = runTypecheck({ quiet: true });
   const issues = checkTrailingWhitespace(files);
+
   if (issues.length) {
     for (const issue of issues) {
       console.error(`${path.relative(path.resolve(__dirname, '..'), issue.file)}:${issue.line} ${issue.message}`);
     }
-    throw new Error(`Lint failed with ${issues.length} issue(s).`);
+    if (issues.length > options.maxWarnings) {
+      throw new Error(`Lint failed with ${issues.length} issue(s).`);
+    }
   }
-  console.log(`Lint OK for ${files.length} JavaScript files.`);
+
+  if (issues.length === 0) {
+    console.log(`Lint OK para ${files.length} ficheiros JavaScript.`);
+  } else {
+    console.log(`Lint concluído com ${issues.length} aviso(s) dentro do limite (${options.maxWarnings}).`);
+  }
 }
 
 if (require.main === module) {

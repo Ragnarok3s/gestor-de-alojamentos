@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const dayjs = require('dayjs');
+const { dayjs } = require('../src/lib/dates');
 const ExcelJS = require('exceljs');
 
 const { createDatabase } = require('../src/infra/database');
@@ -49,30 +49,6 @@ function stableStringify(value) {
     return val;
   };
   return JSON.stringify(value, sorter);
-}
-
-function testServerBootstrap() {
-  const serverPath = require.resolve('../server');
-  delete require.cache[serverPath];
-  const previousFlag = global.__SERVER_STARTED__;
-  const previousDbPath = process.env.DATABASE_PATH;
-  process.env.SKIP_SERVER_START = '1';
-  process.env.DATABASE_PATH = ':memory:';
-  const app = require(serverPath);
-  assert.equal(typeof app, 'function', 'server deve exportar instância Express');
-  assert.equal(global.__SERVER_STARTED__, previousFlag, 'servidor não deve arrancar em modo de teste');
-  delete process.env.SKIP_SERVER_START;
-  if (previousDbPath === undefined) {
-    delete process.env.DATABASE_PATH;
-  } else {
-    process.env.DATABASE_PATH = previousDbPath;
-  }
-  delete require.cache[serverPath];
-  if (previousFlag === undefined) {
-    delete global.__SERVER_STARTED__;
-  } else {
-    global.__SERVER_STARTED__ = previousFlag;
-  }
 }
 
 function testServerBootstrap() {

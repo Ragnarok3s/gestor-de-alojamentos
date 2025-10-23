@@ -1,7 +1,8 @@
 const { AsyncLocalStorage } = require('async_hooks');
 
-function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
+function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, logger, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
   // ===================== DB =====================
+  const log = logger || console;
   const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
   const tenantService = createTenantService({ db });
   const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
@@ -78,8 +79,8 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           }
           propertyScopes.get(scopeKey).add(permission);
         });
-      } catch (err) {
-        console.warn('Falha ao carregar escopos do utilizador:', err.message);
+    } catch (err) {
+      log.warn('Falha ao carregar escopos do utilizador:', { error: err, userId });
       }
     }
 
@@ -96,7 +97,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           }
         });
       } catch (err) {
-        console.warn('Falha ao carregar privilégios personalizados:', err.message);
+        log.warn('Falha ao carregar privilégios personalizados:', { error: err, userId });
       }
     }
 
@@ -192,7 +193,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         'INSERT INTO session_logs(user_id, action, ip, user_agent) VALUES (?,?,?,?)'
       ).run(userId || null, action, req ? req.ip : null, req ? (req.get('user-agent') || null) : null);
     } catch (err) {
-      console.error('Erro ao registar sessão', err.message);
+      log.error('Erro ao registar sessão', { error: err });
     }
   }
 
@@ -202,7 +203,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         'INSERT INTO activity_logs(user_id, action, entity_type, entity_id, meta_json) VALUES (?,?,?,?,?)'
       ).run(actorId || null, action, entityType || null, entityId || null, meta ? JSON.stringify(meta) : null);
     } catch (err) {
-      console.error('Erro ao registar atividade', err.message);
+      log.error('Erro ao registar atividade', { error: err });
     }
   }
 
@@ -223,7 +224,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
         after: afterObj || null
       });
     } catch (err) {
-      console.error('Erro ao registar auditoria', err.message);
+      log.error('Erro ao registar auditoria', { error: err });
     }
   }
 
@@ -292,7 +293,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     try {
       automationStateUpsertStmt.run(key, JSON.stringify(payload || null));
     } catch (err) {
-      console.error('Automação: erro ao guardar estado', err.message);
+      log.error('Automação: erro ao guardar estado', { error: err });
     }
   }
 
@@ -540,7 +541,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     try {
       automationTransaction();
     } catch (err) {
-      console.error('Automação: falha ao executar sweep', err);
+      log.error('Automação: falha ao executar sweep', { error: err });
       notifications.push({
         type: 'automation',
         severity: 'danger',
@@ -1086,7 +1087,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       const buffer = await pipeline.toBuffer();
       await fsp.writeFile(filePath, buffer);
     } catch (err) {
-      console.warn('Compressão de imagem falhou para', filePath, '-', err.message);
+      log.warn('Compressão de imagem falhou', { error: err, filePath });
     }
   }
 
@@ -1661,8 +1662,8 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   const emailTemplates = createEmailTemplateService({ db, dayjs });
   const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
   const mailerLogger = SKIP_SERVER_BOOT
-    ? { info: () => {}, warn: console.warn, error: console.error }
-    : console;
+    ? { info: () => {}, warn: (...args) => log.warn(...args), error: (...args) => log.error(...args) }
+    : log;
   const mailer = createMailer({ logger: mailerLogger });
   const bookingEmailer = createBookingEmailer({ emailTemplates, mailer, dayjs, eur });
   const reviewRequestService = createReviewRequestService({
@@ -1681,7 +1682,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     ensureDir,
     uploadsDir: UPLOAD_CHANNEL_IMPORTS
   });
-  const channelSync = createChannelSync({ logger: console });
+  const channelSync = createChannelSync({ logger: log });
   const telemetry = createTelemetry({ logger: console });
   const overbookingGuard = createOverbookingGuard({ db, dayjs, logChange, channelSync, logger: console });
   const otaDispatcher = createOtaDispatcher({
@@ -1720,17 +1721,17 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   });
 
   const decisionAssistant = createDecisionAssistant({ db, dayjs });
-  const paymentService = createPaymentService({ db, dayjs, logger: console });
+  const paymentService = createPaymentService({ db, dayjs, logger: log });
   const guestPortalService = createGuestPortalService({ db, crypto, dayjs });
   if (!skipStartupTasks) {
     channelIntegrations
       .autoSyncAll({ reason: 'startup' })
-      .catch(err => console.warn('Integração de canais (startup):', err.message));
+      .catch(err => log.warn('Integração de canais (startup) falhou', { error: err }));
 
     setInterval(() => {
       channelIntegrations
         .autoSyncAll({ reason: 'interval' })
-        .catch(err => console.warn('Integração de canais (intervalo):', err.message));
+        .catch(err => log.warn('Integração de canais (intervalo) falhou', { error: err }));
     }, 30 * 60 * 1000);
   }
 
@@ -1765,7 +1766,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       });
       res.status(200).json({ status: 'ok', ...responseSummary });
     } catch (err) {
-      console.warn('Webhook OTA falhou:', err.message);
+      log.warn('Webhook OTA falhou', { error: err, channelKey });
       const status = err && (err.statusCode || err.status) ? err.statusCode || err.status : 400;
       res.status(status).json({ error: err.message });
     }
@@ -1776,7 +1777,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       try {
         task();
       } catch (err) {
-        console.error('Tarefa diária falhou:', err.message);
+        log.error('Tarefa diária falhou', { error: err });
       }
       schedule();
     };
@@ -1807,30 +1808,30 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       const targetDate = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
       reviewRequestService
         .processDailyRequests({ targetDate })
-        .catch(err => console.warn('Pedido diário de reviews falhou:', err.message));
+        .catch(err => log.warn('Pedido diário de reviews falhou', { error: err }));
     }, 4, 0);
 
     try {
       runAutomationSweep('startup');
     } catch (err) {
-      console.error('Automação: falha inicial', err);
+      log.error('Automação: falha inicial', { error: err });
     }
 
     try {
       decisionAssistant.run({ reason: 'startup' });
     } catch (err) {
-      console.error('Assistente de decisões: falha inicial', err);
+      log.error('Assistente de decisões: falha inicial', { error: err });
     }
 
     automationEngine
       .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
-      .catch(err => console.warn('Automação diária (startup) falhou:', err.message));
+      .catch(err => log.warn('Automação diária (startup) falhou', { error: err }));
 
     setInterval(() => {
       try {
         runAutomationSweep('interval');
       } catch (err) {
-        console.error('Automação: falha periódica', err);
+        log.error('Automação: falha periódica', { error: err });
       }
     }, 30 * 60 * 1000);
   }
@@ -3866,6 +3867,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     dayjs,
     html,
     layout,
+    logger: log,
     esc,
     eur,
     bcrypt,

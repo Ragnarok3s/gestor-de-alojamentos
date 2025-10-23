@@ -52,11 +52,24 @@ function registerRoutes({
   }
 
   app.use((req, res) => {
+    if (context.logger && typeof context.logger.warn === 'function') {
+      context.logger.warn('Rota não encontrada', {
+        requestId: res.locals && res.locals.requestId,
+        path: req.originalUrl,
+        method: req.method
+      });
+    }
+
+    const requestId = res.locals && res.locals.requestId;
+    const requestHint = requestId
+      ? `<p class="text-sm text-slate-500">Código de referência: <code>${requestId}</code></p>`
+      : '';
+
     res
       .status(404)
       .send(
         context.layout({
-          body: '<h1 class="text-xl font-semibold">404</h1><p>Página não encontrada.</p>'
+          body: `<h1 class="text-xl font-semibold">404</h1><p>Página não encontrada.</p>${requestHint}`
         })
       );
   });

@@ -23,15 +23,17 @@ const BACKOFFICE_NAV_GROUPS = [
       { labelKey: 'navigation.items.dashboard', defaultLabel: 'Dashboard', href: '/admin/dashboard' },
       { labelKey: 'navigation.items.calendar', defaultLabel: 'Calendário', href: '/admin' },
       { labelKey: 'navigation.items.bookings', defaultLabel: 'Reservas', href: '/admin/bookings' },
-      { labelKey: 'navigation.items.housekeeping', defaultLabel: 'Housekeeping', href: '/admin/limpeza' }
+      { labelKey: 'navigation.items.housekeeping', defaultLabel: 'Housekeeping', href: '/admin/limpeza' },
+      { labelKey: 'navigation.items.properties', defaultLabel: 'Propriedades', href: '/admin/properties' }
     ]
   },
   {
     titleKey: 'navigation.groups.finance',
     defaultTitle: 'Finanças',
     items: [
+      { labelKey: 'navigation.items.payments', defaultLabel: 'Pagamentos', href: '/admin/pagamentos' },
       { labelKey: 'navigation.items.financeSummary', defaultLabel: 'Resumo financeiro', href: '/admin/finance' },
-      { labelKey: 'navigation.items.ratePlans', defaultLabel: 'Planos tarifários', href: '/admin/rates/plans' },
+      { labelKey: 'navigation.items.ratePlans', defaultLabel: 'Planos tarifários', href: '/admin/units' },
       { labelKey: 'navigation.items.rateRules', defaultLabel: 'Regras de tarifa', href: '/admin/rates/rules' },
       { labelKey: 'navigation.items.extras', defaultLabel: 'Extras', href: '/admin/extras' },
       { labelKey: 'navigation.items.reports', defaultLabel: 'Relatórios', href: '/admin/revenue-calendar' }
@@ -3300,7 +3302,7 @@ app.get('/admin/pagamentos', requireLogin, requirePermission('bookings.view'), (
   res.send(layout({
     title: pageTitle,
     user: req.user,
-    activeNav: 'backoffice',
+    activeNav: '/admin/pagamentos',
     branding: resolveBrandingForRequest(req),
     body: html`
       <h1 class="text-2xl font-semibold mb-4">${pageTitle}</h1>

@@ -1,4 +1,4 @@
-const dayjs = require('dayjs');
+const dayjs = require('../../dayjs');
 
 function parseRuleConfig(rawConfig) {
   if (!rawConfig) return {};
