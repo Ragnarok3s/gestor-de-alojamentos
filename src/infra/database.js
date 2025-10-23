@@ -1,4 +1,9 @@
-const Database = require('better-sqlite3');
+let Database;
+try {
+  Database = require('better-sqlite3');
+} catch (err) {
+  Database = require('./sqlite-compat');
+}
 const { randomUUID } = require('node:crypto');
 
 const { ROLE_DEFINITIONS, splitPermissionKey, MASTER_ROLE } = require('../security/permissions');
