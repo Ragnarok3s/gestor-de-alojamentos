@@ -1,0 +1,23 @@
+{
+  "forbidden": [
+    {
+      "name": "controllers-import-db",
+      "comment": "Controllers não podem importar db diretamente",
+      "from": { "path": "src/.*/controllers" },
+      "to":   { "path": "src/shared/db|src/.*/db" }
+    },
+    {
+      "name": "views-import-db",
+      "comment": "Views não têm acesso a db",
+      "from": { "path": "src/.*/views" },
+      "to":   { "path": "src/.*/db|src/shared/db" }
+    },
+    {
+      "name": "services-import-express",
+      "comment": "Serviços não importam express",
+      "from": { "path": "src/.*/services" },
+      "to":   { "path": "express|koa|fastify" }
+    }
+  ],
+  "options": { "doNotFollow": { "path": "node_modules" } }
+}

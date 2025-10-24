@@ -1,6 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const ejs = require('ejs');
+
+let ejs;
+try {
+  ejs = require('ejs');
+} catch (error) {
+  const vendorEjsPath = path.join(__dirname, '..', '..', 'vendor', 'ejs');
+  try {
+    ejs = require(vendorEjsPath);
+  } catch (vendorError) {
+    const installHint =
+      '\nCertifique-se de executar "npm install" para disponibilizar a dependência oficial do EJS.';
+    error.message = `${error.message}${installHint}`;
+    throw error;
+  }
+}
 
 const viewsRoot = path.join(__dirname, '..', 'views');
 const compiledCache = new Map();
