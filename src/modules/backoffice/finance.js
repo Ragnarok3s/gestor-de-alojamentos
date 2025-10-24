@@ -1,64 +1,10 @@
 // Centraliza as operações financeiras do backoffice (receitas, tarifários, regras e extras).
-const fs = require('fs');
-const path = require('path');
+const { getRenderer } = require('../../lib/viewRenderer');
 const { registerRatePlans } = require('./finance/ratePlans');
 const { registerRateRules } = require('./finance/rateRules');
 const { registerExtras } = require('./finance/extras');
 
-const financeTemplatePath = path.join(__dirname, '..', '..', 'views', 'backoffice', 'finance.ejs');
-let financeTemplateRenderer = null;
-
-function compileEjsTemplate(template) {
-  if (!template) return null;
-  const matcher = /<%([=-]?)([\s\S]+?)%>/g;
-  let index = 0;
-  let source = "let __output = '';\n";
-  source += 'const __append = value => { __output += value == null ? "" : String(value); };\n';
-  source += 'with (locals || {}) {\n';
-  let match;
-  while ((match = matcher.exec(template)) !== null) {
-    const text = template.slice(index, match.index);
-    if (text) {
-      const escapedText = text
-        .replace(/\\/g, '\\\\')
-        .replace(/`/g, '\\`')
-        .replace(/\$\{/g, '\\${');
-      source += `__output += \`${escapedText}\`;\n`;
-    }
-    const indicator = match[1];
-    const code = match[2];
-    if (indicator === '=') {
-      source += `__append(${code.trim()});\n`;
-    } else if (indicator === '-') {
-      source += `__output += (${code.trim()}) ?? '';\n`;
-    } else {
-      source += `${code}\n`;
-    }
-    index = match.index + match[0].length;
-  }
-  const tail = template.slice(index);
-  if (tail) {
-    const escapedTail = tail
-      .replace(/\\/g, '\\\\')
-      .replace(/`/g, '\\`')
-      .replace(/\$\{/g, '\\${');
-    source += `__output += \`${escapedTail}\`;\n`;
-  }
-  source += '}\nreturn __output;';
-  try {
-    // eslint-disable-next-line no-new-func
-    return new Function('locals', source);
-  } catch (err) {
-    return null;
-  }
-}
-
-try {
-  const financeTemplate = fs.readFileSync(financeTemplatePath, 'utf8');
-  financeTemplateRenderer = compileEjsTemplate(financeTemplate);
-} catch (err) {
-  financeTemplateRenderer = null;
-}
+const financeTemplateRenderer = getRenderer('backoffice/finance.ejs');
 
 function registerFinance(app, context) {
   registerRatePlans(app, context);

@@ -16,14 +16,14 @@
     .bo-modal__header, .bo-modal__body, .bo-modal__footer { padding-inline: 1.1rem; }
   }
 </style>
-<div class="bo-modal" data-modal-root __ROOT_ATTR__ data-modal-id="__ID__">
+<div class="bo-modal" data-modal-root <%- rootAttr || '' %> data-modal-id="<%= esc(id) %>">
   <div class="bo-modal__backdrop" data-modal-backdrop hidden></div>
-  <div class="bo-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="__LABEL_ID__" data-modal-dialog tabindex="-1" hidden>
+  <div class="bo-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="<%= esc(labelId) %>" data-modal-dialog tabindex="-1" hidden>
     <div class="bo-modal__header">
-      <h2 class="bo-modal__title" id="__LABEL_ID__" data-modal-title>__TITLE__</h2>
-      <button type="button" class="bo-modal__close" data-modal-close aria-label="__CLOSE_LABEL__"><span aria-hidden="true">&times;</span></button>
+      <h2 class="bo-modal__title" id="<%= esc(labelId) %>" data-modal-title><%= esc(title) %></h2>
+      <button type="button" class="bo-modal__close" data-modal-close aria-label="<%= esc(closeLabel) %>"><span aria-hidden="true">&times;</span></button>
     </div>
-    <div class="bo-modal__body" data-modal-body>__BODY__</div>
+    <div class="bo-modal__body" data-modal-body><%- body %></div>
     <div class="bo-modal__footer" data-modal-footer hidden></div>
   </div>
 </div>

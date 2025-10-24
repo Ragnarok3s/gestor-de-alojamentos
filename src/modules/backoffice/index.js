@@ -4,6 +4,7 @@ const { registerCalendar } = require('./calendar');
 const { registerBookings } = require('./bookings');
 const { registerHousekeeping } = require('./housekeeping');
 const { registerFinance } = require('./finance');
+const { getRenderer } = require('../../lib/viewRenderer');
 const { setNoIndex } = require('../../middlewares/security');
 const { serverRender } = require('../../middlewares/telemetry');
 const {
@@ -241,151 +242,22 @@ module.exports = function registerBackoffice(app, context) {
 
   const { UPLOAD_ROOT, UPLOAD_UNITS, UPLOAD_BRANDING } = paths || {};
 
-  const breadcrumbsTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'breadcrumbs.ejs');
-  let breadcrumbsTemplate = '';
-  try {
-    breadcrumbsTemplate = fs.readFileSync(breadcrumbsTemplatePath, 'utf8');
-  } catch (err) {
-    breadcrumbsTemplate = '';
-  }
-
-  const modalTemplatePath = path.join(__dirname, '..', '..', 'views', 'partials', 'modal.ejs');
-  let modalTemplate = '';
-  try {
-    modalTemplate = fs.readFileSync(modalTemplatePath, 'utf8');
-  } catch (err) {
-    modalTemplate = '';
-  }
-
-  const viewsRoot = path.join(__dirname, '..', '..', 'views');
-  const templateCache = new Map();
+  const breadcrumbsTemplateRenderer = getRenderer('partials/breadcrumbs.ejs');
+  const modalTemplateRenderer = getRenderer('partials/modal.ejs');
+  const navigationTemplateRenderer = getRenderer('partials/navigation.ejs');
+  const dashboardTemplateRenderer = getRenderer('backoffice/dashboard.ejs');
+  const tableTemplateRenderer = getRenderer('partials/table.ejs');
+  const propertiesTemplateRenderer = getRenderer('admin/properties.ejs');
+  const unitsTemplateRenderer = getRenderer('admin/units.ejs');
+  const usersTemplateRenderer = getRenderer('admin/users.ejs');
+  const extrasTemplateRenderer = getRenderer('backoffice/finance/extras.ejs');
+  const uxApiTemplateRenderer = getRenderer('backoffice/ux-api.ejs');
+  const helpTemplateRenderer = getRenderer('backoffice/help.ejs');
 
   function sanitizeId(value, fallback) {
     const safe = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
     return safe || fallback;
   }
-
-  function compileEjsTemplate(template) {
-    if (!template) return null;
-    const matcher = /<%([=-]?)([\s\S]+?)%>/g;
-    let index = 0;
-    let source = "let __output = '';\n";
-    source += 'const __append = value => { __output += value == null ? "" : String(value); };\n';
-    source += 'with (locals || {}) {\n';
-    let match;
-    while ((match = matcher.exec(template)) !== null) {
-      const text = template.slice(index, match.index);
-      if (text) {
-        const escapedText = text
-          .replace(/\\/g, '\\\\')
-          .replace(/`/g, '\\`')
-          .replace(/\$\{/g, '\\${');
-        source += `__output += \`${escapedText}\`;\n`;
-      }
-      const indicator = match[1];
-      const code = match[2];
-      if (indicator === '=') {
-        source += `__append(${code.trim()});\n`;
-      } else if (indicator === '-') {
-        source += `__output += (${code.trim()}) ?? '';\n`;
-      } else {
-        source += `${code}\n`;
-      }
-      index = match.index + match[0].length;
-    }
-    const tail = template.slice(index);
-    if (tail) {
-      const escapedTail = tail
-        .replace(/\\/g, '\\\\')
-        .replace(/`/g, '\\`')
-        .replace(/\$\{/g, '\\${');
-      source += `__output += \`${escapedTail}\`;\n`;
-    }
-    source += '}\nreturn __output;';
-    try {
-      // eslint-disable-next-line no-new-func
-      return new Function('locals', source);
-    } catch (err) {
-      return null;
-    }
-  }
-
-  function resolveIncludePath(fromPath, includeTarget) {
-    if (typeof includeTarget !== 'string' || !includeTarget.trim()) {
-      return null;
-    }
-    let target = includeTarget.trim();
-    if (!path.extname(target)) {
-      target += '.ejs';
-    }
-    if (path.isAbsolute(target)) {
-      const relative = target.replace(/^\/+/, '');
-      return path.join(viewsRoot, relative);
-    }
-    return path.resolve(path.dirname(fromPath), target);
-  }
-
-  function loadTemplateRenderer(templatePath) {
-    if (!templatePath) return null;
-    if (templateCache.has(templatePath)) {
-      return templateCache.get(templatePath);
-    }
-    let template = '';
-    try {
-      template = fs.readFileSync(templatePath, 'utf8');
-    } catch (err) {
-      templateCache.set(templatePath, null);
-      return null;
-    }
-    const compiled = compileEjsTemplate(template);
-    if (!compiled) {
-      templateCache.set(templatePath, null);
-      return null;
-    }
-    const renderer = (locals = {}) => {
-      const context = { ...locals };
-      context.include = (includeTarget, includeLocals = {}) => {
-        const resolvedPath = resolveIncludePath(templatePath, includeTarget);
-        if (!resolvedPath) return '';
-        const partialRenderer = loadTemplateRenderer(resolvedPath);
-        if (typeof partialRenderer !== 'function') return '';
-        const childContext = { ...context, ...includeLocals };
-        delete childContext.include;
-        return partialRenderer(childContext);
-      };
-      return compiled(context);
-    };
-    templateCache.set(templatePath, renderer);
-    return renderer;
-  }
-
-  const navigationTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'partials', 'navigation.ejs')
-  );
-  const dashboardTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'backoffice', 'dashboard.ejs')
-  );
-  const tableTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'partials', 'table.ejs')
-  );
-  const propertiesTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'admin', 'properties.ejs')
-  );
-  const unitsTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'admin', 'units.ejs')
-  );
-  const usersTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'admin', 'users.ejs')
-  );
-  const extrasTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'backoffice', 'finance', 'extras.ejs')
-  );
-  const uxApiTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'backoffice', 'ux-api.ejs')
-  );
-  const helpTemplateRenderer = loadTemplateRenderer(
-    path.join(viewsRoot, 'backoffice', 'help.ejs')
-  );
 
   function renderNavigation(activeNav, req, res) {
     if (!navigationTemplateRenderer) return '';
@@ -651,18 +523,23 @@ module.exports = function registerBackoffice(app, context) {
   }
 
   function renderModalShell({ id, title, body = '', closeLabel = 'Fechar', extraRootAttr = '' }) {
-    if (!modalTemplate) return '';
+    if (!modalTemplateRenderer) return '';
     const modalId = sanitizeId(id, 'modal');
-    const labelId = `${modalId}-title`;
-    const replacements = [
-      ['__ID__', modalId],
-      ['__LABEL_ID__', sanitizeId(labelId, `${modalId}-label`)],
-      ['__TITLE__', esc(title || 'Detalhes')],
-      ['__BODY__', body || ''],
-      ['__CLOSE_LABEL__', esc(closeLabel || 'Fechar')],
-      ['__ROOT_ATTR__', extraRootAttr ? String(extraRootAttr) : '']
-    ];
-    return replacements.reduce((output, [token, value]) => output.split(token).join(value), modalTemplate);
+    const labelId = sanitizeId(`${modalId}-title`, `${modalId}-label`);
+    try {
+      return modalTemplateRenderer({
+        id: modalId,
+        labelId,
+        title: title || 'Detalhes',
+        body: body || '',
+        closeLabel: closeLabel || 'Fechar',
+        rootAttr: extraRootAttr ? String(extraRootAttr) : '',
+        esc
+      });
+    } catch (err) {
+      console.warn('Falha ao renderizar modal:', err.message);
+      return '';
+    }
   }
 
   function isFlagEnabled(flagName) {
@@ -684,7 +561,7 @@ module.exports = function registerBackoffice(app, context) {
   function renderBreadcrumbs(trail) {
     if (!isFlagEnabled('FEATURE_BREADCRUMBS')) return '';
     if (!Array.isArray(trail) || trail.length === 0) return '';
-    if (!breadcrumbsTemplate) return '';
+    if (!breadcrumbsTemplateRenderer) return '';
     const items = trail
       .map((item, index) => {
         if (!item || !item.label) return '';
@@ -698,7 +575,12 @@ module.exports = function registerBackoffice(app, context) {
       .filter(Boolean)
       .join('');
     if (!items) return '';
-    return breadcrumbsTemplate.replace('<!--BREADCRUMB_ITEMS-->', items);
+    try {
+      return breadcrumbsTemplateRenderer({ itemsHtml: items });
+    } catch (err) {
+      console.warn('Falha ao renderizar breadcrumbs:', err.message);
+      return '';
+    }
   }
 
   const FEATURE_PRESET_OPTIONS_HTML = FEATURE_PRESETS.map(

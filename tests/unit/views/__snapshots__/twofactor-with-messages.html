@@ -1,0 +1,53 @@
+
+<div class="auth-wrapper">
+<div class="auth-card card">
+<div class="auth-branding">
+<div class="auth-logo">
+
+<span class="auth-logo__initials">GA</span>
+
+</div>
+<h1 class="auth-title">auth.twofactor.title</h1>
+<p class="auth-subtitle">auth.twofactor.description</p>
+</div>
+
+
+<div class="auth-alert auth-alert--success" role="status">Tudo certo</div>
+
+
+<div class="auth-alert auth-alert--error" role="alert">Código inválido</div>
+
+
+<form class="auth-form" method="post" action="/login/2fa">
+<input type="hidden" name="_csrf" value="token-456" />
+<div class="auth-field">
+<label class="auth-label" for="tfa-code">auth.twofactor.codeLabel</label>
+<div class="auth-input">
+<span class="auth-input__icon">[object Promise]</span>
+<input
+id="tfa-code"
+class="auth-input__field"
+name="code"
+placeholder="auth.placeholder.twoFactor"
+inputmode="numeric"
+pattern="[0-9]*"
+autocomplete="one-time-code"
+required
+autofocus
+/>
+</div>
+</div>
+<button class="btn btn-primary auth-submit" type="submit">auth.twofactor.submit</button>
+</form>
+
+<form class="auth-form auth-form--secondary" method="post" action="/login/2fa/resend">
+<input type="hidden" name="_csrf" value="token-456" />
+<button class="btn btn-light auth-submit" type="submit">auth.twofactor.resend</button>
+</form>
+
+<form class="auth-form auth-form--secondary" method="post" action="/login/2fa/cancel">
+<input type="hidden" name="_csrf" value="token-456" />
+<button class="btn btn-light auth-submit" type="submit">actions.cancel</button>
+</form>
+</div>
+</div>

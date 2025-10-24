@@ -1,0 +1,13 @@
+{
+  "name": "ejs",
+  "version": "3.1.10",
+  "description": "Embedded JavaScript templates",
+  "main": "lib/ejs.js",
+  "type": "commonjs",
+  "license": "Apache-2.0",
+  "keywords": ["template", "engine", "ejs"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mde/ejs.git"
+  }
+}
