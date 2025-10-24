@@ -1,4 +1,10 @@
 const { AsyncLocalStorage } = require('async_hooks');
+const {
+  defaultTheme: defaultColorTheme,
+  createTheme: createColorTheme,
+  THEME_KEYS: THEME_COLOR_KEYS,
+  normalizeThemeOverrides
+} = require('../src/theme/colors');
 
 function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, logger, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
   // ===================== DB =====================
@@ -1114,6 +1120,15 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     return `#${clamp(r).toString(16).padStart(2, '0')}${clamp(g).toString(16).padStart(2, '0')}${clamp(b).toString(16).padStart(2, '0')}`;
   }
 
+  function hexToRgba(hex, alpha = 1) {
+    const rgb = hexToRgb(hex);
+    if (!rgb) {
+      return `rgba(0, 0, 0, ${Math.max(0, Math.min(1, Number(alpha) || 0))})`;
+    }
+    const normalizedAlpha = Math.max(0, Math.min(1, Number(alpha)));
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${Number.isFinite(normalizedAlpha) ? normalizedAlpha : 1})`;
+  }
+
   function mixColors(hexA, hexB, ratio) {
     const a = hexToRgb(hexA);
     const b = hexToRgb(hexB);
@@ -1130,7 +1145,20 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const rgb = hexToRgb(hex);
     if (!rgb) return '#ffffff';
     const luminance = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
-    return luminance > 0.6 ? '#0f172a' : '#ffffff';
+    return luminance > 0.6 ? defaultColorTheme.textPrimary : '#ffffff';
+  }
+
+  function sanitizeThemePalette(raw = {}) {
+    if (!raw || typeof raw !== 'object') return {};
+    const palette = {};
+    THEME_COLOR_KEYS.forEach(key => {
+      if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
+      const normalized = normalizeHexColor(raw[key], null);
+      if (normalized) {
+        palette[key] = normalized;
+      }
+    });
+    return palette;
   }
 
   function sanitizeBrandingTheme(raw = {}) {
@@ -1167,6 +1195,12 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     if (raw.highlightColor !== undefined) {
       const highlight = normalizeHexColor(raw.highlightColor, null);
       if (highlight) cleaned.highlightColor = highlight;
+    }
+    if (raw.palette !== undefined) {
+      const palette = sanitizeThemePalette(raw.palette);
+      if (Object.keys(palette).length) {
+        cleaned.palette = palette;
+      }
     }
     if (raw.cornerStyle !== undefined) {
       const style = String(raw.cornerStyle || '').toLowerCase();
@@ -1239,11 +1273,12 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     brandName: 'Gestor de Alojamentos',
     brandInitials: 'GA',
     tagline: 'Reservas com confiança e profissionalismo.',
-    primaryColor: '#2563eb',
-    secondaryColor: '#1d4ed8',
-    highlightColor: '#f97316',
-    mode: 'quick',
-    cornerStyle: 'rounded'
+    mode: 'manual',
+    cornerStyle: 'rounded',
+    palette: { ...defaultColorTheme },
+    primaryColor: defaultColorTheme.primary,
+    secondaryColor: defaultColorTheme.primaryDark,
+    highlightColor: defaultColorTheme.accent
   };
 
   let brandingStore = sanitizeBrandingStore(readAutomationState('branding'));
@@ -1265,24 +1300,50 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     const tagline = merged.tagline || BRANDING_THEME_DEFAULT.tagline;
     const mode = merged.mode === 'manual' ? 'manual' : 'quick';
 
-    const primaryColor = merged.primaryColor || BRANDING_THEME_DEFAULT.primaryColor;
-    const secondaryColor = mode === 'manual'
-      ? (merged.secondaryColor || BRANDING_THEME_DEFAULT.secondaryColor)
-      : mixColors(primaryColor, '#1f2937', 0.18);
-    const highlightColor = mode === 'manual'
-      ? (merged.highlightColor || BRANDING_THEME_DEFAULT.highlightColor)
-      : mixColors(primaryColor, '#f97316', 0.35);
+    let paletteOverrides = normalizeThemeOverrides({
+      ...(BRANDING_THEME_DEFAULT.palette || {}),
+      ...(merged.palette || {})
+    });
 
-    const primaryContrast = contrastColor(primaryColor);
-    const primaryHover = mixColors(primaryColor, '#000000', 0.18);
-    const primarySoft = mixColors(primaryColor, '#ffffff', 0.82);
-    const surface = mixColors(primaryColor, '#ffffff', 0.94);
-    const surfaceBorder = mixColors(primaryColor, '#1f2937', 0.12);
-    const surfaceRing = mixColors(primaryColor, '#60a5fa', 0.35);
-    const surfaceContrast = contrastColor(surface);
-    const background = mixColors(primaryColor, '#ffffff', 0.97);
-    const mutedText = mixColors(primaryColor, '#475569', 0.35);
-    const gradientFrom = secondaryColor;
+    if (merged.primaryColor) {
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ primary: merged.primaryColor })
+      };
+    }
+    if (merged.secondaryColor) {
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ primaryDark: merged.secondaryColor })
+      };
+    }
+    if (merged.highlightColor) {
+      paletteOverrides = {
+        ...paletteOverrides,
+        ...normalizeThemeOverrides({ accent: merged.highlightColor })
+      };
+    }
+
+    const palette = createColorTheme(paletteOverrides);
+
+    const primaryColor = palette.primary;
+    const secondaryColor = palette.primaryDark || mixColors(primaryColor, '#000000', 0.2);
+    const highlightColor = palette.accent;
+    const accentDark = palette.accentDark || mixColors(highlightColor, '#000000', 0.25);
+
+    const primaryContrast = palette.textOnPrimary || contrastColor(primaryColor);
+    const primaryHover = mode === 'manual'
+      ? secondaryColor
+      : mixColors(primaryColor, secondaryColor, 0.35);
+    const primarySoft = mixColors(primaryColor, palette.surface || '#ffffff', 0.55);
+    const surface = palette.surface;
+    const surfaceBorder = mixColors(surface, palette.textPrimary || defaultColorTheme.textPrimary, 0.18);
+    const surfaceRing = mixColors(primaryColor, surface, 0.35);
+    const surfaceContrast = palette.textPrimary || contrastColor(surface);
+    const background = palette.background;
+    const backgroundContrast = palette.textOnBackground || contrastColor(background);
+    const mutedText = mixColors(surfaceContrast, background, 0.32);
+    const gradientFrom = accentDark;
     const gradientTo = primaryColor;
 
     const cornerStyle = merged.cornerStyle === 'square' ? 'square' : 'rounded';
@@ -1312,6 +1373,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       surfaceRing,
       surfaceContrast,
       background,
+      backgroundContrast,
       mutedText,
       gradientFrom,
       gradientTo,
@@ -1324,7 +1386,11 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       logoHidden,
       logoFile,
       logoAlt,
-      logoPath
+      logoPath,
+      palette,
+      textPrimary: surfaceContrast,
+      textOnPrimary: primaryContrast,
+      textOnBackground: backgroundContrast
     };
   }
 
@@ -2348,6 +2414,45 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       : resolveSupportedLanguageOptions();
     const theme = branding || getBranding();
     const baseTheme = computeBrandingTheme(BRANDING_THEME_DEFAULT);
+    const basePalette = createColorTheme(normalizeThemeOverrides(baseTheme.palette || {}));
+    const defaultThemeTokens = {
+      primary: basePalette.primary,
+      primaryDark: basePalette.primaryDark,
+      accent: basePalette.accent,
+      accentDark: basePalette.accentDark,
+      background: basePalette.background,
+      surface: basePalette.surface,
+      textPrimary: baseTheme.textPrimary || basePalette.textPrimary,
+      textOnPrimary: baseTheme.textOnPrimary || basePalette.textOnPrimary,
+      textOnBackground: baseTheme.textOnBackground || basePalette.textOnBackground
+    };
+    const toRgbString = (hex) => {
+      const rgb = hexToRgb(hex);
+      if (!rgb) return '0, 0, 0';
+      return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+    };
+    const defaultThemeRgbTokens = {
+      primary: toRgbString(defaultThemeTokens.primary),
+      primaryDark: toRgbString(defaultThemeTokens.primaryDark),
+      accent: toRgbString(defaultThemeTokens.accent),
+      accentDark: toRgbString(defaultThemeTokens.accentDark),
+      background: toRgbString(defaultThemeTokens.background),
+      surface: toRgbString(defaultThemeTokens.surface),
+      textPrimary: toRgbString(defaultThemeTokens.textPrimary),
+      textOnPrimary: toRgbString(defaultThemeTokens.textOnPrimary),
+      textOnBackground: toRgbString(defaultThemeTokens.textOnBackground)
+    };
+    const themeBootstrap = JSON.stringify(defaultThemeTokens).replace(/</g, '\\u003C');
+    const themeBootstrapRgb = JSON.stringify(defaultThemeRgbTokens).replace(/</g, '\\u003C');
+    const themeKeysLiteral = JSON.stringify(THEME_COLOR_KEYS).replace(/</g, '\\u003C');
+    const brandPrimaryLight = mixColors(defaultThemeTokens.primary, '#ffffff', 0.25);
+    const brandPrimaryTint = mixColors(defaultThemeTokens.primary, defaultThemeTokens.surface, 0.35);
+    const brandAccentStrong = mixColors(defaultThemeTokens.accentDark, defaultThemeTokens.accent, 0.3);
+    const brandAccentMuted = mixColors(defaultThemeTokens.accent, defaultThemeTokens.surface, 0.5);
+    const brandAccentText = mixColors(defaultThemeTokens.accentDark, defaultThemeTokens.surface, 0.35);
+    const brandSurfaceSoft = mixColors(defaultThemeTokens.surface, '#ffffff', 0.18);
+    const brandSurfaceTint = mixColors(defaultThemeTokens.surface, defaultThemeTokens.background, 0.35);
+    const brandSurfaceBorderStrong = mixColors(defaultThemeTokens.surface, defaultThemeTokens.primary, 0.22);
     const pageTitle = title ? `${title} · ${theme.brandName}` : theme.brandName;
     const hasUser = !!user;
     const navClass = (key) => `nav-link${activeNav === key ? ' active' : ''}`;
@@ -2639,20 +2744,270 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             }
           })(window, document);
         </script>
+        <script>
+          (function (w, d) {
+            if (!w || !d) return;
+            var STORAGE_KEY = 'ga.theme.tokens';
+            var DEFAULT_THEME = ${themeBootstrap};
+            var DEFAULT_RGB = ${themeBootstrapRgb};
+            var VALID_KEYS = ${themeKeysLiteral};
+            var listeners = [];
+
+            function normalizeHex(value) {
+              if (typeof value !== 'string') return null;
+              var match = value.trim().match(/^#?([0-9a-f]{6})$/i);
+              return match ? '#' + match[1].toUpperCase() : null;
+            }
+
+            function sanitize(overrides) {
+              var clean = {};
+              if (!overrides || typeof overrides !== 'object') return clean;
+              VALID_KEYS.forEach(function (key) {
+                var normalized = normalizeHex(overrides[key]);
+                if (normalized) {
+                  clean[key] = normalized;
+                }
+              });
+              return clean;
+            }
+
+            function createTheme(overrides) {
+              var base = Object.assign({}, DEFAULT_THEME);
+              var clean = sanitize(overrides);
+              Object.keys(clean).forEach(function (key) {
+                base[key] = clean[key];
+              });
+              return base;
+            }
+
+            function hexToRgb(hex) {
+              var normalized = normalizeHex(hex);
+              if (!normalized) return null;
+              var value = normalized.slice(1);
+              return {
+                r: parseInt(value.slice(0, 2), 16),
+                g: parseInt(value.slice(2, 4), 16),
+                b: parseInt(value.slice(4, 6), 16)
+              };
+            }
+
+            function rgbString(hex) {
+              var rgb = hexToRgb(hex);
+              return rgb ? rgb.r + ', ' + rgb.g + ', ' + rgb.b : '0, 0, 0';
+            }
+
+            function mix(colorA, colorB, ratio) {
+              var rgbA = hexToRgb(colorA);
+              var rgbB = hexToRgb(colorB);
+              if (!rgbA || !rgbB) return colorA;
+              var t = Math.max(0, Math.min(1, Number(ratio)));
+              var r = Math.round(rgbA.r * (1 - t) + rgbB.r * t);
+              var g = Math.round(rgbA.g * (1 - t) + rgbB.g * t);
+              var b = Math.round(rgbA.b * (1 - t) + rgbB.b * t);
+              return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+            }
+
+            function ensureCss(theme) {
+              var doc = d.documentElement;
+              if (!doc || !doc.style) return;
+              var style = doc.style;
+              var rgb = {
+                primary: rgbString(theme.primary),
+                primaryDark: rgbString(theme.primaryDark),
+                accent: rgbString(theme.accent),
+                accentDark: rgbString(theme.accentDark),
+                background: rgbString(theme.background),
+                surface: rgbString(theme.surface),
+                textPrimary: rgbString(theme.textPrimary),
+                textOnPrimary: rgbString(theme.textOnPrimary),
+                textOnBackground: rgbString(theme.textOnBackground)
+              };
+
+              style.setProperty('--color-primary', theme.primary || DEFAULT_THEME.primary);
+              style.setProperty('--color-primary-rgb', rgb.primary || DEFAULT_RGB.primary);
+              style.setProperty('--color-primary-dark', theme.primaryDark || DEFAULT_THEME.primaryDark);
+              style.setProperty('--color-primary-dark-rgb', rgb.primaryDark || DEFAULT_RGB.primaryDark);
+              style.setProperty('--color-accent', theme.accent || DEFAULT_THEME.accent);
+              style.setProperty('--color-accent-rgb', rgb.accent || DEFAULT_RGB.accent);
+              style.setProperty('--color-accent-dark', theme.accentDark || DEFAULT_THEME.accentDark);
+              style.setProperty('--color-accent-dark-rgb', rgb.accentDark || DEFAULT_RGB.accentDark);
+              style.setProperty('--color-background', theme.background || DEFAULT_THEME.background);
+              style.setProperty('--color-background-rgb', rgb.background || DEFAULT_RGB.background);
+              style.setProperty('--color-surface', theme.surface || DEFAULT_THEME.surface);
+              style.setProperty('--color-surface-rgb', rgb.surface || DEFAULT_RGB.surface);
+              style.setProperty('--color-text-primary', theme.textPrimary || DEFAULT_THEME.textPrimary);
+              style.setProperty('--color-text-on-primary', theme.textOnPrimary || DEFAULT_THEME.textOnPrimary);
+              style.setProperty('--color-text-on-background', theme.textOnBackground || DEFAULT_THEME.textOnBackground);
+              style.setProperty('--color-text-primary-rgb', rgb.textPrimary || DEFAULT_RGB.textPrimary);
+              style.setProperty('--color-text-on-primary-rgb', rgb.textOnPrimary || DEFAULT_RGB.textOnPrimary);
+              style.setProperty('--color-text-on-background-rgb', rgb.textOnBackground || DEFAULT_RGB.textOnBackground);
+
+              var primary = theme.primary || DEFAULT_THEME.primary;
+              var primaryDark = theme.primaryDark || DEFAULT_THEME.primaryDark;
+              var accent = theme.accent || DEFAULT_THEME.accent;
+              var accentDark = theme.accentDark || DEFAULT_THEME.accentDark;
+              var surface = theme.surface || DEFAULT_THEME.surface;
+              var background = theme.background || DEFAULT_THEME.background;
+              var textPrimary = theme.textPrimary || DEFAULT_THEME.textPrimary;
+              var textOnPrimary = theme.textOnPrimary || DEFAULT_THEME.textOnPrimary;
+
+              style.setProperty('--brand-primary', primary);
+              style.setProperty('--brand-primary-rgb', rgb.primary || DEFAULT_RGB.primary);
+              style.setProperty('--brand-primary-contrast', textOnPrimary);
+              style.setProperty('--brand-primary-hover', mix(primary, primaryDark, 0.4));
+              style.setProperty('--brand-primary-soft', mix(primary, surface, 0.55));
+              style.setProperty('--brand-primary-light', mix(primary, '#ffffff', 0.25));
+              style.setProperty('--brand-primary-tint', mix(primary, surface, 0.35));
+              style.setProperty('--brand-secondary', primaryDark);
+              style.setProperty('--brand-highlight', accent);
+              style.setProperty('--brand-accent', accent);
+              style.setProperty('--brand-accent-strong', mix(accentDark, accent, 0.3));
+              style.setProperty('--brand-accent-muted', mix(accent, surface, 0.5));
+              style.setProperty('--brand-accent-text', mix(accentDark, surface, 0.35));
+              style.setProperty('--brand-surface', surface);
+              style.setProperty('--brand-surface-rgb', rgb.surface || DEFAULT_RGB.surface);
+              style.setProperty('--brand-surface-soft', mix(surface, '#ffffff', 0.18));
+              style.setProperty('--brand-surface-tint', mix(surface, background, 0.35));
+              style.setProperty('--brand-surface-border', mix(surface, textPrimary, 0.18));
+              style.setProperty('--brand-surface-border-strong', mix(surface, primary, 0.22));
+              style.setProperty('--brand-surface-ring', mix(primary, surface, 0.35));
+              style.setProperty('--brand-surface-contrast', textPrimary);
+              style.setProperty('--brand-background', background);
+              style.setProperty('--brand-muted', mix(textPrimary, background, 0.32));
+            }
+
+            function loadOverrides() {
+              try {
+                if (!w.localStorage) return {};
+                var raw = w.localStorage.getItem(STORAGE_KEY);
+                if (!raw) return {};
+                var parsed = JSON.parse(raw);
+                return sanitize(parsed);
+              } catch (err) {
+                return {};
+              }
+            }
+
+            function persist(overrides) {
+              try {
+                if (!w.localStorage) return;
+                w.localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides || {}));
+              } catch (err) {
+                // ignore storage errors
+              }
+            }
+
+            function notify(theme) {
+              listeners.slice().forEach(function (listener) {
+                try {
+                  listener(Object.assign({}, theme));
+                } catch (err) {
+                  // ignore listener errors
+                }
+              });
+            }
+
+            var storedOverrides = loadOverrides();
+            var activeTheme = createTheme(storedOverrides);
+            ensureCss(activeTheme);
+
+            w.ThemeManager = {
+              defaultTheme: function () {
+                return createTheme({});
+              },
+              getTheme: function () {
+                return Object.assign({}, activeTheme);
+              },
+              getOverrides: function () {
+                return Object.assign({}, storedOverrides);
+              },
+              apply: function (updates, options) {
+                var clean = sanitize(updates);
+                var merged = Object.assign({}, storedOverrides, clean);
+                activeTheme = createTheme(merged);
+                ensureCss(activeTheme);
+                if (!options || options.persist !== false) {
+                  storedOverrides = merged;
+                  persist(storedOverrides);
+                }
+                notify(activeTheme);
+                return Object.assign({}, activeTheme);
+              },
+              replace: function (nextOverrides, options) {
+                var clean = sanitize(nextOverrides);
+                var merged = Object.assign({}, clean);
+                activeTheme = createTheme(merged);
+                ensureCss(activeTheme);
+                if (!options || options.persist !== false) {
+                  storedOverrides = merged;
+                  persist(storedOverrides);
+                }
+                notify(activeTheme);
+                return Object.assign({}, activeTheme);
+              },
+              reset: function () {
+                storedOverrides = {};
+                persist(storedOverrides);
+                activeTheme = createTheme(storedOverrides);
+                ensureCss(activeTheme);
+                notify(activeTheme);
+                return Object.assign({}, activeTheme);
+              },
+              subscribe: function (listener) {
+                if (typeof listener !== 'function') return function () {};
+                listeners.push(listener);
+                return function () {
+                  listeners = listeners.filter(function (fn) {
+                    return fn !== listener;
+                  });
+                };
+              }
+            };
+          })(window, document);
+        </script>
         <script defer src="/public/js/i18n.js"></script>
         <link rel="stylesheet" href="/public/css/themes.css" />
         <link rel="stylesheet" href="/public/css/style.css" />
         <link rel="stylesheet" href="/css/responsive.css" />
         <style>
           :root{
-            --brand-primary:${baseTheme.primaryColor};
+            --color-primary:${defaultThemeTokens.primary};
+            --color-primary-rgb:${defaultThemeRgbTokens.primary};
+            --color-primary-dark:${defaultThemeTokens.primaryDark};
+            --color-primary-dark-rgb:${defaultThemeRgbTokens.primaryDark};
+            --color-accent:${defaultThemeTokens.accent};
+            --color-accent-rgb:${defaultThemeRgbTokens.accent};
+            --color-accent-dark:${defaultThemeTokens.accentDark};
+            --color-accent-dark-rgb:${defaultThemeRgbTokens.accentDark};
+            --color-background:${defaultThemeTokens.background};
+            --color-background-rgb:${defaultThemeRgbTokens.background};
+            --color-surface:${defaultThemeTokens.surface};
+            --color-surface-rgb:${defaultThemeRgbTokens.surface};
+            --color-text-primary:${defaultThemeTokens.textPrimary};
+            --color-text-on-primary:${defaultThemeTokens.textOnPrimary};
+            --color-text-on-background:${defaultThemeTokens.textOnBackground};
+            --color-text-primary-rgb:${defaultThemeRgbTokens.textPrimary};
+            --color-text-on-primary-rgb:${defaultThemeRgbTokens.textOnPrimary};
+            --color-text-on-background-rgb:${defaultThemeRgbTokens.textOnBackground};
+            --brand-primary:var(--color-primary);
+            --brand-primary-rgb:${defaultThemeRgbTokens.primary};
             --brand-primary-contrast:${baseTheme.primaryContrast};
             --brand-primary-hover:${baseTheme.primaryHover};
             --brand-primary-soft:${baseTheme.primarySoft};
+            --brand-primary-light:${brandPrimaryLight};
+            --brand-primary-tint:${brandPrimaryTint};
             --brand-secondary:${baseTheme.secondaryColor};
             --brand-highlight:${baseTheme.highlightColor};
+            --brand-accent:${baseTheme.highlightColor};
+            --brand-accent-strong:${brandAccentStrong};
+            --brand-accent-muted:${brandAccentMuted};
+            --brand-accent-text:${brandAccentText};
             --brand-surface:${baseTheme.surface};
+            --brand-surface-rgb:${defaultThemeRgbTokens.surface};
+            --brand-surface-soft:${brandSurfaceSoft};
+            --brand-surface-tint:${brandSurfaceTint};
             --brand-surface-border:${baseTheme.surfaceBorder};
+            --brand-surface-border-strong:${brandSurfaceBorderStrong};
             --brand-surface-ring:${baseTheme.surfaceRing};
             --brand-surface-contrast:${baseTheme.surfaceContrast};
             --brand-background:${baseTheme.background};
@@ -2664,7 +3019,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           }
           .input{box-sizing:border-box;width:100%;min-width:0;display:block;padding:.65rem .9rem;border-radius:.75rem;border:1px solid #cbd5e1;background:#fff;font-size:.95rem;line-height:1.5rem;transition:box-shadow .15s ease,border-color .15s ease;}
           .input::placeholder{color:#94a3b8;opacity:1;}
-          .input:focus{outline:none;border-color:#f97316;box-shadow:0 0 0 3px rgba(249,115,22,.18);}
+          .input:focus{outline:none;border-color:var(--brand-primary);box-shadow:0 0 0 3px rgba(var(--color-primary-rgb), 0.18);}
           textarea.input{min-height:120px;}
           select.input{appearance:none;background-image:url('data:image/svg+xml;utf8,<svg fill="none" stroke="%2394a3b8" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6"/></svg>');background-repeat:no-repeat;background-size:18px;background-position:right 14px center;padding-right:2.5rem;}
           .btn{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;padding:.6rem 1rem;border-radius:.9rem;font-weight:600;text-decoration:none;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease;}
@@ -2676,46 +3031,46 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .btn-compact{padding:.4rem .75rem;border-radius:999px;font-size:.8rem;}
           .btn[disabled]{opacity:.5;cursor:not-allowed;}
           .form-field{display:flex;flex-direction:column;gap:.45rem;}
-          .form-label{font-size:.75rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#fb923c;}
+          .form-label{font-size:.75rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-primary-light);}
           .form-hint{font-size:.75rem;color:#64748b;line-height:1.4;}
           .feature-builder{display:flex;flex-direction:column;gap:.75rem;}
           .feature-builder__controls{display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;}
           .feature-builder__control{display:flex;flex-direction:column;gap:.35rem;min-width:0;}
           .feature-builder__control--select{flex:2 1 220px;}
           .feature-builder__control--detail{flex:1 1 220px;}
-          .feature-builder__control-label{font-size:.7rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#fb923c;}
+          .feature-builder__control-label{font-size:.7rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-primary-light);}
           .feature-builder__icon-picker{position:relative;}
-          .feature-builder__icon-toggle{width:100%;display:flex;align-items:center;gap:.55rem;border-radius:999px;border:1px solid #fed7aa;background:#fff;box-shadow:0 6px 16px rgba(249,115,22,.08);padding:.55rem 1rem;color:#9a3412;font-weight:600;cursor:pointer;}
-          .feature-builder__icon-toggle:focus{outline:none;box-shadow:0 0 0 3px rgba(249,115,22,.25);}
+          .feature-builder__icon-toggle{width:100%;display:flex;align-items:center;gap:.55rem;border-radius:999px;border:1px solid var(--brand-surface-border-strong);background:#fff;box-shadow:0 6px 16px rgba(var(--color-primary-rgb), 0.08);padding:.55rem 1rem;color:var(--brand-accent-text);font-weight:600;cursor:pointer;}
+          .feature-builder__icon-toggle:focus{outline:none;box-shadow:0 0 0 3px rgba(var(--color-primary-rgb), 0.25);}
           .feature-builder__icon-toggle svg{width:18px;height:18px;}
-          .feature-builder__icon-preview{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:#fff7ed;color:#f97316;flex:0 0 36px;}
+          .feature-builder__icon-preview{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:var(--brand-surface-soft);color:var(--brand-primary);flex:0 0 36px;}
           .feature-builder__icon-preview.is-empty{background:#f1f5f9;color:#94a3b8;}
           .feature-builder__icon-text{flex:1;display:flex;flex-direction:column;text-align:left;font-size:.85rem;}
           .feature-builder__icon-placeholder{color:#94a3b8;font-weight:500;}
-          .feature-builder__icon-caret{display:inline-flex;align-items:center;justify-content:center;color:#f97316;}
-          .feature-builder__icon-options{position:absolute;top:calc(100% + .5rem);left:0;z-index:30;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem;padding:.65rem;border-radius:1rem;border:1px solid #fed7aa;background:#fff;box-shadow:0 18px 40px rgba(249,115,22,.15);min-width:240px;}
+          .feature-builder__icon-caret{display:inline-flex;align-items:center;justify-content:center;color:var(--brand-primary);}
+          .feature-builder__icon-options{position:absolute;top:calc(100% + .5rem);left:0;z-index:30;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem;padding:.65rem;border-radius:1rem;border:1px solid var(--brand-surface-border-strong);background:#fff;box-shadow:0 18px 40px rgba(var(--color-primary-rgb), 0.15);min-width:240px;}
           .feature-builder__icon-options[hidden]{display:none;}
-          .feature-builder__icon-option{display:flex;align-items:center;gap:.45rem;border-radius:.75rem;padding:.45rem .6rem;border:1px solid transparent;background:transparent;color:#9a3412;font-weight:600;cursor:pointer;transition:background .15s ease,border-color .15s ease;}
-          .feature-builder__icon-option:hover{background:#fff7ed;}
-          .feature-builder__icon-option.is-active{border-color:#f97316;background:#fff7ed;}
+          .feature-builder__icon-option{display:flex;align-items:center;gap:.45rem;border-radius:.75rem;padding:.45rem .6rem;border:1px solid transparent;background:transparent;color:var(--brand-accent-text);font-weight:600;cursor:pointer;transition:background .15s ease,border-color .15s ease;}
+          .feature-builder__icon-option:hover{background:var(--brand-surface-soft);}
+          .feature-builder__icon-option.is-active{border-color:var(--brand-primary);background:var(--brand-surface-soft);}
           .feature-builder__add{align-self:flex-start;padding:.55rem 1.2rem;border-radius:999px;font-size:.85rem;}
           .feature-builder__list{display:flex;flex-wrap:wrap;gap:.5rem;margin:0;padding:0;list-style:none;}
-          .feature-builder__item{display:inline-flex;align-items:center;gap:.4rem;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:.35rem .7rem;font-size:.8rem;font-weight:600;}
+          .feature-builder__item{display:inline-flex;align-items:center;gap:.4rem;background:var(--brand-surface-soft);color:var(--brand-accent-text);border:1px solid var(--brand-primary-tint);border-radius:999px;padding:.35rem .7rem;font-size:.8rem;font-weight:600;}
           .feature-builder__item--legacy{background:#e2e8f0;color:#334155;border-color:#cbd5e1;}
-          .feature-builder__icon{display:inline-flex;align-items:center;justify-content:center;color:#f97316;}
-          .feature-builder__remove{border:none;background:transparent;color:#ea580c;cursor:pointer;font-size:1rem;line-height:1;padding:0;}
-          .feature-builder__remove:hover{color:#c2410c;}
+          .feature-builder__icon{display:inline-flex;align-items:center;justify-content:center;color:var(--brand-primary);}
+          .feature-builder__remove{border:none;background:transparent;color:var(--brand-primary-hover);cursor:pointer;font-size:1rem;line-height:1;padding:0;}
+          .feature-builder__remove:hover{color:var(--brand-accent-strong);}
           .feature-builder__empty{font-size:.8rem;color:#64748b;}
-          .feature-builder__legend{margin-top:.75rem;border:1px solid #fed7aa;border-radius:1rem;padding:.65rem 1rem;background:#fff5eb;color:#9a3412;}
-          .feature-builder__legend[open]{box-shadow:0 18px 36px rgba(249,115,22,.12);}
+          .feature-builder__legend{margin-top:.75rem;border:1px solid var(--brand-surface-border-strong);border-radius:1rem;padding:.65rem 1rem;background:var(--brand-surface-soft);color:var(--brand-accent-text);}
+          .feature-builder__legend[open]{box-shadow:0 18px 36px rgba(var(--color-primary-rgb), 0.12);}
           .feature-builder__legend summary{list-style:none;cursor:pointer;outline:none;}
           .feature-builder__legend summary::-webkit-details-marker{display:none;}
           .feature-builder__legend-summary{display:inline-flex;align-items:center;gap:.45rem;font-weight:600;}
           .feature-builder__legend-summary svg{width:18px;height:18px;}
           .feature-builder__legend-list{margin:0;padding:.75rem 0 0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;}
           .feature-builder__legend-item{display:flex;align-items:center;gap:.55rem;font-size:.8rem;}
-          .feature-builder__legend-item strong{display:block;font-weight:600;color:#c2410c;}
-          .feature-builder__legend-item small{display:block;color:#9a3412b3;font-size:.72rem;margin-top:.1rem;}
+          .feature-builder__legend-item strong{display:block;font-weight:600;color:var(--brand-accent-strong);}
+          .feature-builder__legend-item small{display:block;color:var(--brand-accent-text)b3;font-size:.72rem;margin-top:.1rem;}
           .card{ background:#fff; border-radius: var(--brand-radius); box-shadow: 0 1px 2px rgba(16,24,40,.05); }
           body.app-body{margin:0;background:var(--bg-color,var(--brand-background));color:var(--text-color,#4b4d59);font-family:'Inter','Segoe UI',sans-serif;}
           .app-shell{min-height:100vh;display:flex;flex-direction:column;}
@@ -2868,7 +3223,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .inline-feedback{border-radius:18px;padding:14px 18px;text-align:left;font-size:.9rem;display:flex;gap:12px;align-items:flex-start;line-height:1.5;}
           .inline-feedback[data-variant="info"]{background:#ecfeff;border:1px solid #67e8f9;color:#155e75;}
           .inline-feedback[data-variant="success"]{background:#ecfdf3;border:1px solid #4ade80;color:#166534;}
-          .inline-feedback[data-variant="warning"]{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;}
+          .inline-feedback[data-variant="warning"]{background:var(--brand-surface-tint);border:1px solid #fcd34d;color:#92400e;}
           .inline-feedback[data-variant="danger"]{background:#fee2e2;border:1px solid #f87171;color:#991b1b;}
           .inline-feedback strong{font-weight:600;}
           .inline-feedback-icon{width:26px;height:26px;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;box-shadow:0 10px 20px rgba(15,23,42,.08);}
@@ -2900,40 +3255,40 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .calendar-toast__dot{width:10px;height:10px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(255,255,255,.6);}
           .calendar-dialog{border:none;border-radius:20px;padding:0;max-width:420px;width:92vw;}
           .calendar-dialog::backdrop{background:rgba(15,23,42,.45);}
-          .page-backoffice{background:#fef9f3;}
+          .page-backoffice{background:var(--brand-surface-tint);}
           .page-backoffice .topbar{background:rgba(255,255,255,.94);}
           .page-backoffice .main-content{max-width:1280px;}
           .page-backoffice .bo-shell{position:relative;display:flex;flex-wrap:nowrap;gap:24px;align-items:flex-start;}
           .page-backoffice .bo-shell.is-collapsed .bo-sidebar{flex:0 0 92px;max-width:92px;}
-          .page-backoffice .bo-sidebar{background:#fff7ed;border:1px solid #fed7aa;border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;flex:0 0 250px;max-width:250px;max-height:calc(100vh - 120px);overflow-x:hidden;overflow-y:auto;box-shadow:0 18px 40px rgba(249,115,22,.12);}
-          .page-backoffice .bo-sidebar:focus{outline:2px solid rgba(249,115,22,.5);outline-offset:4px;}
+          .page-backoffice .bo-sidebar{background:var(--brand-surface-soft);border:1px solid var(--brand-surface-border-strong);border-radius:22px;padding:20px;display:flex;flex-direction:column;gap:16px;position:sticky;top:96px;flex:0 0 250px;max-width:250px;max-height:calc(100vh - 120px);overflow-x:hidden;overflow-y:auto;box-shadow:0 18px 40px rgba(var(--color-primary-rgb), 0.12);}
+          .page-backoffice .bo-sidebar:focus{outline:2px solid rgba(var(--color-primary-rgb), 0.5);outline-offset:4px;}
           .page-backoffice .bo-sidebar__header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-          .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#c2410c;font-weight:600;}
-          .page-backoffice .bo-sidebar__toggle{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;border:1px solid rgba(249,115,22,.45);background:rgba(255,247,237,.9);color:#c2410c;cursor:pointer;transition:all .2s ease;}
-          .page-backoffice .bo-sidebar__toggle:hover{background:#fed7aa;color:#9a3412;}
+          .page-backoffice .bo-sidebar__title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:var(--brand-accent-strong);font-weight:600;}
+          .page-backoffice .bo-sidebar__toggle{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;border:1px solid rgba(var(--color-primary-rgb), 0.45);background:rgba(var(--color-surface-rgb), 0.9);color:var(--brand-accent-strong);cursor:pointer;transition:all .2s ease;}
+          .page-backoffice .bo-sidebar__toggle:hover{background:var(--brand-surface-border-strong);color:var(--brand-accent-text);}
           .page-backoffice .bo-sidebar__toggle-icon{width:20px;height:20px;}
           .page-backoffice .bo-sidebar__toggle-icon--expand,.page-backoffice .bo-sidebar__toggle-icon--close{display:none;}
           .page-backoffice .bo-sidebar__scrim{display:none;}
           .page-backoffice .bo-nav{display:grid;gap:16px;}
           .page-backoffice .bo-nav__section{display:grid;gap:10px;padding:12px 0;border-top:1px solid rgba(251,191,36,.35);}
           .page-backoffice .bo-nav__section:first-child{padding-top:0;border-top:none;}
-          .page-backoffice .bo-nav__section-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:0;border:none;background:transparent;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;cursor:pointer;transition:color .2s ease;}
-          .page-backoffice .bo-nav__section-toggle:hover{color:#9a3412;}
-          .page-backoffice .bo-nav__section-toggle:focus-visible{outline:2px solid rgba(249,115,22,.5);outline-offset:3px;border-radius:12px;}
+          .page-backoffice .bo-nav__section-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:0;border:none;background:transparent;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:var(--brand-accent-muted);cursor:pointer;transition:color .2s ease;}
+          .page-backoffice .bo-nav__section-toggle:hover{color:var(--brand-accent-text);}
+          .page-backoffice .bo-nav__section-toggle:focus-visible{outline:2px solid rgba(var(--color-primary-rgb), 0.5);outline-offset:3px;border-radius:12px;}
           .page-backoffice .bo-nav__section-toggle-icon{width:18px;height:18px;transition:transform .2s ease;}
           .page-backoffice .bo-nav__section-items{display:grid;gap:8px;}
           .page-backoffice .bo-nav__section.is-collapsed .bo-nav__section-items{display:none;}
           .page-backoffice .bo-nav__section.is-collapsed .bo-nav__section-toggle-icon{transform:rotate(-90deg);}
-          .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:#c2410c;cursor:pointer;transition:all .2s ease;}
+          .page-backoffice .bo-tab{display:flex;align-items:center;gap:12px;width:100%;border:none;background:transparent;padding:10px 14px;border-radius:16px;font-size:.95rem;font-weight:600;color:var(--brand-accent-strong);cursor:pointer;transition:all .2s ease;}
           .page-backoffice .bo-tab.bo-tab--compact{gap:8px;}
           .page-backoffice .bo-tab--link{text-decoration:none;}
           .page-backoffice .bo-tab i{color:inherit;}
-          .page-backoffice .bo-tab:hover{background:rgba(253,230,138,.65);color:#9a3412;transform:translateY(-1px);}
-          .page-backoffice .bo-tab.is-active{background:#f97316;color:#fff;box-shadow:0 16px 30px rgba(249,115,22,.28);}
+          .page-backoffice .bo-tab:hover{background:rgba(253,230,138,.65);color:var(--brand-accent-text);transform:translateY(-1px);}
+          .page-backoffice .bo-tab.is-active{background:var(--brand-primary);color:#fff;box-shadow:0 16px 30px rgba(var(--color-primary-rgb), 0.28);}
           .page-backoffice .bo-tab[disabled]{opacity:.45;cursor:not-allowed;}
           .page-backoffice .bo-main{flex:1 1 auto;min-width:0;display:grid;gap:24px;}
-          .page-backoffice .bo-main__menu{display:none;align-items:center;gap:8px;background:#fff7ed;border:1px solid #fed7aa;border-radius:16px;padding:10px 16px;font-weight:600;color:#b45309;cursor:pointer;transition:all .2s ease;}
-          .page-backoffice .bo-main__menu:hover{background:#fed7aa;color:#9a3412;}
+          .page-backoffice .bo-main__menu{display:none;align-items:center;gap:8px;background:var(--brand-surface-soft);border:1px solid var(--brand-surface-border-strong);border-radius:16px;padding:10px 16px;font-weight:600;color:var(--brand-accent-muted);cursor:pointer;transition:all .2s ease;}
+          .page-backoffice .bo-main__menu:hover{background:var(--brand-surface-border-strong);color:var(--brand-accent-text);}
           .page-backoffice .bo-shell.is-collapsed .bo-sidebar{padding:16px 12px;}
           .page-backoffice .bo-shell.is-collapsed .bo-sidebar__title{display:none;}
           .page-backoffice .bo-shell.is-collapsed .bo-nav{gap:12px;}
@@ -2957,31 +3312,31 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice .bo-stack{display:grid;gap:24px;}
           .page-backoffice .bo-stack > *{min-width:0;}
           @media (min-width:720px){.page-backoffice .bo-stack{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));}}
-          .page-backoffice .bo-housekeeping-task{border-radius:22px;border:1px solid rgba(249,115,22,.18);background:#fff;box-shadow:0 16px 32px rgba(249,115,22,.12);padding:18px;display:grid;gap:10px;}
+          .page-backoffice .bo-housekeeping-task{border-radius:22px;border:1px solid rgba(var(--color-primary-rgb), 0.18);background:#fff;box-shadow:0 16px 32px rgba(var(--color-primary-rgb), 0.12);padding:18px;display:grid;gap:10px;}
           .page-backoffice .bo-housekeeping-task.is-highlighted{border-color:#fb7185;background:rgba(254,226,226,.6);box-shadow:0 20px 44px rgba(248,113,113,.18);}
           .page-backoffice .bo-housekeeping-task__header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;}
           .page-backoffice .bo-housekeeping-task__status{display:flex;flex-direction:column;gap:8px;text-align:right;}
-          .page-backoffice .bo-housekeeping-task__meta{display:flex;flex-wrap:wrap;gap:8px;font-size:.75rem;color:#b45309;}
+          .page-backoffice .bo-housekeeping-task__meta{display:flex;flex-wrap:wrap;gap:8px;font-size:.75rem;color:var(--brand-accent-muted);}
           .page-backoffice .bo-housekeeping-task__actions{display:flex;flex-wrap:wrap;gap:10px;padding-top:6px;}
-          .page-backoffice .bo-housekeeping-booking{border-radius:20px;padding:16px;border:1px solid rgba(249,115,22,.16);background:#fff;box-shadow:0 14px 28px rgba(249,115,22,.12);display:grid;gap:6px;}
+          .page-backoffice .bo-housekeeping-booking{border-radius:20px;padding:16px;border:1px solid rgba(var(--color-primary-rgb), 0.16);background:#fff;box-shadow:0 14px 28px rgba(var(--color-primary-rgb), 0.12);display:grid;gap:6px;}
           .page-backoffice .bo-housekeeping-booking--checkout{border-color:#fb7185;background:rgba(254,226,226,.55);}
           .page-backoffice .bo-housekeeping-booking--checkin{border-color:#38bdf8;background:rgba(224,242,254,.6);}
-          .page-backoffice .bo-housekeeping-booking--backlog{border-color:#facc15;background:rgba(254,243,199,.6);}
-          .page-backoffice .bo-header{background:#fff7ed;border:1px solid #fed7aa;border-radius:26px;padding:28px;display:flex;flex-direction:column;gap:8px;}
-          .page-backoffice .bo-header h1{margin:0;font-size:1.9rem;color:#9a3412;}
-          .page-backoffice .bo-header p{margin:0;color:#b45309;}
+          .page-backoffice .bo-housekeeping-booking--backlog{border-color:#facc15;background:rgba(var(--color-surface-rgb), 0.6);}
+          .page-backoffice .bo-header{background:var(--brand-surface-soft);border:1px solid var(--brand-surface-border-strong);border-radius:26px;padding:28px;display:flex;flex-direction:column;gap:8px;}
+          .page-backoffice .bo-header h1{margin:0;font-size:1.9rem;color:var(--brand-accent-text);}
+          .page-backoffice .bo-header p{margin:0;color:var(--brand-accent-muted);}
           .page-backoffice .bo-pane{display:none;gap:24px;}
           .page-backoffice .bo-pane.is-active{display:grid;gap:24px;}
           .page-backoffice .bo-pane > *{min-width:0;}
           @media (min-width:720px){.page-backoffice .bo-pane.is-active{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));}}
           .page-backoffice .bo-pane--split{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px;}
           .page-backoffice .bo-span-all{grid-column:1 / -1;}
-          .page-backoffice .bo-card{background:#fff;border-radius:26px;border:1px solid rgba(249,115,22,.18);padding:24px;box-shadow:0 20px 38px rgba(249,115,22,.1);}
-          .page-backoffice .bo-card h2{margin-top:0;color:#9a3412;font-size:1.1rem;}
-          .page-backoffice .bo-card .input{border-radius:14px;border-color:#fed7aa;}
-          .page-backoffice .bo-card .btn-primary{background:#f97316;border:none;box-shadow:0 10px 25px rgba(249,115,22,.25);}
-          .page-backoffice .bo-card .btn-primary:hover{background:#ea580c;}
-          .page-backoffice .bo-card table th{background:#fff7ed;}
+          .page-backoffice .bo-card{background:#fff;border-radius:26px;border:1px solid rgba(var(--color-primary-rgb), 0.18);padding:24px;box-shadow:0 20px 38px rgba(var(--color-primary-rgb), 0.1);}
+          .page-backoffice .bo-card h2{margin-top:0;color:var(--brand-accent-text);font-size:1.1rem;}
+          .page-backoffice .bo-card .input{border-radius:14px;border-color:var(--brand-surface-border-strong);}
+          .page-backoffice .bo-card .btn-primary{background:var(--brand-primary);border:none;box-shadow:0 10px 25px rgba(var(--color-primary-rgb), 0.25);}
+          .page-backoffice .bo-card .btn-primary:hover{background:var(--brand-primary-hover);}
+          .page-backoffice .bo-card table th{background:var(--brand-surface-soft);}
           .page-backoffice .bo-pane__columns{display:grid;gap:24px;}
           .page-backoffice .bo-pane__columns > *{min-width:0;}
           @media (min-width:720px){.page-backoffice .bo-pane__columns{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));}}
@@ -2992,14 +3347,14 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice .bo-property-units{margin:.25rem 0 0;padding:0;list-style:none;display:grid;gap:.35rem;}
           .page-backoffice .bo-property-units__item{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem;min-width:0;}
           .page-backoffice .bo-property-unit-name{flex:1 1 140px;min-width:0;word-break:break-word;}
-          .page-backoffice .bo-property-unit-price{flex:0 0 auto;font-weight:600;color:#b45309;white-space:nowrap;}
+          .page-backoffice .bo-property-unit-price{flex:0 0 auto;font-weight:600;color:var(--brand-accent-muted);white-space:nowrap;}
           @media (max-width:600px){
             .page-backoffice .bo-property-unit-price{white-space:normal;}
           }
           .page-backoffice .bo-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;}
-          .page-backoffice .bo-metric{background:#fff7ed;border:1px solid #fed7aa;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
-          .page-backoffice .bo-metric strong{font-size:1.4rem;color:#9a3412;}
-          .page-backoffice .bo-metric span{font-size:.8rem;color:#b45309;}
+          .page-backoffice .bo-metric{background:var(--brand-surface-soft);border:1px solid var(--brand-surface-border-strong);border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:6px;}
+          .page-backoffice .bo-metric strong{font-size:1.4rem;color:var(--brand-accent-text);}
+          .page-backoffice .bo-metric span{font-size:.8rem;color:var(--brand-accent-muted);}
           .page-backoffice .bo-channel-layout{display:grid;gap:24px;align-items:start;}
           .page-backoffice .bo-channel-stack{display:grid;gap:24px;align-content:start;}
           @media (min-width:900px){.page-backoffice .bo-channel-layout{grid-template-columns:repeat(2,minmax(0,1fr));}}
@@ -3020,49 +3375,49 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice .bo-channel-upload-legend{margin:0;padding:0;list-style:none;display:grid;gap:10px;}
           .page-backoffice .bo-calendar-filters{padding:0;overflow:hidden;}
           .page-backoffice .bo-calendar-filters__details{display:block;}
-          .page-backoffice .bo-calendar-filters__summary{list-style:none;margin:0;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:600;font-size:.95rem;color:#9a3412;border-bottom:1px solid rgba(249,115,22,.18);}
-          .page-backoffice .bo-calendar-filters__summary:focus-visible{outline:2px solid rgba(249,115,22,.4);outline-offset:4px;}
+          .page-backoffice .bo-calendar-filters__summary{list-style:none;margin:0;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:600;font-size:.95rem;color:var(--brand-accent-text);border-bottom:1px solid rgba(var(--color-primary-rgb), 0.18);}
+          .page-backoffice .bo-calendar-filters__summary:focus-visible{outline:2px solid rgba(var(--color-primary-rgb), 0.4);outline-offset:4px;}
           .page-backoffice .bo-calendar-filters__summary::-webkit-details-marker{display:none;}
           .page-backoffice .bo-calendar-filters__summary-label{display:inline-flex;align-items:center;gap:10px;}
-          .page-backoffice .bo-calendar-filters__summary-label i{color:#f97316;}
-          .page-backoffice .bo-calendar-filters__summary-hint{font-size:.78rem;font-weight:500;color:#b45309;}
-          .page-backoffice .bo-calendar-filters__summary::after{content:'\25BC';font-size:.8rem;color:#b45309;transition:transform .18s ease;}
+          .page-backoffice .bo-calendar-filters__summary-label i{color:var(--brand-primary);}
+          .page-backoffice .bo-calendar-filters__summary-hint{font-size:.78rem;font-weight:500;color:var(--brand-accent-muted);}
+          .page-backoffice .bo-calendar-filters__summary::after{content:'\25BC';font-size:.8rem;color:var(--brand-accent-muted);transition:transform .18s ease;}
           .page-backoffice .bo-calendar-filters__details[open] .bo-calendar-filters__summary::after{transform:rotate(180deg);}
           .page-backoffice .bo-calendar-filters__body{display:none;padding:20px 26px 26px;gap:18px;}
           .page-backoffice .bo-calendar-filters__details[open] .bo-calendar-filters__body{display:grid;}
           .page-backoffice .bo-calendar-filters__form{display:grid;gap:18px;}
           .page-backoffice .bo-field{display:grid;gap:8px;}
-          .page-backoffice .bo-field label{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:#b45309;}
+          .page-backoffice .bo-field label{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-date-range{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));}
           .page-backoffice .bo-calendar-filters .input{border-radius:16px;}
-          .page-backoffice .bo-form-hint{font-size:.72rem;color:#b45309;opacity:.8;margin:0;}
+          .page-backoffice .bo-form-hint{font-size:.72rem;color:var(--brand-accent-muted);opacity:.8;margin:0;}
           .page-backoffice .bo-calendar-filters__actions{display:flex;flex-wrap:wrap;gap:12px;}
           .page-backoffice .bo-calendar-filters__actions .btn{flex:1 1 140px;justify-content:center;}
           .page-backoffice .bo-calendar-board{display:grid;gap:24px;}
           .page-backoffice .bo-calendar-grid-wrapper{position:relative;overflow-x:auto;overflow-y:hidden;padding:0 6px 12px;border-radius:30px;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}
           .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar{height:8px;}
-          .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-thumb{background:rgba(249,115,22,.35);border-radius:999px;}
-          .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-track{background:rgba(254,243,199,.65);border-radius:999px;}
-          .page-backoffice .bo-calendar-grid-viewport{position:relative;min-width:max(100%,980px);border-radius:28px;background:#fff;border:1px solid rgba(249,115,22,.2);box-shadow:0 24px 46px rgba(249,115,22,.12);overflow:hidden;}
+          .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-thumb{background:rgba(var(--color-primary-rgb), 0.35);border-radius:999px;}
+          .page-backoffice .bo-calendar-grid-wrapper::-webkit-scrollbar-track{background:rgba(var(--color-surface-rgb), 0.65);border-radius:999px;}
+          .page-backoffice .bo-calendar-grid-viewport{position:relative;min-width:max(100%,980px);border-radius:28px;background:#fff;border:1px solid rgba(var(--color-primary-rgb), 0.2);box-shadow:0 24px 46px rgba(var(--color-primary-rgb), 0.12);overflow:hidden;}
           .page-backoffice .bo-calendar-mobile{display:none;}
-          .page-backoffice .bo-calendar-mobile__legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:#b45309;}
-          .page-backoffice .bo-calendar-mobile__legend-item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;}
+          .page-backoffice .bo-calendar-mobile__legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.75rem;color:var(--brand-accent-muted);}
+          .page-backoffice .bo-calendar-mobile__legend-item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--brand-surface-soft);border:1px solid rgba(var(--color-primary-rgb), 0.22);font-weight:600;}
           .page-backoffice .bo-calendar-mobile__legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
           .page-backoffice .bo-calendar-mobile__legend-dot--confirmed{background:#fb7185;}
           .page-backoffice .bo-calendar-mobile__legend-dot--pending{background:#facc15;}
           .page-backoffice .bo-calendar-mobile__legend-dot--blocked{background:#38bdf8;}
-          .page-backoffice .bo-calendar-mobile__overview{display:grid;gap:14px;padding:18px;border-radius:24px;background:#fff;border:1px solid rgba(249,115,22,.18);box-shadow:0 18px 34px rgba(249,115,22,.12);}
+          .page-backoffice .bo-calendar-mobile__overview{display:grid;gap:14px;padding:18px;border-radius:24px;background:#fff;border:1px solid rgba(var(--color-primary-rgb), 0.18);box-shadow:0 18px 34px rgba(var(--color-primary-rgb), 0.12);}
           .page-backoffice .bo-calendar-mobile__overview-header{display:grid;gap:4px;}
-          .page-backoffice .bo-calendar-mobile__overview-title{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
-          .page-backoffice .bo-calendar-mobile__overview-hint{margin:0;font-size:.75rem;color:#b45309;}
+          .page-backoffice .bo-calendar-mobile__overview-title{margin:0;font-size:.95rem;font-weight:700;color:var(--brand-accent-text);}
+          .page-backoffice .bo-calendar-mobile__overview-hint{margin:0;font-size:.75rem;color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-mobile__overview-grid{display:grid;gap:10px;}
-          .page-backoffice .bo-calendar-mobile__overview-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(120px,1fr) minmax(150px,1.1fr) minmax(90px,.7fr);align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid rgba(249,115,22,.14);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 10px 22px rgba(249,115,22,.12);transition:transform .16s ease,box-shadow .16s ease;}
-          .page-backoffice .bo-calendar-mobile__overview-row:hover{transform:translateY(-1px);box-shadow:0 16px 28px rgba(249,115,22,.18);}
-          .page-backoffice .bo-calendar-mobile__overview-row--head{background:#fff;border:1px solid rgba(249,115,22,.16);box-shadow:none;padding:10px 14px;}
-          .page-backoffice .bo-calendar-mobile__overview-row--head span{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:#b45309;}
+          .page-backoffice .bo-calendar-mobile__overview-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(120px,1fr) minmax(150px,1.1fr) minmax(90px,.7fr);align-items:center;gap:10px;padding:12px 14px;border-radius:18px;border:1px solid rgba(var(--color-primary-rgb), 0.14);background:var(--brand-surface-soft);text-decoration:none;color:var(--brand-accent-text);box-shadow:0 10px 22px rgba(var(--color-primary-rgb), 0.12);transition:transform .16s ease,box-shadow .16s ease;}
+          .page-backoffice .bo-calendar-mobile__overview-row:hover{transform:translateY(-1px);box-shadow:0 16px 28px rgba(var(--color-primary-rgb), 0.18);}
+          .page-backoffice .bo-calendar-mobile__overview-row--head{background:#fff;border:1px solid rgba(var(--color-primary-rgb), 0.16);box-shadow:none;padding:10px 14px;}
+          .page-backoffice .bo-calendar-mobile__overview-row--head span{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-mobile__overview-row > span{display:block;font-size:.78rem;line-height:1.35;}
-          .page-backoffice .bo-calendar-mobile__overview-unit{font-weight:600;color:#9a3412;}
-          .page-backoffice .bo-calendar-mobile__overview-guest{color:#9a3412;font-weight:500;}
+          .page-backoffice .bo-calendar-mobile__overview-unit{font-weight:600;color:var(--brand-accent-text);}
+          .page-backoffice .bo-calendar-mobile__overview-guest{color:var(--brand-accent-text);font-weight:500;}
           .page-backoffice .bo-calendar-mobile__overview-dates{color:inherit;font-size:.74rem;opacity:.85;}
           .page-backoffice .bo-calendar-mobile__overview-status{justify-self:start;font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:6px 12px;border-radius:999px;background:rgba(148,163,184,.22);color:#334155;}
           .page-backoffice .bo-calendar-mobile__overview-row.is-confirmed{border-color:rgba(16,185,129,.45);background:rgba(16,185,129,.12);color:#047857;}
@@ -3071,67 +3426,67 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           .page-backoffice .bo-calendar-mobile__overview-row.is-pending .bo-calendar-mobile__overview-status{background:rgba(250,204,21,.24);color:#92400e;}
           .page-backoffice .bo-calendar-mobile__overview-row.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
           .page-backoffice .bo-calendar-mobile__overview-row.is-blocked .bo-calendar-mobile__overview-status{background:rgba(148,163,184,.28);color:#1f2937;}
-          .page-backoffice .bo-calendar-mobile__overview-empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed rgba(249,115,22,.35);background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
+          .page-backoffice .bo-calendar-mobile__overview-empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed rgba(var(--color-primary-rgb), 0.35);background:rgba(var(--color-surface-rgb), 0.55);text-align:center;font-size:.78rem;color:var(--brand-accent-muted);font-weight:500;}
           .page-backoffice .bo-calendar-mobile__preview{display:grid;gap:16px;}
-          .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(249,115,22,.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(249,115,22,.12);}
+          .page-backoffice .bo-calendar-mobile__unit{background:#fff;border-radius:24px;border:1px solid rgba(var(--color-primary-rgb), 0.2);padding:18px;display:grid;gap:16px;box-shadow:0 18px 34px rgba(var(--color-primary-rgb), 0.12);}
           .page-backoffice .bo-calendar-mobile__unit-header{display:flex;flex-direction:column;gap:6px;}
-          .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.95rem;font-weight:700;color:#9a3412;}
-          .page-backoffice .bo-calendar-mobile__unit-property{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#b45309;}
+          .page-backoffice .bo-calendar-mobile__unit-name{margin:0;font-size:.95rem;font-weight:700;color:var(--brand-accent-text);}
+          .page-backoffice .bo-calendar-mobile__unit-property{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-mobile__list{display:grid;gap:12px;}
-          .page-backoffice .bo-calendar-mobile__booking{display:grid;gap:6px;padding:14px 16px;border-radius:18px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;text-decoration:none;color:#9a3412;box-shadow:0 12px 26px rgba(249,115,22,.14);transition:transform .16s ease,box-shadow .16s ease;}
-          .page-backoffice .bo-calendar-mobile__booking:hover{transform:translateY(-2px);box-shadow:0 18px 32px rgba(249,115,22,.2);}
+          .page-backoffice .bo-calendar-mobile__booking{display:grid;gap:6px;padding:14px 16px;border-radius:18px;border:1px solid rgba(var(--color-primary-rgb), 0.18);background:var(--brand-surface-soft);text-decoration:none;color:var(--brand-accent-text);box-shadow:0 12px 26px rgba(var(--color-primary-rgb), 0.14);transition:transform .16s ease,box-shadow .16s ease;}
+          .page-backoffice .bo-calendar-mobile__booking:hover{transform:translateY(-2px);box-shadow:0 18px 32px rgba(var(--color-primary-rgb), 0.2);}
           .page-backoffice .bo-calendar-mobile__booking.is-confirmed{border-color:#10b981;background:rgba(16,185,129,.18);}
           .page-backoffice .bo-calendar-mobile__booking.is-pending{border-color:#facc15;background:rgba(250,204,21,.22);color:#92400e;}
           .page-backoffice .bo-calendar-mobile__booking.is-blocked{border-color:rgba(148,163,184,.5);background:rgba(148,163,184,.18);color:#334155;}
           .page-backoffice .bo-calendar-mobile__booking-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
-          .page-backoffice .bo-calendar-mobile__guest{font-weight:600;color:#9a3412;font-size:.9rem;}
+          .page-backoffice .bo-calendar-mobile__guest{font-weight:600;color:var(--brand-accent-text);font-size:.9rem;}
           .page-backoffice .bo-calendar-mobile__badge{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
           .page-backoffice .bo-calendar-mobile__badge.is-confirmed{background:rgba(16,185,129,.18);color:#047857;}
           .page-backoffice .bo-calendar-mobile__badge.is-pending{background:rgba(250,204,21,.24);color:#92400e;}
           .page-backoffice .bo-calendar-mobile__badge.is-blocked{background:rgba(148,163,184,.28);color:#1f2937;}
           .page-backoffice .bo-calendar-mobile__booking-meta{font-size:.78rem;color:inherit;opacity:.85;line-height:1.35;}
-          .page-backoffice .bo-calendar-mobile__empty{padding:14px;border-radius:16px;background:rgba(254,243,199,.55);text-align:center;font-size:.78rem;color:#b45309;font-weight:500;}
+          .page-backoffice .bo-calendar-mobile__empty{padding:14px;border-radius:16px;background:rgba(var(--color-surface-rgb), 0.55);text-align:center;font-size:.78rem;color:var(--brand-accent-muted);font-weight:500;}
           .page-backoffice .bo-calendar-toolbar{display:flex;flex-direction:column;gap:18px;}
           .page-backoffice .bo-calendar-monthnav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
           .page-backoffice .bo-calendar-monthnav .btn{padding:.5rem 1.2rem;font-size:.8rem;}
-          .page-backoffice .bo-calendar-monthlabel{font-size:.9rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9a3412;}
+          .page-backoffice .bo-calendar-monthlabel{font-size:.9rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--brand-accent-text);}
           .page-backoffice .bo-calendar-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;}
           .page-backoffice .bo-calendar-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.75rem;}
-          .page-backoffice .bo-calendar-legend__item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#fff7ed;border:1px solid rgba(249,115,22,.22);font-weight:600;color:#b45309;}
+          .page-backoffice .bo-calendar-legend__item{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--brand-surface-soft);border:1px solid rgba(var(--color-primary-rgb), 0.22);font-weight:600;color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-legend__item--confirmed{background:rgba(16,185,129,.18);border-color:rgba(16,185,129,.45);color:#065f46;}
           .page-backoffice .bo-calendar-legend__item--pending{background:rgba(250,204,21,.24);border-color:rgba(250,204,21,.45);color:#92400e;}
           .page-backoffice .bo-calendar-actions .btn{flex-shrink:0;}
-          .page-backoffice .bo-calendar-hint{margin:0;color:#b45309;font-size:.75rem;font-weight:600;}
+          .page-backoffice .bo-calendar-hint{margin:0;color:var(--brand-accent-muted);font-size:.75rem;font-weight:600;}
           .page-backoffice .bo-dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
           .page-backoffice .bo-dot--confirmed{background:#10b981;}
           .page-backoffice .bo-dot--pending{background:#facc15;}
           .page-backoffice .bo-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(140px,1fr));width:max(100%,980px);background:#fff;}
-          .page-backoffice .bo-calendar-grid__day{padding:14px 10px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:#b45309;background:#fff7ed;border-right:1px solid rgba(249,115,22,.18);border-bottom:1px solid rgba(249,115,22,.18);}
+          .page-backoffice .bo-calendar-grid__day{padding:14px 10px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:var(--brand-accent-muted);background:var(--brand-surface-soft);border-right:1px solid rgba(var(--color-primary-rgb), 0.18);border-bottom:1px solid rgba(var(--color-primary-rgb), 0.18);}
           .page-backoffice .bo-calendar-grid__day:nth-child(7n){border-right:none;}
-          .page-backoffice .bo-calendar-grid__cell{min-height:200px;padding:18px;border-right:1px solid rgba(249,115,22,.14);border-bottom:1px solid rgba(249,115,22,.14);display:flex;flex-direction:column;gap:14px;background:#fff;position:relative;}
+          .page-backoffice .bo-calendar-grid__cell{min-height:200px;padding:18px;border-right:1px solid rgba(var(--color-primary-rgb), 0.14);border-bottom:1px solid rgba(var(--color-primary-rgb), 0.14);display:flex;flex-direction:column;gap:14px;background:#fff;position:relative;}
           .page-backoffice .bo-calendar-grid__cell.is-column-end{border-right:none;}
-          .page-backoffice .bo-calendar-grid__cell.is-out{background:rgba(254,243,199,.4);color:#b45309;}
+          .page-backoffice .bo-calendar-grid__cell.is-out{background:rgba(var(--color-surface-rgb), 0.4);color:var(--brand-accent-muted);}
           .page-backoffice .bo-calendar-grid__cell.is-today::after{content:'Hoje';position:absolute;top:16px;right:18px;background:#ecfdf5;color:#047857;font-size:.62rem;font-weight:700;letter-spacing:.1em;padding:4px 10px;border-radius:999px;text-transform:uppercase;}
-          .page-backoffice .bo-calendar-grid__cell.is-drop-target{box-shadow:inset 0 0 0 2px rgba(249,115,22,.45);}
-          .page-backoffice .bo-calendar-day{font-size:.82rem;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.08em;}
+          .page-backoffice .bo-calendar-grid__cell.is-drop-target{box-shadow:inset 0 0 0 2px rgba(var(--color-primary-rgb), 0.45);}
+          .page-backoffice .bo-calendar-day{font-size:.82rem;font-weight:700;color:var(--brand-accent-text);text-transform:uppercase;letter-spacing:.08em;}
           .page-backoffice .bo-calendar-cell-body{display:grid;gap:12px;}
-          .page-backoffice .bo-calendar-empty{font-size:.78rem;color:#b45309;font-style:italic;}
-          .page-backoffice .bo-calendar-empty-state{padding:40px;border-radius:24px;background:rgba(254,243,199,.5);text-align:center;font-size:.85rem;color:#b45309;font-weight:500;}
-          .page-backoffice .bo-calendar-entry{display:grid;gap:8px;padding:14px 16px;border-radius:20px;border:1px solid rgba(249,115,22,.18);background:#fff7ed;box-shadow:0 12px 28px rgba(249,115,22,.14);text-decoration:none;color:inherit;transition:transform .16s ease,box-shadow .16s ease;line-height:1.35;align-content:start;}
-          .page-backoffice .bo-calendar-entry:hover{transform:translateY(-2px);box-shadow:0 18px 34px rgba(249,115,22,.22);}
+          .page-backoffice .bo-calendar-empty{font-size:.78rem;color:var(--brand-accent-muted);font-style:italic;}
+          .page-backoffice .bo-calendar-empty-state{padding:40px;border-radius:24px;background:rgba(var(--color-surface-rgb), 0.5);text-align:center;font-size:.85rem;color:var(--brand-accent-muted);font-weight:500;}
+          .page-backoffice .bo-calendar-entry{display:grid;gap:8px;padding:14px 16px;border-radius:20px;border:1px solid rgba(var(--color-primary-rgb), 0.18);background:var(--brand-surface-soft);box-shadow:0 12px 28px rgba(var(--color-primary-rgb), 0.14);text-decoration:none;color:inherit;transition:transform .16s ease,box-shadow .16s ease;line-height:1.35;align-content:start;}
+          .page-backoffice .bo-calendar-entry:hover{transform:translateY(-2px);box-shadow:0 18px 34px rgba(var(--color-primary-rgb), 0.22);}
           .page-backoffice .bo-calendar-entry.is-dragging{opacity:.65;}
           .page-backoffice .bo-calendar-entry.is-saving{opacity:.45;pointer-events:none;cursor:progress;}
           .page-backoffice .bo-calendar-entry__header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
-          .page-backoffice .bo-calendar-entry__guest{font-weight:600;color:#9a3412;font-size:.95rem;flex:1;min-width:0;word-break:break-word;white-space:normal;}
+          .page-backoffice .bo-calendar-entry__guest{font-weight:600;color:var(--brand-accent-text);font-size:.95rem;flex:1;min-width:0;word-break:break-word;white-space:normal;}
           .page-backoffice .bo-calendar-entry__status{font-size:.65rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;margin-left:auto;align-self:flex-start;}
           .page-backoffice .bo-calendar-entry__status--confirmed{background:rgba(16,185,129,.18);color:#047857;}
           .page-backoffice .bo-calendar-entry__status--pending{background:rgba(251,191,36,.25);color:#92400e;}
           .page-backoffice .bo-calendar-entry__status--default{background:rgba(148,163,184,.32);color:#334155;}
-          .page-backoffice .bo-calendar-entry__meta{display:grid;gap:4px;font-size:.8rem;color:#b45309;line-height:1.35;}
+          .page-backoffice .bo-calendar-entry__meta{display:grid;gap:4px;font-size:.8rem;color:var(--brand-accent-muted);line-height:1.35;}
           .page-backoffice .bo-calendar-entry__meta > *{word-break:break-word;white-space:normal;}
           .page-backoffice .bo-calendar-entry__dates{font-size:.78rem;color:#a16207;}
           .page-backoffice .bo-calendar-entry__nights{font-size:.74rem;color:#7c2d12;}
-          .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:#b45309;text-transform:uppercase;letter-spacing:.1em;}
+          .page-backoffice .bo-calendar-entry__agency{font-size:.68rem;color:var(--brand-accent-muted);text-transform:uppercase;letter-spacing:.1em;}
           @media (max-width:1360px){.page-backoffice .bo-calendar-grid-wrapper{padding:0 4px 12px;}}
           @media (max-width:1280px){.page-backoffice .bo-calendar-grid-viewport{min-width:max(100%,880px);}.page-backoffice .bo-calendar-grid{grid-template-columns:repeat(7,minmax(120px,1fr));width:max(100%,880px);}}
           @media (max-width:1180px){.page-backoffice .bo-calendar-grid-viewport{min-width:max(100%,820px);}.page-backoffice .bo-calendar-grid{grid-template-columns:repeat(7,minmax(110px,1fr));width:max(100%,820px);}.page-backoffice .bo-calendar-entry{padding:12px 14px;}.page-backoffice .bo-calendar-entry__guest{font-size:.9rem;}}
@@ -3163,16 +3518,16 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
           }
           .page-backoffice .bo-table{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
           .page-backoffice .bo-table table{min-width:640px;border-collapse:collapse;}
-          .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(254,243,199,.45);}
-          .page-backoffice .bo-empty{color:#c2410c;font-size:.85rem;}
-          .page-backoffice .bo-subtitle{font-size:.9rem;color:#b45309;margin:0 0 16px;}
+          .page-backoffice .bo-table tbody tr:nth-child(odd){background:rgba(var(--color-surface-rgb), 0.45);}
+          .page-backoffice .bo-empty{color:var(--brand-accent-strong);font-size:.85rem;}
+          .page-backoffice .bo-subtitle{font-size:.9rem;color:var(--brand-accent-muted);margin:0 0 16px;}
           .page-backoffice .bo-property-card{display:flex;flex-direction:column;gap:12px;}
           .page-backoffice .bo-property-card__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
           .page-backoffice .bo-property-card__title{min-width:0;flex:1 1 auto;}
           .page-backoffice .bo-property-card__name{font-weight:600;color:#1f2937;font-size:.95rem;}
-          .page-backoffice .bo-property-card__location{font-size:.75rem;color:#b45309;margin-top:.1rem;}
+          .page-backoffice .bo-property-card__location{font-size:.75rem;color:var(--brand-accent-muted);margin-top:.1rem;}
           .page-backoffice .bo-property-card__cta{flex-shrink:0;white-space:nowrap;}
-          .page-backoffice .bo-property-card__meta{display:flex;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:#b45309;}
+          .page-backoffice .bo-property-card__meta{display:flex;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--brand-accent-muted);}
           .page-backoffice .bo-property-card__meta-item{display:inline-flex;align-items:center;padding:.25rem .55rem;border-radius:999px;background:rgba(253,230,138,.45);}
           @media (max-width:640px){
             .page-backoffice .bo-property-card__header{flex-direction:column;align-items:flex-start;gap:10px;}
@@ -3184,7 +3539,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
             .page-backoffice .bo-property-card__meta{font-size:.72rem;}
             .page-backoffice .bo-property-card__meta-item{padding:.2rem .45rem;}
           }
-          .page-backoffice .bo-pane .responsive-table tbody tr{border-color:rgba(249,115,22,.18);}
+          .page-backoffice .bo-pane .responsive-table tbody tr{border-color:rgba(var(--color-primary-rgb), 0.18);}
           @media (max-width:720px){.page-backoffice .bo-pane{grid-template-columns:1fr;}.page-backoffice .bo-card{padding:20px;}}
           @media (max-width:640px){.page-backoffice .bo-card{padding:18px;border-radius:22px;}}
           @media (max-width:480px){.page-backoffice .bo-card{padding:16px;border-radius:20px;}}
