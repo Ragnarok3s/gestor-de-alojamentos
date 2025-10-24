@@ -15,6 +15,7 @@ const registerInternalTelemetry = require('../modules/internal/telemetry');
 const registerAccountModule = require('../modules/account');
 const registerTenantAdminModule = require('../modules/admin/tenants');
 const registerPaymentsModule = registerTenantAdminModule;
+const registerThemeSettings = require('../modules/settings/ThemeSettings');
 const { createCsrfProtection } = require('../security/csrf');
 const { initServices } = require('../services');
 const { loadConfig } = require('../config');
@@ -86,7 +87,8 @@ function createApp(options = {}) {
       registerOwnersPortal,
       registerInternalTelemetry,
       registerBackoffice,
-      registerTenantAdminModule
+      registerTenantAdminModule,
+      registerThemeSettings
     };
 
   registerRoutes({
