@@ -1,0 +1,56 @@
+
+<div class="auth-wrapper">
+<div class="auth-card card">
+<div class="auth-branding">
+<div class="auth-logo">
+
+<span class="auth-logo__initials">GA</span>
+
+</div>
+<h1 class="auth-title">auth.reset.title</h1>
+<p class="auth-subtitle">auth.reset.stepEmail</p>
+</div>
+
+<div class="auth-stepper">
+<div class="auth-step is-active">
+<span class="auth-step__number">1</span>
+<span class="auth-step__label">auth.reset.stepEmail</span>
+</div>
+<div class="auth-step ">
+<span class="auth-step__number">2</span>
+<span class="auth-step__label">auth.reset.stepPassword</span>
+</div>
+</div>
+
+
+<div class="auth-alert auth-alert--success" role="status">Verifique o seu email</div>
+
+
+
+
+<form class="auth-form" method="post" action="/login/reset">
+<input type="hidden" name="_csrf" value="token-req" />
+<div class="auth-field">
+<label class="auth-label" for="reset-email">Email</label>
+<div class="auth-input">
+<span class="auth-input__icon">[object Promise]</span>
+<input
+id="reset-email"
+class="auth-input__field"
+type="email"
+name="email"
+placeholder="auth.reset.stepEmail"
+autocomplete="email"
+required
+autofocus
+/>
+</div>
+</div>
+<button class="btn btn-primary auth-submit" type="submit">auth.reset.submitEmail</button>
+</form>
+<div class="auth-links">
+<a href="/login">auth.reset.backToLogin</a>
+</div>
+
+</div>
+</div>

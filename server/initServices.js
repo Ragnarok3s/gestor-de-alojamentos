@@ -1,9 +1,14 @@
 const { AsyncLocalStorage } = require('async_hooks');
 
-function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, logger, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
+function initServices({ express, dayjs, bcrypt, crypto, fs, fsp, path, multer, ExcelJS, sharp, SKIP_SERVER_BOOT, logger, featureFlags, isFeatureEnabled, createDatabase, tableHasColumn, createTenantService, createSessionService, createTwoFactorService, createRateRuleService, createRatePlanService, createChannelIntegrationService, createChannelContentService, createChannelSync, createOtaDispatcher, createOverbookingGuard, createAutomationEngine, emailAction, notifyAction, xlsxAppendAction, createHousekeepingTaskAction, priceOverrideAction, logActivityAction, createDecisionAssistant, applyRateRules, createTelemetry, createPaymentService, createGuestPortalService, createEmailTemplateService, createI18nService, createMessageTemplateService, createReviewRequestService, createMailer, createBookingEmailer, buildUserNotifications, geocodeAddress, secureCookies, databasePath, MASTER_ROLE, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMISSIONS}) {
+  const appMiddleware = [];
+  const appRoutes = [];
   // ===================== DB =====================
   const log = logger || console;
-  const db = createDatabase(process.env.DATABASE_PATH || 'booking_engine.db');
+  const cleanupTasks = [];
+  const scheduledTimeouts = new Set();
+  let shuttingDown = false;
+  const db = createDatabase(databasePath || 'booking_engine.db');
   const tenantService = createTenantService({ db });
   const hasBookingsUpdatedAt = tableHasColumn(db, 'bookings', 'updated_at');
   const hasBlocksUpdatedAt = tableHasColumn(db, 'blocks', 'updated_at');
@@ -1003,7 +1008,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   }
 
   uploadGuards.forEach(guardConfig => {
-    app.use('/uploads', buildUploadGuard(guardConfig));
+    appMiddleware.push({ path: '/uploads', handler: buildUploadGuard(guardConfig) });
   });
 
   const storage = multer.diskStorage({
@@ -1068,7 +1073,7 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       cb(allowed.has(ext) ? null : new Error('Formato de ficheiro não suportado'), allowed.has(ext));
     }
   });
-  app.use('/uploads', express.static(UPLOAD_ROOT, { fallthrough: false }));
+  appMiddleware.push({ path: '/uploads', handler: express.static(UPLOAD_ROOT, { fallthrough: false }) });
 
   async function compressImage(filePath) {
     if (!sharp) return;
@@ -1615,49 +1620,61 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     return supportedLanguages.map(code => ({ code, label: i18n.getLanguageLabel(code) || code.toUpperCase() }));
   }
 
-  app.use((req, res, next) => {
-    requestContext.run({ req, res }, next);
-  });
-
-  app.use((req, res, next) => {
-    const language = resolveRequestLanguage(req);
-    const translator = i18n.createTranslator(language, { fallbackLanguage: defaultLanguage });
-    res.locals.language = language;
-    res.locals.languageLabel = i18n.getLanguageLabel(language) || language.toUpperCase();
-    res.locals.supportedLanguages = supportedLanguages.map(code => ({
-      code,
-      label: i18n.getLanguageLabel(code) || code.toUpperCase()
-    }));
-    res.locals.t = translator;
-    req.language = language;
-    req.t = translator;
-    next();
-  });
-
-  app.post('/i18n/set-language', (req, res) => {
-    const requested = (req.body && (req.body.language || req.body.lang)) || (req.query && (req.query.language || req.query.lang));
-    const language = i18n.normalizeLanguage(requested);
-    if (!language || !supportedLanguageSet.has(language)) {
-      return res.status(400).json({ ok: false, error: 'language_unsupported' });
+  appMiddleware.push({
+    handler: (req, res, next) => {
+      requestContext.run({ req, res }, next);
     }
+  });
+
+  appMiddleware.push({
+    handler: (req, res, next) => {
+      const language = resolveRequestLanguage(req);
+      const translator = i18n.createTranslator(language, { fallbackLanguage: defaultLanguage });
+      res.locals.language = language;
+      res.locals.languageLabel = i18n.getLanguageLabel(language) || language.toUpperCase();
+      res.locals.supportedLanguages = supportedLanguages.map(code => ({
+        code,
+        label: i18n.getLanguageLabel(code) || code.toUpperCase()
+      }));
+      res.locals.t = translator;
+      req.language = language;
+      req.t = translator;
+      next();
+    }
+  });
+
+  appRoutes.push({
+    method: 'post',
+    path: '/i18n/set-language',
+    handler: (req, res) => {
+      const requested = (req.body && (req.body.language || req.body.lang)) || (req.query && (req.query.language || req.query.lang));
+      const language = i18n.normalizeLanguage(requested);
+      if (!language || !supportedLanguageSet.has(language)) {
+        return res.status(400).json({ ok: false, error: 'language_unsupported' });
+      }
     res.cookie(LANGUAGE_COOKIE, language, {
       maxAge: LANGUAGE_COOKIE_MAX_AGE,
       sameSite: 'lax',
       httpOnly: false,
       secure: !!secureCookies
     });
-    return res.json({ ok: true, language, label: i18n.getLanguageLabel(language) || language.toUpperCase() });
+      return res.json({ ok: true, language, label: i18n.getLanguageLabel(language) || language.toUpperCase() });
+    }
   });
 
-  app.get('/i18n/:lang.json', (req, res) => {
-    const language = i18n.normalizeLanguage(req.params.lang);
-    if (!language || !supportedLanguageSet.has(language)) {
-      return res.status(404).json({ ok: false, error: 'language_unsupported' });
+  appRoutes.push({
+    method: 'get',
+    path: '/i18n/:lang.json',
+    handler: (req, res) => {
+      const language = i18n.normalizeLanguage(req.params.lang);
+      if (!language || !supportedLanguageSet.has(language)) {
+        return res.status(404).json({ ok: false, error: 'language_unsupported' });
+      }
+      return res.json({
+        language,
+        translations: i18n.getTranslations(language) || {}
+      });
     }
-    return res.json({
-      language,
-      translations: i18n.getTranslations(language) || {}
-    });
   });
   const emailTemplates = createEmailTemplateService({ db, dayjs });
   const messageTemplates = createMessageTemplateService({ db, dayjs, i18n });
@@ -1728,52 +1745,58 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       .autoSyncAll({ reason: 'startup' })
       .catch(err => log.warn('Integração de canais (startup) falhou', { error: err }));
 
-    setInterval(() => {
+    const channelSyncInterval = setInterval(() => {
       channelIntegrations
         .autoSyncAll({ reason: 'interval' })
         .catch(err => log.warn('Integração de canais (intervalo) falhou', { error: err }));
     }, 30 * 60 * 1000);
+    cleanupTasks.push(() => clearInterval(channelSyncInterval));
   }
 
-  app.post('/api/ota/webhooks/:channelKey', async (req, res) => {
-    const channelKey = String(req.params.channelKey || '').trim();
-    if (!channelKey) {
-      return res.status(400).json({ error: 'Canal obrigatório' });
-    }
+  appRoutes.push({
+    method: 'post',
+    path: '/api/ota/webhooks/:channelKey',
+    handler: async (req, res) => {
+      const channelKey = String(req.params.channelKey || '').trim();
+      if (!channelKey) {
+        return res.status(400).json({ error: 'Canal obrigatório' });
+      }
 
-    try {
-      const eventType = req.body && typeof req.body.event === 'string' ? req.body.event : null;
-      const result = await otaDispatcher.ingest({
-        channelKey,
-        payload: req.body,
-        headers: req.headers || {},
-        rawBody: JSON.stringify(req.body || {})
-      });
-      const summary = result && result.summary ? result.summary : {};
-      const responseSummary = {
-        processed: summary.insertedCount || 0,
-        duplicates: summary.duplicateCount || 0,
-        conflicts: summary.conflictCount || 0,
-        unmatched: summary.unmatchedCount || 0,
-        errors: summary.errorCount || 0
-      };
-      logActivity(null, 'channel.webhook', 'channel', channelKey, {
-        event: eventType,
-        summary: responseSummary,
-        processedRecords: result ? result.processedRecords : 0,
-        ip: req.ip,
-        userAgent: req.get('user-agent') || null
-      });
-      res.status(200).json({ status: 'ok', ...responseSummary });
-    } catch (err) {
-      log.warn('Webhook OTA falhou', { error: err, channelKey });
-      const status = err && (err.statusCode || err.status) ? err.statusCode || err.status : 400;
-      res.status(status).json({ error: err.message });
+      try {
+        const eventType = req.body && typeof req.body.event === 'string' ? req.body.event : null;
+        const result = await otaDispatcher.ingest({
+          channelKey,
+          payload: req.body,
+          headers: req.headers || {},
+          rawBody: JSON.stringify(req.body || {})
+        });
+        const summary = result && result.summary ? result.summary : {};
+        const responseSummary = {
+          processed: summary.insertedCount || 0,
+          duplicates: summary.duplicateCount || 0,
+          conflicts: summary.conflictCount || 0,
+          unmatched: summary.unmatchedCount || 0,
+          errors: summary.errorCount || 0
+        };
+        logActivity(null, 'channel.webhook', 'channel', channelKey, {
+          event: eventType,
+          summary: responseSummary,
+          processedRecords: result ? result.processedRecords : 0,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || null
+        });
+        res.status(200).json({ status: 'ok', ...responseSummary });
+      } catch (err) {
+        log.warn('Webhook OTA falhou', { error: err, channelKey });
+        const status = err && (err.statusCode || err.status) ? err.statusCode || err.status : 400;
+        res.status(status).json({ error: err.message });
+      }
     }
   });
 
   function scheduleDailyTask(task, hour, minute) {
     const run = () => {
+      if (shuttingDown) return;
       try {
         task();
       } catch (err) {
@@ -1783,13 +1806,18 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
     };
 
     function schedule() {
+      if (shuttingDown) return;
       const now = dayjs();
       let next = now.hour(hour).minute(minute).second(0).millisecond(0);
       if (!next.isAfter(now)) {
         next = next.add(1, 'day');
       }
       const delay = Math.max(60 * 1000, next.diff(now));
-      setTimeout(run, delay);
+      const timeout = setTimeout(() => {
+        scheduledTimeouts.delete(timeout);
+        run();
+      }, delay);
+      scheduledTimeouts.add(timeout);
     }
 
     schedule();
@@ -1827,13 +1855,14 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
       .handleEvent('daily.cron', { ts: Date.now(), reason: 'startup' })
       .catch(err => log.warn('Automação diária (startup) falhou', { error: err }));
 
-    setInterval(() => {
+    const automationInterval = setInterval(() => {
       try {
         runAutomationSweep('interval');
       } catch (err) {
         log.error('Automação: falha periódica', { error: err });
       }
     }, 30 * 60 * 1000);
+    cleanupTasks.push(() => clearInterval(automationInterval));
   }
 
   function wantsJson(req) {
@@ -4000,13 +4029,37 @@ function initServices({app, express, dayjs, bcrypt, crypto, fs, fsp, path, multe
   };
 
 
+  async function shutdown() {
+    shuttingDown = true;
+    scheduledTimeouts.forEach(timeout => clearTimeout(timeout));
+    scheduledTimeouts.clear();
+    while (cleanupTasks.length) {
+      const task = cleanupTasks.pop();
+      try {
+        task();
+      } catch (err) {
+        log.warn('Falha ao executar tarefa de limpeza', { error: err });
+      }
+    }
+    if (db && typeof db.close === 'function') {
+      try {
+        db.close();
+      } catch (err) {
+        log.error('Erro ao fechar base de dados', { error: err });
+      }
+    }
+  }
+
   return {
     context,
     db,
     tenantService,
     guestPortalService,
     requireScope,
-    buildUserContext
+    buildUserContext,
+    appMiddleware,
+    appRoutes,
+    shutdown
   };
 }
 

@@ -22,7 +22,7 @@ processo Node que expõe os módulos via HTTP.
 | --- | --- |
 | `npm run dev` | Arranca o servidor Express em modo desenvolvimento. |
 | `npm run build` | Corre lint, typecheck e valida o bootstrap do servidor sem abrir portas. |
-| `npm start` | Arranca o servidor em modo produção. |
+| `npm start` | Arranca o servidor em modo produção via `src/index.js`. |
 | `npm run lint` | Verifica sintaxe (`node --check`) e espaços em branco com `--max-warnings=0`. |
 | `npm run typecheck` | Passa `node --check` a todos os ficheiros JavaScript. |
 | `npm test` | Executa os testes de domínio (`scripts/run-tests.js`) e a suite Jest (inclui fumos de navegação). |
@@ -33,6 +33,33 @@ Scripts utilitários adicionais:
 
 - `node scripts/find-unused.js` — lista módulos e assets não referenciados.
 - `node scripts/run-tests.js` — corre a suite de regressão usada anteriormente para CI.
+
+## Pipeline de arranque
+
+O bootstrap foi separado em camadas independentes para facilitar testes e manutenção:
+
+1. `src/config/index.js` lê o ambiente, valida portas/SSL e resolve caminhos base (public, base de dados).
+2. `src/infra/logger.js` expõe o logger partilhado (`server/logger.js`) para ser injetado na aplicação.
+3. `src/services/index.js` liga a base de dados e inicializa serviços de domínio, devolvendo também `shutdown()`
+   e listas de middlewares/rotas adicionais que devem ser aplicadas ao Express.
+4. `src/app/createApp.js` recebe `{ services, config, logger }`, aplica middlewares globais, injeta os serviços
+   e regista as rotas dos módulos. Não chama `listen`, permitindo injecção de mocks em testes.
+5. `src/server/start.js` cria o servidor HTTP/HTTPS, trata sinais `SIGINT/SIGTERM` e chama `services.shutdown()`
+   durante o desligar. O ficheiro `src/index.js` expõe `start()` e `createAppWithDefaults()` para CLI e testes.
+
+### Testes sem arrancar portas reais
+
+Utiliza `const { createApp } = require('./src/app/createApp')` para montar uma app com serviços mockados e
+`supertest`. É possível passar `routes` personalizados e `services` parciais (ex.: `{ appRoutes: [...] }`) para
+controlar exactamente o que é exposto. Para usar a configuração real mas sem abrir sockets:
+
+```js
+const { createAppWithDefaults } = require('./src/index');
+process.env.SKIP_SERVER_START = '1';
+process.env.DATABASE_PATH = ':memory:';
+const { app, services } = createAppWithDefaults();
+// usa app/serviços nos testes e termina chamando await services.shutdown?.()
+```
 
 ## Ambiente de desenvolvimento
 

@@ -1,0 +1,61 @@
+
+<div class="auth-wrapper">
+<div class="auth-card card">
+<div class="auth-branding">
+<div class="auth-logo">
+
+<span class="auth-logo__initials">GA</span>
+
+</div>
+<h1 class="auth-title">auth.welcome</h1>
+<p class="auth-subtitle">auth.subtitle</p>
+</div>
+
+
+
+
+<form class="auth-form" method="post" action="/login">
+<input type="hidden" name="_csrf" value="token-123" />
+
+
+<div class="auth-field">
+<label class="auth-label" for="login-username">auth.usernameLabel</label>
+<div class="auth-input">
+<span class="auth-input__icon">[object Promise]</span>
+<input
+id="login-username"
+class="auth-input__field"
+name="username"
+placeholder="auth.placeholder.username"
+value=""
+autocomplete="username"
+required
+autofocus
+/>
+</div>
+</div>
+
+<div class="auth-field">
+<label class="auth-label" for="login-password">auth.passwordLabel</label>
+<div class="auth-input">
+<span class="auth-input__icon">[object Promise]</span>
+<input
+id="login-password"
+class="auth-input__field"
+type="password"
+name="password"
+placeholder="auth.placeholder.password"
+autocomplete="current-password"
+required
+/>
+</div>
+</div>
+
+<button class="btn btn-primary auth-submit" type="submit">auth.signIn</button>
+</form>
+
+<div class="auth-links">
+<a href="/login/reset">auth.forgotPassword</a>
+</div>
+</div>
+</div>
